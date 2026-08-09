@@ -4,69 +4,33 @@ import {
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
-  CalendarDays,
   Calculator,
   CarFront,
   Check,
   ChevronDown,
-  ClipboardCheck,
-  Droplets,
   ExternalLink,
   FileSearch,
   Filter,
-  Fuel,
   Gauge,
-  History,
-  MapPin,
   Menu,
-  Palette,
   Search,
-  Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Users,
   Wrench,
   X,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { CatalogCar, CarFuel, VehicleOption } from "@/data/cars";
+import type { CatalogCar, CarFuel } from "@/data/cars";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Электро"];
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
 
-const optionTranslations: Array<[string, string]> = [
-  ["헤드업", "Проекционный дисплей"],
-  ["선루프", "Панорамная крыша"],
-  ["빌트인 캠", "Встроенный видеорегистратор"],
-  ["디지털 키", "Цифровой ключ"],
-  ["프리뷰 전자제어 서스펜션", "Адаптивная подвеска"],
-  ["컨비니언스", "Пакет комфорта"],
-  ["하이테크", "Высокотехнологичный пакет"],
-  ["드라이빙 어시스턴스", "Ассистенты водителя"],
-  ["서라운드 뷰", "Камеры кругового обзора"],
-  ["스마트 크루즈", "Адаптивный круиз-контроль"],
-  ["나파 가죽", "Салон из кожи Nappa"],
-  ["렉션 컴포트", "Комфортные кресла Relaxation"],
-];
-
-function optionName(option: VehicleOption) {
-  return optionTranslations.find(([korean]) => option.name.includes(korean))?.[1] ?? option.name;
-}
-
-function koreanStatus(value: string | null | undefined) {
-  const map: Record<string, string> = {
-    "양호": "Исправно",
-    "없음": "Не обнаружено",
-    "적정": "Норма",
-    "불량": "Требует внимания",
-    "미세누유": "Незначительная течь",
-    "누유": "Течь",
-  };
-  return value ? map[value] ?? value : "Нет данных";
+function inspectionStatus(value: string | null | undefined) {
+  return value ?? "Нет данных";
 }
 
 function formatKrw(value: number | null) {
@@ -190,42 +154,50 @@ export function PremiumCatalog({ cars }: { cars: CatalogCar[] }) {
 
       {selected && detailCalculation && (
         <div className="car-detail-backdrop" onMouseDown={() => setSelected(null)}>
-          <article className="car-detail rich-car-detail" role="dialog" aria-modal="true" aria-label={`${selected.brand} ${selected.model}`} onMouseDown={(event) => event.stopPropagation()}>
+          <article className="car-detail autoexport-detail" role="dialog" aria-modal="true" aria-label={`${selected.brand} ${selected.model}`} onMouseDown={(event) => event.stopPropagation()}>
             <button className="car-detail-close" type="button" onClick={() => setSelected(null)} aria-label="Закрыть карточку"><X /></button>
-            <div className="car-detail-gallery">
-              <div className="car-detail-image"><Image src={selectedImage || selected.images[0]} alt={`${selected.brand} ${selected.model}`} fill sizes="720px" priority /><span><BadgeCheck size={13} />ПРОВЕРЕНО</span></div>
-              <div className="car-detail-thumbs">{selected.images.slice(0, 12).map((image, index) => <button className={image === selectedImage ? "is-active" : ""} type="button" key={image} onClick={() => setSelectedImage(image)}><Image src={image} alt={`${selected.brand} ${selected.model}, фото ${index + 1}`} fill sizes="90px" /></button>)}</div>
-              <div className="photo-counter">{selected.images.length} оригинальных фото Encar</div>
-            </div>
-            <div className="car-detail-copy rich-detail-copy">
-              <div className="detail-topline"><span><ShieldCheck size={14} />Encar проверен</span><small>Лот #{selected.sourceListingId}</small></div>
-              <h2>{selected.brand} {selected.model}</h2>
-              <h3>{selected.trim}</h3>
-              <p className="detail-generation">{selected.generation ?? "Корейская спецификация"}</p>
-
-              <div className="detail-facts">
-                <div><CalendarDays /><span>Год</span><b>{selected.year}</b></div><div><Gauge /><span>Пробег</span><b>{distance.format(selected.mileage)} км</b></div><div><Fuel /><span>Двигатель</span><b>{selected.engine} · {selected.fuel}</b></div><div><Settings2 /><span>КПП</span><b>{selected.transmission ?? "Не указана"}</b></div><div><MapPin /><span>Локация</span><b>{selected.location}</b></div><div><Palette /><span>Цвет</span><b>{selected.color ?? "Не указан"}</b></div>
+            <div className="detail-main-column">
+              <div className="car-detail-gallery">
+                <div className="car-detail-image"><Image src={selectedImage || selected.images[0]} alt={`${selected.brand} ${selected.model}`} fill sizes="(max-width: 900px) 100vw, 760px" priority /><span><BadgeCheck size={13} />ПРОВЕРЕНО</span><div className="photo-counter">Фото {selected.images.length}</div></div>
+                <div className="car-detail-thumbs">{selected.images.slice(0, 12).map((image, index) => <button className={image === selectedImage ? "is-active" : ""} type="button" key={image} onClick={() => setSelectedImage(image)}><Image src={image} alt={`${selected.brand} ${selected.model}, фото ${index + 1}`} fill sizes="84px" /></button>)}</div>
               </div>
 
-              <section className="detail-report-overview">
-                <header><span><FileSearch size={15} />Проверка Encar</span><small>обновлено {formatDate(selected.reportFetchedAt)}</small></header>
-                <div className="report-metrics">
-                  <div><ClipboardCheck /><span>Техосмотр</span><b>{koreanStatus(selected.inspection?.state)}</b></div><div><History /><span>ДТП</span><b>{selected.accidents?.accidentCount ? `${selected.accidents.accidentCount} записи` : "Не заявлены"}</b></div><div><Users /><span>Смена владельцев</span><b>{selected.accidents?.ownerChangeCount ?? "—"}</b></div><div><Droplets /><span>Затопление</span><b>{selected.inspection?.waterlog ? "Есть" : "Не заявлено"}</b></div>
+              <section className="detail-surface detail-general">
+                <h3><CarFront />Общие данные</h3>
+                <div className="detail-data-grid">
+                  <div><span>Год регистрации</span><b>{formatDate(selected.registrationDate)}</b></div><div><span>Пробег</span><b>{distance.format(selected.mileage)} км</b></div>
+                  <div><span>Двигатель</span><b>{selected.engine}</b></div><div><span>Топливо</span><b>{selected.fuel}</b></div>
+                  <div><span>Коробка передач</span><b>{selected.transmission}</b></div><div><span>Привод</span><b>{selected.drive}</b></div>
+                  <div><span>Тип кузова</span><b>{selected.bodyType}</b></div><div><span>Цвет</span><b>{selected.color}</b></div>
                 </div>
               </section>
 
-              <section className="detail-spec-table">
-                <div><span>VIN</span><b>{selected.vinMasked ?? "Скрыт источником"}</b></div><div><span>Регистрация в Корее</span><b>{selected.registrationDate ? selected.registrationDate.slice(0, 7) : "Не указана"}</b></div><div><span>Кузов / привод</span><b>{selected.bodyType ?? "—"} · {selected.drive}</b></div><div><span>Пробег в отчёте</span><b>{selected.inspection?.inspectionMileage ? `${distance.format(selected.inspection.inspectionMileage)} км` : "Не указан"}</b></div><div><span>Цена в Корее</span><b>{formatKrw(selected.sourcePriceKrw)}</b></div><div><span>Изменено на Encar</span><b>{formatDate(selected.sourceUpdatedAt)}</b></div>
+              <section className="detail-surface detail-history">
+                <h3><ShieldCheck />История и состояние</h3>
+                <div className="history-status"><div className="history-shield"><FileSearch size={22} /></div><div><b>Отчёт Encar проверен</b><span>Проверка от {formatDate(selected.reportFetchedAt)}</span></div><small>Лот #{selected.sourceListingId}</small></div>
+                <div className="history-data-grid">
+                  <div><span>Техосмотр</span><b>{inspectionStatus(selected.inspection?.state)}</b></div><div><span>ДТП по истории</span><b>{selected.accidents?.accidentCount ? `${selected.accidents.accidentCount} случая` : "Не заявлены"}</b></div>
+                  <div><span>Смена владельцев</span><b>{selected.accidents?.ownerChangeCount ?? "Нет данных"}</b></div><div><span>Затопление</span><b>{selected.inspection?.waterlog ? "Есть отметка" : "Не заявлено"}</b></div>
+                  <div><span>Пробег по техосмотру</span><b>{selected.inspection?.inspectionMileage ? `${distance.format(selected.inspection.inspectionMileage)} км` : "Нет данных"}</b></div><div><span>VIN</span><b>{selected.vinMasked ?? "Скрыт источником"}</b></div>
+                </div>
+                {selected.inspection?.checks.length ? <div className="inspection-chips">{selected.inspection.checks.slice(0, 6).map((check, index) => <span key={`${check.title}-${index}`}><Check size={12} />{check.title}: {check.status}</span>)}</div> : null}
               </section>
 
-              {selected.options.length > 0 && <section className="detail-options"><header><span><Wrench size={15} />Опции комплектации</span><small>{selected.options.length} получено от Encar</small></header><div>{visibleOptions.map((option) => <article key={`${option.name}-${option.priceKrw ?? ""}`} title={option.description ?? undefined}><Check size={13} /><span>{optionName(option)}</span>{option.priceKrw ? <small>{formatKrw(option.priceKrw)}</small> : null}</article>)}</div>{selected.options.length > 12 && <button type="button" onClick={() => setAllOptionsOpen(!allOptionsOpen)}>{allOptionsOpen ? "Свернуть список" : `Показать ещё ${selected.options.length - 12}`}</button>}</section>}
-
-              {selected.inspection && <section className="detail-inspection"><header><span><ClipboardCheck size={15} />Техосмотр: {koreanStatus(selected.inspection.state)}</span><small>{selected.inspection.checks.length} проверок</small></header><div>{selected.inspection.checks.slice(0, 10).map((check, index) => <span key={`${check.title}-${index}`}><b>{check.title}</b><em>{koreanStatus(check.status)}</em></span>)}</div></section>}
-
-              <section className="detail-calculation"><header><span><Calculator size={15} />Расчёт под ключ</span><label><input type="checkbox" checked={preferential} disabled={selected.fuel === "Электро"} onChange={(event) => setPreferential(event.target.checked)} />Льготная растаможка</label></header><dl><div><dt>Авто и расходы в Корее</dt><dd>{money.format(detailCalculation.koreaAndExportUsd)}</dd></div><div><dt>Доставка до Минска</dt><dd>{money.format(detailCalculation.deliveryUsd)}</dd></div><div><dt>Транзитная декларация</dt><dd>{money.format(detailCalculation.transitUsd)}</dd></div><div><dt>Растаможка</dt><dd>{money.format(detailCalculation.customsDutyUsd)}</dd></div><div><dt>СВХ, платежи и утиль</dt><dd>{money.format(detailCalculation.customsServicesUsd)}</dd></div><div><dt>Подбор и сопровождение</dt><dd>{money.format(detailCalculation.companyServicesUsd)}</dd></div></dl></section>
-              <div className="car-detail-price"><span>Предварительная стоимость под ключ</span><strong>{money.format(detailCalculation.totalUsd)}</strong><small>Расчёт по предварительному профилю. Финальная сумма подтверждается менеджером до сделки.</small></div>
-              <Link href="/#contacts" onClick={() => setSelected(null)}>Запросить точный расчёт <ArrowRight size={17} /></Link><a className="detail-source" href={selected.sourceUrl} target="_blank" rel="noreferrer">Открыть исходное объявление Encar <ExternalLink size={13} /></a><p className="detail-note"><Check size={14} />Лот прошёл автоматические правила публикации и проверку истории.</p>
+              {selected.options.length > 0 && <section className="detail-surface detail-equipment"><h3><Wrench />Комплектация <small>{selected.options.length} опций Encar</small></h3><div className="equipment-list">{visibleOptions.map((option) => <article key={`${option.name}-${option.priceKrw ?? ""}`}><Check size={13} /><span>{option.name}</span>{option.priceKrw ? <small>{formatKrw(option.priceKrw)}</small> : null}</article>)}</div>{selected.options.length > 12 && <button className="detail-text-button" type="button" onClick={() => setAllOptionsOpen(!allOptionsOpen)}>{allOptionsOpen ? "Свернуть список" : `Показать ещё ${selected.options.length - 12} опций`}</button>}</section>}
             </div>
+
+            <aside className="detail-price-column">
+              <div className="detail-source-row"><span><ShieldCheck size={14} />Источник Encar</span><a href={selected.sourceUrl} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
+              <h2>{selected.brand} {selected.model}</h2><h3>{selected.trim}</h3>
+              <p className="detail-meta">{selected.year} год · {distance.format(selected.mileage)} км · {selected.engineCc ? `${distance.format(selected.engineCc)} см³` : "электро"}</p>
+              <div className="detail-tags"><span>{selected.fuel}</span><span>{selected.transmission}</span><span>{selected.drive}</span></div>
+              <div className="detail-price-head"><span>Стоимость под ключ в Минске</span><strong>{money.format(detailCalculation.totalUsd)}</strong><small>Предварительный расчёт для Беларуси</small></div>
+              <div className="detail-price-distribution"><i /><i /><i /></div>
+              <div className="detail-key-specs"><div><span>Цена в Корее</span><b>{formatKrw(selected.sourcePriceKrw)}</b></div><div><span>Локация</span><b>{selected.location}</b></div><div><span>Обновлено на Encar</span><b>{formatDate(selected.sourceUpdatedAt)}</b></div></div>
+              <section className="detail-calculation"><header><span><Calculator size={15} />Расчёт цены</span><label><input type="checkbox" checked={preferential} disabled={selected.fuel === "Электро"} onChange={(event) => setPreferential(event.target.checked)} />Льготная растаможка</label></header><dl><div><dt>Авто и расходы в Корее</dt><dd>{money.format(detailCalculation.koreaAndExportUsd)}</dd></div><div><dt>Доставка до Минска</dt><dd>{money.format(detailCalculation.deliveryUsd)}</dd></div><div><dt>Транзитная декларация</dt><dd>{money.format(detailCalculation.transitUsd)}</dd></div><div><dt>Растаможка</dt><dd>{money.format(detailCalculation.customsDutyUsd)}</dd></div><div><dt>СВХ, платежи и утиль</dt><dd>{money.format(detailCalculation.customsServicesUsd)}</dd></div><div><dt>Подбор и сопровождение</dt><dd>{money.format(detailCalculation.companyServicesUsd)}</dd></div></dl></section>
+              <Link className="detail-lead-button" href="/#contacts" onClick={() => setSelected(null)}>Запросить точный расчёт <ArrowRight size={17} /></Link>
+              <p className="detail-note"><Check size={14} />Лот прошёл автоматические правила публикации. Итоговую сумму подтвердит менеджер до сделки.</p>
+            </aside>
           </article>
         </div>
       )}

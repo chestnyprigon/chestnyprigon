@@ -15,7 +15,58 @@ function fuelName(source: string | null): CarFuel {
 
 function locationName(source: string | null) {
   if (!source) return "Южная Корея";
-  return source.replace("서울", "Сеул").replace("인천", "Инчхон").replace("부산", "Пусан");
+  const locations: Array<[string, string]> = [["서울", "Сеул"], ["인천", "Инчхон"], ["부산", "Пусан"], ["경기", "Кёнгидо"], ["대구", "Тэгу"], ["대전", "Тэджон"], ["광주", "Кванджу"], ["울산", "Ульсан"]];
+  return locations.reduce((result, [korean, russian]) => result.replace(korean, russian), source);
+}
+
+const hasHangul = (value: string) => /[\uac00-\ud7af]/.test(value);
+
+function normalizedValue(value: string | null, dictionary: Array<[string, string]>, fallback: string | null = null) {
+  if (!value) return null;
+  const normalized = dictionary.reduce((result, [source, target]) => result.replaceAll(source, target), value).replace(/\s{2,}/g, " ").trim();
+  return hasHangul(normalized) ? fallback : normalized;
+}
+
+function trimName(value: string | null) {
+  return normalizedValue(value, [
+    ["인스퍼레이션", "Inspiration"], ["프레스티지", "Prestige"], ["시그니처", "Signature"],
+    ["노블레스", "Noblesse"], ["프리미엄", "Premium"], ["럭셔리", "Luxury"], ["모던", "Modern"],
+  ], "Заводская комплектация");
+}
+
+function bodyName(value: string | null) {
+  return normalizedValue(value, [["세단", "Седан"], ["SUV", "SUV"], ["승합", "Минивэн"], ["해치백", "Хэтчбек"], ["쿠페", "Купе"], ["왜건", "Универсал"], ["트럭", "Пикап"]], "Не указан");
+}
+
+function driveName(value: string | null) {
+  return normalizedValue(value, [["전륜", "Передний"], ["후륜", "Задний"], ["4륜", "Полный"], ["2륜", "2WD"], ["구동", " привод"], ["4WD", "Полный"]], "Не указан");
+}
+
+function transmissionName(value: string | null) {
+  return normalizedValue(value, [["오토", "Автомат"], ["자동", "Автомат"], ["수동", "Механика"], ["무단", "Вариатор"]], "Не указана");
+}
+
+function colorName(value: string | null) {
+  return normalizedValue(value, [["흰색", "Белый"], ["검정", "Чёрный"], ["회색", "Серый"], ["은색", "Серебристый"], ["파랑", "Синий"], ["빨강", "Красный"], ["진주", "Жемчужный"], ["메탈", "металлик"]], "Не указан");
+}
+
+function optionLabel(value: string) {
+  return normalizedValue(value, [
+    ["BOSE 프리미엄 사운드", "Премиальная аудиосистема Bose"], ["빌트인 캠", "Встроенный видеорегистратор"],
+    ["컴포트", "Пакет комфорта"], ["파노라마 선루프", "Панорамная крыша"], ["헤드업 디스플레이", "Проекционный дисплей"],
+    ["디지털 키", "Цифровой ключ"], ["스마트 크루즈", "Адаптивный круиз-контроль"], ["서라운드 뷰", "Камеры кругового обзора"],
+    ["트레일러 패키지", "Пакет для прицепа"], ["공기 청정기", "Система очистки воздуха"], ["후석 전동식 사이드 스텝", "Электроподножки второго ряда"],
+    ["Genuine Accessories", "Оригинальные аксессуары"], ["프리미엄", "Премиум"], ["사운드", "аудиосистема"],
+  ], "Дополнительная заводская опция") ?? "Дополнительная заводская опция";
+}
+
+function inspectionTitle(value: string) {
+  const labels: Array<[string, string]> = [["원동기", "Двигатель"], ["변속기", "Трансмиссия"], ["동력전달", "Привод"], ["조향", "Рулевое управление"], ["제동", "Тормозная система"], ["전기", "Электрооборудование"], ["연료", "Топливная система"], ["배출", "Выхлопная система"], ["등화", "Световые приборы"], ["차대", "Кузов и рама"]];
+  return labels.find(([source]) => value.includes(source))?.[1] ?? null;
+}
+
+function inspectionStatus(value: string) {
+  return normalizedValue(value, [["양호", "Исправно"], ["없음", "Не обнаружено"], ["적정", "Норма"], ["불량", "Требует внимания"], ["미세누유", "Незначительная течь"], ["누유", "Течь"]], "Проверено") ?? "Проверено";
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -44,11 +95,11 @@ function parseOptions(value: unknown): VehicleOption[] {
     const name = asString(option.name);
     if (!name) return [];
     return [{
-      name,
+      name: optionLabel(name),
       priceKrw: Number.isFinite(Number(option.priceKrw)) ? Number(option.priceKrw) : null,
-      description: asString(option.description),
+      description: null,
     }];
-  });
+  }).filter((option, index, all) => all.findIndex((candidate) => candidate.name === option.name && candidate.priceKrw === option.priceKrw) === index);
 }
 
 function parseInspection(value: unknown): InspectionSummary | null {
@@ -57,19 +108,10 @@ function parseInspection(value: unknown): InspectionSummary | null {
   const checks = Array.isArray(summary.checks)
     ? summary.checks.flatMap((item) => {
         const check = record(item);
-        const title = asString(check.title);
+        const sourceTitle = asString(check.title);
         const status = asString(check.status);
-        return title && status ? [{ title, status }] : [];
-      })
-    : [];
-  const bodyFindings = Array.isArray(summary.bodyFindings)
-    ? summary.bodyFindings.flatMap((item) => {
-        const finding = record(item);
-        const title = asString(finding.title);
-        const statuses = Array.isArray(finding.statuses)
-          ? finding.statuses.filter((status): status is string => typeof status === "string")
-          : [];
-        return title ? [{ title, statuses }] : [];
+        const title = sourceTitle ? inspectionTitle(sourceTitle) : null;
+        return title && status ? [{ title, status: inspectionStatus(status) }] : [];
       })
     : [];
   return {
@@ -85,7 +127,7 @@ function parseInspection(value: unknown): InspectionSummary | null {
     firstRegistrationDate: asString(summary.firstRegistrationDate),
     inspectionMileage: asNumber(summary.inspectionMileage) || null,
     checks,
-    bodyFindings,
+    bodyFindings: [],
   };
 }
 
@@ -149,8 +191,8 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
         sourceListingId: row.source_listing_id,
         brand: row.manufacturer,
         model: row.model,
-        trim: row.trim ?? row.generation ?? "Комплектация не указана",
-        generation: row.generation,
+        trim: trimName(row.trim) ?? trimName(row.generation) ?? "Комплектация не указана",
+        generation: trimName(row.generation),
         year: row.model_year,
         registrationDate: row.first_registration_date,
         mileage: row.mileage_km,
@@ -158,10 +200,10 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
         engineCc: row.engine_cc,
         fuel: fuelName(row.fuel_type),
         sourceFuel: row.fuel_type,
-        drive: row.drive_type ?? "Не указан",
-        bodyType: row.body_type,
-        color: row.exterior_color,
-        transmission: row.transmission,
+        drive: driveName(row.drive_type) ?? "Не указан",
+        bodyType: bodyName(row.body_type),
+        color: colorName(row.exterior_color),
+        transmission: transmissionName(row.transmission),
         vinMasked: row.vin_masked,
         price: calculation.totalUsd,
         sourcePriceKrw: Number(row.price_krw),
