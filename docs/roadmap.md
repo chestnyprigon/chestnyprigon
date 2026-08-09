@@ -5,7 +5,7 @@ Scope: South Korea only, prices shown in USD, no admin panel. Autoexport remains
 | # | Stage | Status | Completion rule |
 |---|---|---|---|
 | 1 | Approve concept and MVP | Complete | Korea-only scope, no admin panel, paid developer support model agreed |
-| 2 | Create standalone project and Supabase | In progress | Next.js project is separate; local Supabase schema is ready; a new remote project must be created and linked in the intended account |
+| 2 | Create standalone project and Supabase | Complete | Independent Next.js and Supabase projects are linked; migrations, RLS and public/private access are verified |
 | 3 | Implement Chestny Prigon design | Complete | Main page and catalog UX approved on desktop and mobile |
 | 4 | Encar parser and Korea catalog ingestion | Next | A controlled test batch is fetched into private raw storage and normalized |
 | 5 | Filter ineligible/problematic listings | Designed with stage 4 | Screening runs before publication; rejected rows remain private |

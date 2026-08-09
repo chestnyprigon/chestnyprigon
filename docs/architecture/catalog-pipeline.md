@@ -14,6 +14,8 @@ Publication is protected twice: row-level security only exposes active public ro
 
 This repository must only be linked to a newly created Supabase project for Chestny Prigon. Never link it to Autoexport or TMA. Before every remote migration, verify the linked reference with `supabase projects list` and preview changes with `supabase db push --dry-run`.
 
+Current production target: `chestny_prigon` (`ojnybjomttolhsfgkdqq`). The project ref is not a secret; credentials remain exclusively in `.env.local` and Supabase CLI secure storage.
+
 ## Deployment sequence
 
 1. Create the new remote project in the intended Supabase account and region.
