@@ -58,7 +58,7 @@ function flattenInspection(nodes: unknown, output: Array<{ title: string; status
   }
 }
 
-function inspectionSummary(payload: unknown) {
+function inspectionSummary(payload: unknown, listingPayload: unknown) {
   const inspection = record(payload);
   const master = record(inspection.master);
   const detail = record(master.detail);
@@ -78,6 +78,10 @@ function inspectionSummary(payload: unknown) {
           return { title: string(record(value.type).title) ?? "Кузов", statuses };
         })
     : [];
+  const listingOptions = record(record(listingPayload).detail).options;
+  const standardOptionCodes = Array.isArray(record(listingOptions).standard)
+    ? (record(listingOptions).standard as unknown[]).map(string).filter((item): item is string => Boolean(item))
+    : [];
 
   return {
     state: string(record(detail.carStateType).title) ?? string(record(detail.boardStateType).title),
@@ -91,6 +95,7 @@ function inspectionSummary(payload: unknown) {
     inspectionMileage: number(detail.mileage) || null,
     checks,
     bodyFindings,
+    standardOptionCodes,
   };
 }
 
@@ -173,7 +178,7 @@ async function main() {
             : [];
         })
       : [];
-    const inspection = inspectionSummary(inspectionPayload);
+    const inspection = inspectionSummary(inspectionPayload, payload);
     const accidents = accidentSummary(accidentPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;

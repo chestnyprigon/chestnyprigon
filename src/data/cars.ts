@@ -20,6 +20,7 @@ export type InspectionSummary = {
   inspectionMileage: number | null;
   checks: Array<{ title: string; status: string }>;
   bodyFindings: Array<{ title: string; statuses: string[] }>;
+  standardOptionCodes: string[];
 };
 
 export type AccidentSummary = {

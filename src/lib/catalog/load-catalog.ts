@@ -15,8 +15,17 @@ function fuelName(source: string | null): CarFuel {
 
 function locationName(source: string | null) {
   if (!source) return "Южная Корея";
-  const locations: Array<[string, string]> = [["서울", "Сеул"], ["인천", "Инчхон"], ["부산", "Пусан"], ["경기", "Кёнгидо"], ["대구", "Тэгу"], ["대전", "Тэджон"], ["광주", "Кванджу"], ["울산", "Ульсан"]];
+  const locations: Array<[string, string]> = [["서울", "Сеул"], ["인천", "Инчхон"], ["부산", "Пусан"], ["경기", "Кёнгидо"], ["전북", "Чолла-Пукто"], ["전남", "Чолла-Намдо"], ["충북", "Чхунчхон-Пукто"], ["충남", "Чхунчхон-Намдо"], ["경북", "Кёнсан-Пукто"], ["경남", "Кёнсан-Намдо"], ["대구", "Тэгу"], ["대전", "Тэджон"], ["광주", "Кванджу"], ["울산", "Ульсан"]];
   return locations.reduce((result, [korean, russian]) => result.replace(korean, russian), source);
+}
+
+function normalizedSourceFuel(source: string) {
+  const fuel = fuelName(source);
+  if (fuel === "Электро") return "electric";
+  if (fuel === "Дизель") return "diesel";
+  if (fuel === "Гибрид") return "hybrid";
+  if (fuel === "Газ") return "lpg";
+  return "gasoline";
 }
 
 const hasHangul = (value: string) => /[\uac00-\ud7af]/.test(value);
@@ -42,26 +51,43 @@ function driveName(value: string | null) {
   return normalizedValue(value, [["전륜", "Передний"], ["후륜", "Задний"], ["4륜", "Полный"], ["2륜", "2WD"], ["구동", " привод"], ["4WD", "Полный"]], "Не указан");
 }
 
+function resolvedDrive(value: string | null, trim: string | null) {
+  const source = `${value ?? ""} ${trim ?? ""}`.toUpperCase();
+  if (source.includes("AWD") || source.includes("4WD") || source.includes("4륜")) return "Полный";
+  if (source.includes("FWD") || source.includes("전륜")) return "Передний";
+  if (source.includes("RWD") || source.includes("후륜")) return "Задний";
+  return driveName(value) ?? "Не указан";
+}
+
 function transmissionName(value: string | null) {
   return normalizedValue(value, [["오토", "Автомат"], ["자동", "Автомат"], ["수동", "Механика"], ["무단", "Вариатор"]], "Не указана");
 }
 
 function colorName(value: string | null) {
-  return normalizedValue(value, [["흰색", "Белый"], ["검정", "Чёрный"], ["회색", "Серый"], ["은색", "Серебристый"], ["파랑", "Синий"], ["빨강", "Красный"], ["진주", "Жемчужный"], ["메탈", "металлик"]], "Не указан");
+  return normalizedValue(value, [["검정색", "Чёрный"], ["흰색", "Белый"], ["회색", "Серый"], ["은색", "Серебристый"], ["파란색", "Синий"], ["빨간색", "Красный"], ["진주색", "Жемчужный"], ["메탈", "металлик"], ["색", ""]], "Не указан");
 }
 
 function optionLabel(value: string) {
   return normalizedValue(value, [
-    ["BOSE 프리미엄 사운드", "Премиальная аудиосистема Bose"], ["빌트인 캠", "Встроенный видеорегистратор"],
+    ["255/40R21 미쉐린 타이어 & 휠 (프리뷰 전자제어 서스펜션 포함)", "Шины Michelin 255/40 R21, диски и адаптивная подвеска"],
+    ["255/40R21 미쉐린 타이어 & 스포츠 전용 휠", "Шины Michelin 255/40 R21 и спортивные диски"],
+    ["235/55R19 미쉐린 타이어 & 휠", "Шины Michelin 235/55 R19 и диски"],
+    ["스포츠 디자인 셀렉션Ⅰ", "Пакет Sport Design Selection I"], ["스포츠 디자인 셀렉션Ⅱ", "Пакет Sport Design Selection II"],
+    ["시그니쳐 디자인 셀렉션 I", "Пакет Signature Design Selection I"], ["시그니쳐 디자인 셀렉션 II", "Пакет Signature Design Selection II"],
+    ["드라이빙 어시스턴스 패키지 Ⅰ", "Пакет ассистентов водителя I"], ["드라이빙 어시스턴스 패키지 II", "Пакет ассистентов водителя II"],
+    ["프리뷰 전자제어 서스펜션", "Адаптивная электронная подвеска"], ["스포츠 패키지", "Спортивный пакет"],
+    ["매트 컬러", "Матовая окраска кузова"], ["하이테크 패키지", "Пакет High-Tech"], ["2열 컴포트 패키지", "Пакет комфорта второго ряда"],
+    ["아웃도어 패키지", "Пакет Outdoor"], ["렉시콘 사운드 패키지", "Аудиосистема Lexicon"], ["파퓰러 패키지 I", "Пакет Popular I"], ["파퓰러 패키지 II", "Пакет Popular II"],
+    ["BOSE 프리미엄 사운드", "Премиальная аудиосистема Bose"], ["빌트인 캠 패키지", "Пакет встроенного видеорегистратора"], ["빌트인 캠", "Встроенный видеорегистратор"],
     ["컴포트", "Пакет комфорта"], ["파노라마 선루프", "Панорамная крыша"], ["헤드업 디스플레이", "Проекционный дисплей"],
     ["디지털 키", "Цифровой ключ"], ["스마트 크루즈", "Адаптивный круиз-контроль"], ["서라운드 뷰", "Камеры кругового обзора"],
-    ["트레일러 패키지", "Пакет для прицепа"], ["공기 청정기", "Система очистки воздуха"], ["후석 전동식 사이드 스텝", "Электроподножки второго ряда"],
+    ["트레일러 패키지", "Пакет для прицепа"], ["컨비니언스 패키지", "Пакет Convenience"], ["공기 청정기", "Система очистки воздуха"], ["후석 전동식 사이드 스텝", "Электроподножки второго ряда"],
     ["Genuine Accessories", "Оригинальные аксессуары"], ["프리미엄", "Премиум"], ["사운드", "аудиосистема"],
   ], "Дополнительная заводская опция") ?? "Дополнительная заводская опция";
 }
 
 function inspectionTitle(value: string) {
-  const labels: Array<[string, string]> = [["원동기", "Двигатель"], ["변속기", "Трансмиссия"], ["동력전달", "Привод"], ["조향", "Рулевое управление"], ["제동", "Тормозная система"], ["전기", "Электрооборудование"], ["연료", "Топливная система"], ["배출", "Выхлопная система"], ["등화", "Световые приборы"], ["차대", "Кузов и рама"]];
+  const labels: Array<[string, string]> = [["원동기", "Двигатель"], ["변속기", "Трансмиссия"], ["작동상태", "Работа двигателя"], ["실린더 커버", "Клапанная крышка"], ["실린더 헤드", "Головка блока и прокладка"], ["실린더 블록", "Блок цилиндров и поддон"], ["오일 유량", "Уровень моторного масла"], ["워터펌프", "Водяной насос"], ["라디에이터", "Радиатор"], ["냉각수", "Уровень охлаждающей жидкости"], ["오일누유", "Утечка масла"], ["오일유량", "Масло трансмиссии"], ["등속조인트", "ШРУС"], ["추친축", "Карданный вал и подшипники"], ["디피렌셜", "Дифференциал"], ["동력조향", "Гидроусилитель руля"], ["동력전달", "Привод"], ["조향", "Рулевое управление"], ["제동", "Тормозная система"], ["전기", "Электрооборудование"], ["연료", "Топливная система"], ["배출", "Выхлопная система"], ["등화", "Световые приборы"], ["차대", "Кузов и рама"]];
   return labels.find(([source]) => value.includes(source))?.[1] ?? null;
 }
 
@@ -115,7 +141,7 @@ function parseInspection(value: unknown): InspectionSummary | null {
       })
     : [];
   return {
-    state: asString(summary.state),
+    state: asString(summary.state) ? inspectionStatus(String(summary.state)) : null,
     reportedAccident: asBoolean(summary.reportedAccident),
     simpleRepair: asBoolean(summary.simpleRepair),
     waterlog: asBoolean(summary.waterlog),
@@ -128,6 +154,9 @@ function parseInspection(value: unknown): InspectionSummary | null {
     inspectionMileage: asNumber(summary.inspectionMileage) || null,
     checks,
     bodyFindings: [],
+    standardOptionCodes: Array.isArray(summary.standardOptionCodes)
+      ? summary.standardOptionCodes.filter((item): item is string => typeof item === "string")
+      : [],
   };
 }
 
@@ -199,8 +228,8 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
         engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро",
         engineCc: row.engine_cc,
         fuel: fuelName(row.fuel_type),
-        sourceFuel: row.fuel_type,
-        drive: driveName(row.drive_type) ?? "Не указан",
+        sourceFuel: normalizedSourceFuel(row.fuel_type),
+        drive: resolvedDrive(row.drive_type, row.trim),
         bodyType: bodyName(row.body_type),
         color: colorName(row.exterior_color),
         transmission: transmissionName(row.transmission),
