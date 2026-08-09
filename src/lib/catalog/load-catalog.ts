@@ -153,7 +153,22 @@ function parseInspection(value: unknown): InspectionSummary | null {
     firstRegistrationDate: asString(summary.firstRegistrationDate),
     inspectionMileage: asNumber(summary.inspectionMileage) || null,
     checks,
-    bodyFindings: [],
+    bodyFindings: Array.isArray(summary.bodyFindings)
+      ? summary.bodyFindings.flatMap((item) => {
+          const finding = record(item);
+          const title = asString(finding.title);
+          if (!title) return [];
+          const statuses = Array.isArray(finding.statuses)
+            ? finding.statuses.flatMap((status) => {
+                if (typeof status === "string") return [{ code: null, title: status }];
+                const value = record(status);
+                const statusTitle = asString(value.title);
+                return statusTitle ? [{ code: asString(value.code), title: statusTitle }] : [];
+              })
+            : [];
+          return [{ code: asString(finding.code), title, statuses }];
+        })
+      : [],
     standardOptionCodes: Array.isArray(summary.standardOptionCodes)
       ? summary.standardOptionCodes.filter((item): item is string => typeof item === "string")
       : [],

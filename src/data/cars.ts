@@ -19,7 +19,11 @@ export type InspectionSummary = {
   firstRegistrationDate: string | null;
   inspectionMileage: number | null;
   checks: Array<{ title: string; status: string }>;
-  bodyFindings: Array<{ title: string; statuses: string[] }>;
+  bodyFindings: Array<{
+    code: string | null;
+    title: string;
+    statuses: Array<{ code: string | null; title: string }>;
+  }>;
   standardOptionCodes: string[];
   inspectionImages: Array<{ url: string; title: string }>;
 };

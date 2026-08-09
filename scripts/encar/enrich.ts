@@ -77,9 +77,13 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
         .map((item) => {
           const value = record(item);
           const statuses = Array.isArray(value.statusTypes)
-            ? value.statusTypes.map((status) => string(record(status).title)).filter(Boolean)
+            ? value.statusTypes.flatMap((status) => {
+                const current = record(status);
+                const title = string(current.title);
+                return title ? [{ code: string(current.code), title }] : [];
+              })
             : [];
-          return { title: string(record(value.type).title) ?? "Кузов", statuses };
+          return { code: string(record(value.type).code), title: string(record(value.type).title) ?? "Кузов", statuses };
         })
     : [];
   const listingOptions = record(record(listingPayload).detail).options;
