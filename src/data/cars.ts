@@ -74,6 +74,7 @@ export type CatalogCar = {
   sourcePriceKrw: number;
   location: string;
   images: string[];
+  imageGroups: Array<{ url: string; group: "Кузов" | "Салон" | "Детали" | "Другие фото" }>;
   sourceUrl: string;
   sourceUpdatedAt: string | null;
   lastSeenAt: string | null;

@@ -92,6 +92,7 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
         })
     : [];
   const listingOptions = record(record(listingPayload).detail).options;
+  const listingPhotos = record(record(listingPayload).detail).photos;
   const standardOptionCodes = Array.isArray(record(listingOptions).standard)
     ? (record(listingOptions).standard as unknown[]).map(string).filter((item): item is string => Boolean(item))
     : [];
@@ -103,6 +104,16 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
         const sourceTitle = string(image.title);
         const title = sourceTitle === "앞면" ? "Вид спереди" : sourceTitle === "뒷면" ? "Вид сзади" : "Фото осмотра";
         return [{ url: imagePath.startsWith("http") ? imagePath : `https://ci.encar.com${imagePath}`, title }];
+      })
+    : [];
+  const photoGroups = Array.isArray(listingPhotos)
+    ? listingPhotos.flatMap((item) => {
+        const photo = record(item);
+        const imagePath = string(photo.path);
+        if (!imagePath) return [];
+        const type = string(photo.type)?.toUpperCase();
+        const group = type === "OUTER" || type === "THUMBNAIL" ? "Кузов" : type === "INNER" ? "Салон" : type === "OPTION" ? "Детали" : "Другие фото";
+        return [{ url: imagePath.startsWith("http") ? imagePath : `https://ci.encar.com${imagePath}`, group }];
       })
     : [];
 
@@ -120,6 +131,7 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
     bodyFindings,
     standardOptionCodes,
     inspectionImages,
+    photoGroups,
   };
 }
 

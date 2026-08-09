@@ -183,6 +183,20 @@ function parseInspection(value: unknown): InspectionSummary | null {
   };
 }
 
+function parseImageGroups(value: unknown, images: string[]) {
+  const summary = record(value);
+  const groupByUrl = new Map<string, "Кузов" | "Салон" | "Детали" | "Другие фото">();
+  if (Array.isArray(summary.photoGroups)) {
+    for (const item of summary.photoGroups) {
+      const photo = record(item);
+      const url = asString(photo.url);
+      const group = asString(photo.group);
+      if (url && (group === "Кузов" || group === "Салон" || group === "Детали" || group === "Другие фото")) groupByUrl.set(url, group);
+    }
+  }
+  return images.map((url) => ({ url, group: groupByUrl.get(url) ?? "Другие фото" }));
+}
+
 function parseAccidents(value: unknown): AccidentSummary | null {
   if (!value || typeof value !== "object") return null;
   const summary = record(value);
@@ -272,6 +286,7 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
         sourcePriceKrw: Number(row.price_krw),
         location: locationName(row.location),
         images,
+        imageGroups: parseImageGroups(row.inspection_summary, images),
         sourceUrl: row.source_url,
         sourceUpdatedAt: row.source_updated_at,
         lastSeenAt: row.last_seen_at,
