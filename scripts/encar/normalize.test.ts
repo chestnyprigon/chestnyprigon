@@ -21,6 +21,7 @@ test("normalizes canonical identity, registration month, price and ordered photo
         manufacturerName: "현대",
         modelName: "더 뉴 그랜저",
         modelGroupEnglishName: "Grandeur",
+        gradeEnglishName: "Gasoline 2.5 4WD",
         yearMonth: "202403",
       },
       advertisement: { price: 3200 },
@@ -38,6 +39,7 @@ test("normalizes canonical identity, registration month, price and ordered photo
   assert.equal(vehicle.model, "Grandeur");
   assert.equal(vehicle.firstRegistrationDate, "2024-03-01");
   assert.equal(vehicle.priceKrw, 32_000_000);
+  assert.equal(vehicle.driveType, "4WD");
   assert.deepEqual(vehicle.imageUrls, [
     "https://ci.encar.com/outer.jpg",
     "https://ci.encar.com/inner.jpg",
