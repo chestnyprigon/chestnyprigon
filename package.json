@@ -9,6 +9,7 @@
     "lint": "eslint",
     "encar:pilot": "tsx scripts/encar/pilot.ts",
     "encar:enrich": "tsx scripts/encar/enrich.ts",
+    "encar:upgrade-images": "tsx scripts/encar/upgrade-image-urls.ts",
     "test:encar": "tsx --test scripts/encar/*.test.ts",
     "pricing:recalculate": "tsx scripts/pricing/recalculate.ts",
     "test:pricing": "tsx --test src/lib/pricing/*.test.ts"

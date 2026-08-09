@@ -1,6 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { encarPhotoUrl } from "../../src/lib/encar/images";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -113,7 +114,7 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
         if (!imagePath) return [];
         const type = string(photo.type)?.toUpperCase();
         const group = type === "OUTER" || type === "THUMBNAIL" ? "Кузов" : type === "INNER" ? "Салон" : type === "OPTION" ? "Детали" : "Другие фото";
-        return [{ url: imagePath.startsWith("http") ? imagePath : `https://ci.encar.com${imagePath}`, group }];
+        return [{ url: encarPhotoUrl(imagePath.startsWith("http") ? imagePath : `https://ci.encar.com${imagePath}`), group }];
       })
     : [];
 

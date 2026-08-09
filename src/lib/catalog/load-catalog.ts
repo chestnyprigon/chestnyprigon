@@ -1,6 +1,7 @@
 import "server-only";
 import type { AccidentSummary, CatalogCar, CarFuel, InspectionSummary, VehicleOption } from "@/data/cars";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
+import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 
 function fuelName(source: string | null): CarFuel {
@@ -191,10 +192,10 @@ function parseImageGroups(value: unknown, images: string[]) {
       const photo = record(item);
       const url = asString(photo.url);
       const group = asString(photo.group);
-      if (url && (group === "Кузов" || group === "Салон" || group === "Детали" || group === "Другие фото")) groupByUrl.set(url, group);
+      if (url && (group === "Кузов" || group === "Салон" || group === "Детали" || group === "Другие фото")) groupByUrl.set(encarPhotoUrl(url), group);
     }
   }
-  return images.map((url) => ({ url, group: groupByUrl.get(url) ?? "Другие фото" }));
+  return images.map((url) => ({ url, group: groupByUrl.get(encarPhotoUrl(url)) ?? "Другие фото" }));
 }
 
 function parseAccidents(value: unknown): AccidentSummary | null {
@@ -259,7 +260,7 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
       fuelType: row.fuel_type,
       preferential: true,
     });
-    const images = row.image_urls ?? [];
+    const images = (row.image_urls ?? []).map(encarPhotoUrl);
     if (!images.length) return [];
 
     return [

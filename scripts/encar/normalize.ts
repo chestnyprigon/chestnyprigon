@@ -1,5 +1,6 @@
 import type { EncarBundle, NormalizedVehicle } from "./types";
 import { canonicalSourceId } from "./identity";
+import { encarPhotoUrl } from "../../src/lib/encar/images";
 
 const MANUFACTURERS: Array<[RegExp, string]> = [
   [/^현대/u, "Hyundai"],
@@ -63,7 +64,7 @@ function imageUrls(bundle: EncarBundle) {
       const typeOrder = (PHOTO_PRIORITY[left.type ?? ""] ?? 9) - (PHOTO_PRIORITY[right.type ?? ""] ?? 9);
       return typeOrder || String(left.code ?? "").localeCompare(String(right.code ?? ""));
     })
-    .map((photo) => `https://ci.encar.com${photo.path}`)
+    .map((photo) => encarPhotoUrl(`https://ci.encar.com${photo.path}`))
     .filter((url, index, urls) => urls.indexOf(url) === index)
     .slice(0, 30);
 }

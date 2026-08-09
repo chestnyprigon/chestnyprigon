@@ -11,7 +11,6 @@ const nextConfig: NextConfig = {
         hostname: "ci.encar.com",
         port: "",
         pathname: "/**",
-        search: "",
       },
     ],
   },
