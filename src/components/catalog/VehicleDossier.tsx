@@ -2,8 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, FileSearch, KeyRound, ShieldCheck, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, FileSearch, KeyRound, Maximize2, Minus, Plus, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
 
@@ -70,6 +70,8 @@ function InsuranceBreakdown({ events }: { events: AccidentSummary["insuranceEven
 
 export function VehicleDossier({ car }: { car: CatalogCar }) {
   const [photo, setPhoto] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const [preferential, setPreferential] = useState(true);
   const calculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential }), [car, preferential]);
   const standardCodes = useMemo(() => new Set(car.inspection?.standardOptionCodes ?? []), [car.inspection?.standardOptionCodes]);
@@ -79,12 +81,29 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
     : car.accidents?.available || car.inspection
       ? { label: "Без ДТП по отчёту Encar", tone: "is-clear" }
       : { label: "История Encar", tone: "is-neutral" };
+  const changePhoto = useCallback((offset: number) => {
+    setPhoto((current) => (current + offset + car.images.length) % car.images.length);
+    setZoom(1);
+  }, [car.images.length]);
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxOpen(false);
+      if (event.key === "ArrowLeft") changePhoto(-1);
+      if (event.key === "ArrowRight") changePhoto(1);
+      if (event.key === "+" || event.key === "=") setZoom((value) => Math.min(2.5, value + .25));
+      if (event.key === "-") setZoom((value) => Math.max(1, value - .25));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [changePhoto, lightboxOpen]);
 
   return <main className="dossier-page">
     <header className="dossier-header"><Link href="/catalog"><ArrowLeft size={16} />Вернуться в каталог</Link><span>ЧЕСТНЫЙ <em>ПРИГОН</em> · Корея</span><Link href="/#contacts">Получить консультацию <ArrowRight size={15} /></Link></header>
     <section className="dossier-layout">
       <div className="dossier-content">
-        <section className="dossier-gallery"><div className="dossier-main-photo"><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}`} fill priority sizes="(max-width: 1024px) 100vw, 760px" /><span className={`dossier-history-badge ${historyBadge.tone}`}><ShieldCheck size={14} />{historyBadge.label}</span><small>{photo + 1} / {car.images.length}</small></div><div className="dossier-thumbs">{car.images.slice(0, 6).map((image, index) => <button key={image} type="button" className={index === photo ? "is-active" : ""} onClick={() => setPhoto(index)}><Image src={image} alt={`${car.brand} ${car.model}, фото ${index + 1}`} fill sizes="110px" />{index === 5 && car.images.length > 6 ? <b>Ещё {car.images.length - 6}</b> : null}</button>)}</div></section>
+        <section className="dossier-gallery"><button className="dossier-main-photo" type="button" onClick={() => { setZoom(1); setLightboxOpen(true); }} aria-label="Открыть фотографию в полном размере"><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}`} fill priority sizes="(max-width: 1024px) 100vw, 760px" /><span className={`dossier-history-badge ${historyBadge.tone}`}><ShieldCheck size={14} />{historyBadge.label}</span><small>{photo + 1} / {car.images.length}</small><i><Maximize2 size={18} />Открыть фото</i></button><div className="dossier-thumbs">{car.images.slice(0, 6).map((image, index) => <button key={image} type="button" className={index === photo ? "is-active" : ""} onClick={() => setPhoto(index)}><Image src={image} alt={`${car.brand} ${car.model}, фото ${index + 1}`} fill sizes="110px" />{index === 5 && car.images.length > 6 ? <b>Ещё {car.images.length - 6}</b> : null}</button>)}</div></section>
 
         <section className="dossier-card"><h2><CarFront />Общие данные</h2><div className="dossier-spec-cards"><div><span>Год регистрации</span><b>{date(car.registrationDate)}</b></div><div><span>Пробег</span><b>{number.format(car.mileage)} км</b></div><div><span>Двигатель</span><b>{car.engine}</b></div><div><span>Топливо</span><b>{car.fuel}</b></div></div><div className="dossier-lines"><div><span>Коробка передач</span><b>{car.transmission}</b></div><div><span>Привод</span><b>{car.drive}</b></div><div><span>Тип кузова</span><b>{car.bodyType}</b></div><div><span>Цвет</span><b>{car.color}</b></div></div></section>
 
@@ -94,6 +113,6 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
       </div>
 
       <aside className="dossier-price"><div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div><div className="dossier-total"><span>Предварительная цена под ключ</span><strong>{money.format(calculation.totalUsd)}</strong><small>с доставкой и оформлением в Беларуси</small></div><div className="dossier-price-bar"><i /><i /><i /></div><div className="dossier-price-legend"><span>Стоимость авто</span><span>Расходы в Корее</span><span>Логистика и услуги</span></div><div className="dossier-notice">Итог зависит от курса, даты оформления и параметров автомобиля.</div><div className="dossier-lines dossier-price-lines"><div><span>Цена автомобиля в Корее</span><b>{krw(car.sourcePriceKrw)}</b></div></div><label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={car.fuel === "Электро"} onChange={(event) => setPreferential(event.target.checked)} />Льготная растаможка</label><details className="dossier-calculation"><summary><Calculator size={15} />Показать расчёт цены <ChevronDown size={16} /></summary><div>{[["Авто и расходы в Корее", calculation.koreaAndExportUsd], ["Доставка до Минска", calculation.deliveryUsd], ["Транзитная декларация", calculation.transitUsd], ["Растаможка", calculation.customsDutyUsd], ["СВХ, платежи и утиль", calculation.customsServicesUsd], ["Подбор и сопровождение", calculation.companyServicesUsd]].map(([label, value]) => <p key={String(label)}><span>{label}</span><b>{money.format(Number(value))}</b></p>)}</div></details><Link className="dossier-lead" href="/#contacts">Оставить заявку <ArrowRight size={17} /></Link></aside>
-    </section>
+    </section>{lightboxOpen ? <div className="dossier-lightbox" role="dialog" aria-modal="true" aria-label="Просмотр фотографий" onClick={() => setLightboxOpen(false)}><div className="dossier-lightbox-panel" onClick={(event) => event.stopPropagation()}><header><span>Фото {photo + 1} из {car.images.length}</span><div><button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom === 1} aria-label="Уменьшить"><Minus size={18} /></button><button type="button" onClick={() => setZoom((value) => Math.min(2.5, value + .25))} aria-label="Увеличить"><Plus size={18} /></button><button type="button" onClick={() => setLightboxOpen(false)} aria-label="Закрыть"><X size={20} /></button></div></header><div className={`dossier-lightbox-image ${zoom > 1 ? "is-zoomed" : ""}`} onClick={() => setZoom((value) => value === 1 ? 1.75 : 1)}><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}, фото ${photo + 1}`} fill priority sizes="100vw" style={{ transform: `scale(${zoom})` }} /></div>{car.images.length > 1 ? <><button className="dossier-lightbox-nav is-prev" type="button" onClick={() => changePhoto(-1)} aria-label="Предыдущее фото"><ArrowLeft size={23} /></button><button className="dossier-lightbox-nav is-next" type="button" onClick={() => changePhoto(1)} aria-label="Следующее фото"><ArrowRight size={23} /></button></> : null}<footer>Клик по фото — масштаб · стрелки ← → — переключение · Esc — закрыть</footer></div></div> : null}
   </main>;
 }
