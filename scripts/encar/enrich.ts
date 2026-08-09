@@ -41,9 +41,13 @@ function delay(milliseconds: number) {
 }
 
 async function fetchJson(url: string) {
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
-  if (!response.ok) return null;
-  return response.json() as Promise<unknown>;
+  try {
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) return null;
+    return response.json() as Promise<unknown>;
+  } catch {
+    return null;
+  }
 }
 
 function flattenInspection(nodes: unknown, output: Array<{ title: string; status: string }>) {
@@ -82,6 +86,16 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
   const standardOptionCodes = Array.isArray(record(listingOptions).standard)
     ? (record(listingOptions).standard as unknown[]).map(string).filter((item): item is string => Boolean(item))
     : [];
+  const inspectionImages = Array.isArray(inspection.images)
+    ? inspection.images.flatMap((item) => {
+        const image = record(item);
+        const imagePath = string(image.path);
+        if (!imagePath) return [];
+        const sourceTitle = string(image.title);
+        const title = sourceTitle === "앞면" ? "Вид спереди" : sourceTitle === "뒷면" ? "Вид сзади" : "Фото осмотра";
+        return [{ url: imagePath.startsWith("http") ? imagePath : `https://ci.encar.com${imagePath}`, title }];
+      })
+    : [];
 
   return {
     state: string(record(detail.carStateType).title) ?? string(record(detail.boardStateType).title),
@@ -96,6 +110,7 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
     checks,
     bodyFindings,
     standardOptionCodes,
+    inspectionImages,
   };
 }
 

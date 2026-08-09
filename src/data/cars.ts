@@ -21,6 +21,7 @@ export type InspectionSummary = {
   checks: Array<{ title: string; status: string }>;
   bodyFindings: Array<{ title: string; statuses: string[] }>;
   standardOptionCodes: string[];
+  inspectionImages: Array<{ url: string; title: string }>;
 };
 
 export type AccidentSummary = {

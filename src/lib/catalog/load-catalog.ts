@@ -157,6 +157,14 @@ function parseInspection(value: unknown): InspectionSummary | null {
     standardOptionCodes: Array.isArray(summary.standardOptionCodes)
       ? summary.standardOptionCodes.filter((item): item is string => typeof item === "string")
       : [],
+    inspectionImages: Array.isArray(summary.inspectionImages)
+      ? summary.inspectionImages.flatMap((item) => {
+          const image = record(item);
+          const url = asString(image.url);
+          const title = asString(image.title);
+          return url && title ? [{ url, title }] : [];
+        })
+      : [],
   };
 }
 
