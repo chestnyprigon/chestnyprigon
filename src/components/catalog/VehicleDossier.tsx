@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, BadgeCheck, Calculator, CarFront, Check, ChevronDown, FileSearch, KeyRound, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, FileSearch, KeyRound, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
 
@@ -16,7 +16,7 @@ function date(value: string | null) {
   return Number.isNaN(parsed.valueOf()) ? value.slice(0, 10) : new Intl.DateTimeFormat("ru-RU", { month: "2-digit", year: "numeric" }).format(parsed);
 }
 
-function krw(value: number) { return `${number.format(value)} ₩`; }
+function krw(value: number) { return `${number.format(value)}\u00a0₩`; }
 
 const equipmentCatalog = [
   { name: "Экстерьер и интерьер", items: [["010", "Люк"], ["075", "LED-фары"], ["029", "Ксеноновые фары"], ["059", "Электропривод багажника"], ["080", "Доводчики дверей"], ["024", "Электроскладывание зеркал"], ["017", "Легкосплавные диски"], ["062", "Рейлинги на крыше"]] },
@@ -74,12 +74,17 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
   const calculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential }), [car, preferential]);
   const standardCodes = useMemo(() => new Set(car.inspection?.standardOptionCodes ?? []), [car.inspection?.standardOptionCodes]);
   const accident = Boolean(car.accidents?.accidentCount || car.inspection?.reportedAccident);
+  const historyBadge = car.accidents?.accidentCount
+    ? { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" }
+    : car.accidents?.available || car.inspection
+      ? { label: "Без ДТП по отчёту Encar", tone: "is-clear" }
+      : { label: "История Encar", tone: "is-neutral" };
 
   return <main className="dossier-page">
     <header className="dossier-header"><Link href="/catalog"><ArrowLeft size={16} />Вернуться в каталог</Link><span>ЧЕСТНЫЙ <em>ПРИГОН</em> · Корея</span><Link href="/#contacts">Получить консультацию <ArrowRight size={15} /></Link></header>
     <section className="dossier-layout">
       <div className="dossier-content">
-        <section className="dossier-gallery"><div className="dossier-main-photo"><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}`} fill priority sizes="(max-width: 1024px) 100vw, 760px" /><span><BadgeCheck size={14} />Проверено</span><small>{photo + 1} / {car.images.length}</small></div><div className="dossier-thumbs">{car.images.slice(0, 6).map((image, index) => <button key={image} type="button" className={index === photo ? "is-active" : ""} onClick={() => setPhoto(index)}><Image src={image} alt={`${car.brand} ${car.model}, фото ${index + 1}`} fill sizes="110px" />{index === 5 && car.images.length > 6 ? <b>Ещё {car.images.length - 6}</b> : null}</button>)}</div></section>
+        <section className="dossier-gallery"><div className="dossier-main-photo"><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}`} fill priority sizes="(max-width: 1024px) 100vw, 760px" /><span className={`dossier-history-badge ${historyBadge.tone}`}><ShieldCheck size={14} />{historyBadge.label}</span><small>{photo + 1} / {car.images.length}</small></div><div className="dossier-thumbs">{car.images.slice(0, 6).map((image, index) => <button key={image} type="button" className={index === photo ? "is-active" : ""} onClick={() => setPhoto(index)}><Image src={image} alt={`${car.brand} ${car.model}, фото ${index + 1}`} fill sizes="110px" />{index === 5 && car.images.length > 6 ? <b>Ещё {car.images.length - 6}</b> : null}</button>)}</div></section>
 
         <section className="dossier-card"><h2><CarFront />Общие данные</h2><div className="dossier-spec-cards"><div><span>Год регистрации</span><b>{date(car.registrationDate)}</b></div><div><span>Пробег</span><b>{number.format(car.mileage)} км</b></div><div><span>Двигатель</span><b>{car.engine}</b></div><div><span>Топливо</span><b>{car.fuel}</b></div></div><div className="dossier-lines"><div><span>Коробка передач</span><b>{car.transmission}</b></div><div><span>Привод</span><b>{car.drive}</b></div><div><span>Тип кузова</span><b>{car.bodyType}</b></div><div><span>Цвет</span><b>{car.color}</b></div></div></section>
 
