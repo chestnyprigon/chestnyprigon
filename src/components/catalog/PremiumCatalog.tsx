@@ -92,12 +92,6 @@ export function PremiumCatalog({ cars }: { cars: CatalogCar[] }) {
     setMaxPrice("100000");
     setMaxMileage("150000");
   };
-  const openCar = (car: CatalogCar) => {
-    setSelected(car);
-    setSelectedImage(car.images[0]);
-    setPreferential(true);
-    setAllOptionsOpen(false);
-  };
   const detailCalculation = useMemo(
     () =>
       selected
@@ -143,8 +137,8 @@ export function PremiumCatalog({ cars }: { cars: CatalogCar[] }) {
         <div className="catalog-results">
           <div className="results-toolbar"><div><strong>{visible.length} автомобилей</strong><span>Encar · полная карточка · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => <article className="result-car" key={car.id}>
-            <button className="result-car-media" type="button" onClick={() => openCar(car)}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span>{car.status}</span><small>КОРЕЯ 🇰🇷</small></button>
-            <div className="result-car-body"><p>{car.location} · Encar</p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{money.format(car.price)}</strong><small>под ключ в Минске</small></div><button type="button" onClick={() => openCar(car)}>Карточка <ArrowRight size={15} /></button></footer></div>
+            <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span>{car.status}</span><small>КОРЕЯ 🇰🇷</small></Link>
+            <div className="result-car-body"><p>{car.location} · Encar</p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{money.format(car.price)}</strong><small>под ключ в Минске</small></div><Link href={`/catalog/${car.id}`}>Карточка <ArrowRight size={15} /></Link></footer></div>
           </article>)}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
         </div>
       </section>
