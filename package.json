@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "encar:pilot": "tsx scripts/encar/pilot.ts",
-    "test:encar": "tsx --test scripts/encar/*.test.ts"
+    "test:encar": "tsx --test scripts/encar/*.test.ts",
+    "pricing:recalculate": "tsx scripts/pricing/recalculate.ts",
+    "test:pricing": "tsx --test src/lib/pricing/*.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",

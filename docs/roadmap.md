@@ -9,8 +9,8 @@ Scope: South Korea only, prices shown in USD, no admin panel. Autoexport remains
 | 3 | Implement Chestny Prigon design | Complete | Main page and catalog UX approved on desktop and mobile |
 | 4 | Encar parser and Korea catalog ingestion | Pilot complete | Two controlled batches were fetched into private raw storage; 34 unique vehicles were normalized without publication |
 | 5 | Filter ineligible/problematic listings | Pilot complete, expansion pending | Versioned screening runs before normalization; six rental/commercial rows were rejected and remained private |
-| 6 | Vehicle card | UI complete | Replace demo content with normalized Encar fields, photos, history and availability |
-| 7 | Belarus calculator in USD | Pending | Implement the provisional Emavto-compatible structure, then replace constants with client-approved tariffs/formula |
+| 6 | Vehicle card | Complete for catalog MVP | Real normalized Encar fields, image gallery, source link and screening state are connected |
+| 7 | Belarus calculator in USD | Preliminary profile complete | Emavto HAR structure is reproduced and tested; replace versioned rates and company costs after client approval |
 | 8 | Contact modal and lead delivery | UI complete, delivery pending | Connect the existing modal/forms to the approved Telegram/CRM/email destination |
 | 9 | Testing, SEO, mobile and launch | Partially complete | Final data, performance, accessibility, SEO, analytics and deployment checks pass |
 | 10 | Scale catalog to target volume | Pending | Increase ingestion safely after freshness, filtering and query performance are proven |
@@ -31,3 +31,11 @@ This prevents lease, rental, taxi, commercial and problematic listings from appe
 - Korean rental plate markers `하`, `허`, `호`, explicit rental/taxi/lease trims, `leaseRentInfo`, commercial body/trim terms and invalid/problem fields are screened before publication.
 - `catalog_vehicles` remains empty. Publishing is a separate explicit operation and the database trigger refuses rows that did not pass screening.
 - Before scaling, add incremental cursors, retry/backoff, disappearance handling and a representative stratified validation sample rather than relying only on the newest page.
+
+## Stage 6–7 checkpoint (2026-08-09)
+
+- The public catalog now reads the approved Supabase view instead of demo data.
+- 33 vehicles have complete pricing inputs and are published with real Encar images and a preliminary under-key USD total.
+- The modal card contains an image gallery, normalized specifications, source link and an itemized calculator with a preferential-customs switch.
+- The calculator profile reproduces the Emavto HAR rates and branches and is covered by deterministic tests; see `docs/architecture/pricing.md`.
+- One hydrogen vehicle remains private because the reference formula cannot calculate its customs duty without guessing.
