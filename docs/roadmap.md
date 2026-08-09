@@ -7,8 +7,8 @@ Scope: South Korea only, prices shown in USD, no admin panel. Autoexport remains
 | 1 | Approve concept and MVP | Complete | Korea-only scope, no admin panel, paid developer support model agreed |
 | 2 | Create standalone project and Supabase | Complete | Independent Next.js and Supabase projects are linked; migrations, RLS and public/private access are verified |
 | 3 | Implement Chestny Prigon design | Complete | Main page and catalog UX approved on desktop and mobile |
-| 4 | Encar parser and Korea catalog ingestion | Next | A controlled test batch is fetched into private raw storage and normalized |
-| 5 | Filter ineligible/problematic listings | Designed with stage 4 | Screening runs before publication; rejected rows remain private |
+| 4 | Encar parser and Korea catalog ingestion | Pilot complete | Two controlled batches were fetched into private raw storage; 34 unique vehicles were normalized without publication |
+| 5 | Filter ineligible/problematic listings | Pilot complete, expansion pending | Versioned screening runs before normalization; six rental/commercial rows were rejected and remained private |
 | 6 | Vehicle card | UI complete | Replace demo content with normalized Encar fields, photos, history and availability |
 | 7 | Belarus calculator in USD | Pending | Implement the provisional Emavto-compatible structure, then replace constants with client-approved tariffs/formula |
 | 8 | Contact modal and lead delivery | UI complete, delivery pending | Connect the existing modal/forms to the approved Telegram/CRM/email destination |
@@ -22,3 +22,12 @@ The initial ingestion and filtering are one pipeline, not two independent bulk o
 `Encar response → private raw row → normalized fields → versioned screening → public catalog`
 
 This prevents lease, rental, taxi, commercial and problematic listings from appearing even temporarily. The first parser run must be a limited verification batch; full initial loading begins only after screening precision and update/removal behavior are checked.
+
+## Stage 4–5 pilot checkpoint (2026-08-09)
+
+- Encar domestic stream reported about 61.5k listings matching the initial year, mileage and price envelope before detailed screening.
+- Two live 20-row batches completed: 40 unique raw rows, 34 private normalized vehicles and 970 private image rows.
+- Five commercial vehicles and one rental version were rejected using structured vehicle fields. Seller marketing text is intentionally not treated as proof of lease/taxi/commercial use because it commonly mentions financing or negates prior use.
+- Korean rental plate markers `하`, `허`, `호`, explicit rental/taxi/lease trims, `leaseRentInfo`, commercial body/trim terms and invalid/problem fields are screened before publication.
+- `catalog_vehicles` remains empty. Publishing is a separate explicit operation and the database trigger refuses rows that did not pass screening.
+- Before scaling, add incremental cursors, retry/backoff, disappearance handling and a representative stratified validation sample rather than relying only on the newest page.

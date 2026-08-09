@@ -10,6 +10,24 @@ The public catalog is isolated from source payloads and parser internals.
 
 Publication is protected twice: row-level security only exposes active public rows, and the database trigger refuses to publish a vehicle until its screening row is approved with every exclusion flag clear.
 
+## Encar pilot commands
+
+The parser is dry-run by default and is capped at 100 rows:
+
+```bash
+npm run encar:pilot -- --limit=20
+```
+
+Write a screened batch to private raw/normalized tables without exposing it on the website:
+
+```bash
+npm run encar:pilot -- --limit=20 --write
+```
+
+`--publish` is intentionally separate and requires `--write`. It must not be used until the normalized fields, calculator inputs and catalog card are approved. Search advertisements are deduplicated by Encar's canonical vehicle ID; the current advertisement ID remains in the private payload and source URL.
+
+Screening rule set `2026-08-09.1` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.”
+
 ## Remote project safety
 
 This repository must only be linked to a newly created Supabase project for Chestny Prigon. Never link it to Autoexport or TMA. Before every remote migration, verify the linked reference with `supabase projects list` and preview changes with `supabase db push --dry-run`.
