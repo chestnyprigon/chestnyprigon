@@ -45,6 +45,12 @@ function formatDate(value: string | null) {
     : new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
 
+function historyBadge(car: CatalogCar) {
+  if (car.accidents?.accidentCount) return { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" };
+  if (car.accidents?.available || car.inspection) return { label: "Без ДТП", tone: "is-clear" };
+  return { label: "История Encar", tone: "is-neutral" };
+}
+
 export function PremiumCatalog({ cars }: { cars: CatalogCar[] }) {
   const brands = useMemo(() => ["Все", ...new Set(cars.map((car) => car.brand))], [cars]);
   const [query, setQuery] = useState("");
@@ -136,10 +142,10 @@ export function PremiumCatalog({ cars }: { cars: CatalogCar[] }) {
 
         <div className="catalog-results">
           <div className="results-toolbar"><div><strong>{visible.length} автомобилей</strong><span>Encar · полная карточка · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
-          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => <article className="result-car" key={car.id}>
-            <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span>{car.status}</span><small>КОРЕЯ 🇰🇷</small></Link>
-            <div className="result-car-body"><p>{car.location} · Encar</p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{money.format(car.price)}</strong><small>под ключ в Минске</small></div><Link href={`/catalog/${car.id}`}>Карточка <ArrowRight size={15} /></Link></footer></div>
-          </article>)}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
+          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); return <article className="result-car" key={car.id}>
+            <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span><small>ENCAR · 🇰🇷</small></Link>
+            <div className="result-car-body"><p>{car.location} · Encar</p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{money.format(car.price)}</strong><small>под ключ в Минске</small></div></footer></div>
+          </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
         </div>
       </section>
 
