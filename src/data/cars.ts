@@ -41,6 +41,14 @@ export type AccidentSummary = {
   floodPartLossCount: number;
   theftCount: number;
   loanCount: number;
+  insuranceEvents: Array<{
+    date: string;
+    type: string;
+    amountKrw: number;
+    partsKrw: number | null;
+    paintingKrw: number | null;
+    laborKrw: number | null;
+  }>;
 };
 
 export type CatalogCar = {

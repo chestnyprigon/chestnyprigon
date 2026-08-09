@@ -199,6 +199,17 @@ function parseAccidents(value: unknown): AccidentSummary | null {
     floodPartLossCount: asNumber(summary.floodPartLossCount),
     theftCount: asNumber(summary.theftCount),
     loanCount: asNumber(summary.loanCount),
+    insuranceEvents: Array.isArray(summary.insuranceEvents)
+      ? summary.insuranceEvents.flatMap((item) => {
+          const event = record(item);
+          const date = asString(event.date);
+          const type = asString(event.type);
+          const amountKrw = asNumber(event.amountKrw);
+          return date && type && amountKrw
+            ? [{ date, type, amountKrw, partsKrw: asNumber(event.partsKrw) || null, paintingKrw: asNumber(event.paintingKrw) || null, laborKrw: asNumber(event.laborKrw) || null }]
+            : [];
+        })
+      : [],
   };
 }
 

@@ -13,6 +13,11 @@ const headers = {
   Origin: "https://www.encar.com",
 };
 
+const historyHeaders = {
+  ...headers,
+  Authorization: "Bearer WqtHVjmpGX7lWsf63vwCGVPrF1BzYk",
+};
+
 type RecordValue = Record<string, unknown>;
 
 function requireEnvironment(name: string) {
@@ -40,9 +45,9 @@ function delay(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function fetchJson(url: string) {
+async function fetchJson(url: string, requestHeaders = headers) {
   try {
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+    const response = await fetch(url, { headers: requestHeaders, signal: AbortSignal.timeout(20_000) });
     if (!response.ok) return null;
     return response.json() as Promise<unknown>;
   } catch {
@@ -118,8 +123,32 @@ function inspectionSummary(payload: unknown, listingPayload: unknown) {
   };
 }
 
-function accidentSummary(payload: unknown) {
+function historyType(value: string | null) {
+  if (value === "USE_MY_INSURANCE") return "Выплата по страховке владельца";
+  if (value === "USE_OTHER_INSURANCE") return "Выплата по страховке другого участника";
+  if (value === "PROPERTY_DAMAGE") return "Страховой случай: имущественный ущерб";
+  return "Страховой случай";
+}
+
+function accidentSummary(payload: unknown, historyPayload: unknown) {
   const report = record(payload);
+  const history = record(historyPayload);
+  const insuranceEvents = Array.isArray(history.accidentHistoryResponse)
+    ? history.accidentHistoryResponse.flatMap((item) => {
+        const event = record(item);
+        const date = string(event.accidentDate);
+        const amountKrw = number(event.repairCost);
+        if (!date || !amountKrw) return [];
+        return [{
+          date,
+          type: historyType(string(event.accidentType)),
+          amountKrw,
+          partsKrw: number(event.partCost) || null,
+          paintingKrw: number(event.paintingCost) || null,
+          laborKrw: number(event.laborCost) || null,
+        }];
+      }).sort((left, right) => right.date.localeCompare(left.date))
+    : [];
   return {
     available: Boolean(report.openData),
     accidentCount: number(report.accidentCnt),
@@ -133,6 +162,7 @@ function accidentSummary(payload: unknown) {
     floodPartLossCount: number(report.floodPartLossCnt),
     theftCount: number(report.robberCnt),
     loanCount: number(report.loan),
+    insuranceEvents,
   };
 }
 
@@ -181,12 +211,13 @@ async function main() {
       continue;
     }
 
-    const [optionsPayload, inspectionPayload, accidentPayload] = await Promise.all([
+    const [optionsPayload, inspectionPayload, accidentPayload, historyPayload] = await Promise.all([
       fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${canonicalId}/options/choice`),
       fetchJson(`https://api.encar.com/v1/readside/inspection/vehicle/${canonicalId}`),
       fetchJson(
         `https://api.encar.com/v1/readside/record/vehicle/${canonicalId}/open?vehicleNo=${encodeURIComponent(vehicleNo)}`,
       ),
+      fetchJson(`https://api.encar.com/v1/vehicle/resume?vehicleNo=${encodeURIComponent(vehicleNo)}`, historyHeaders),
     ]);
     const options = Array.isArray(optionsPayload)
       ? optionsPayload.slice(0, 80).flatMap((option) => {
@@ -198,7 +229,7 @@ async function main() {
         })
       : [];
     const inspection = inspectionSummary(inspectionPayload, payload);
-    const accidents = accidentSummary(accidentPayload);
+    const accidents = accidentSummary(accidentPayload, historyPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
     const hardExclusion = flags.rental || flags.taxi || flags.commercial;
