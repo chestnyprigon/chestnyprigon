@@ -39,6 +39,21 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      vehicle_reports: {
+        Row: {
+          vehicle_id: string;
+          canonical_vehicle_id: string;
+          options: Json;
+          inspection_summary: Json;
+          accident_summary: Json;
+          report_status: string;
+          fetched_at: string;
+          updated_at: string;
+        };
+        Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
     };
     Views: {
       catalog_vehicles: {
@@ -61,10 +76,17 @@ export type Database = {
           body_type: string | null;
           exterior_color: string | null;
           location: string | null;
+          vin_masked: string | null;
           source_url: string | null;
+          source_updated_at: string | null;
           published_at: string | null;
           last_seen_at: string | null;
           image_urls: string[] | null;
+          report_options: Json | null;
+          inspection_summary: Json | null;
+          accident_summary: Json | null;
+          report_status: string | null;
+          report_fetched_at: string | null;
         };
         Relationships: [];
       };

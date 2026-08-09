@@ -6,7 +6,8 @@ The public catalog is isolated from source payloads and parser internals.
 2. `encar_raw_listings` stores the original source payload privately.
 3. `listing_screening` records the versioned eligibility decision.
 4. Only approved listings are normalized into `vehicles` and marked public.
-5. `catalog_vehicles` is the read model exposed to the website.
+5. `vehicle_reports` stores a public-safe summary of Encar options, inspection and accident reports.
+6. `catalog_vehicles` is the read model exposed to the website.
 
 Publication is protected twice: row-level security only exposes active public rows, and the database trigger refuses to publish a vehicle until its screening row is approved with every exclusion flag clear.
 
@@ -25,6 +26,16 @@ npm run encar:pilot -- --limit=20 --write
 ```
 
 `--publish` is intentionally separate and requires `--write`. It must not be used until the normalized fields, calculator inputs and catalog card are approved. Search advertisements are deduplicated by Encar's canonical vehicle ID; the current advertisement ID remains in the private payload and source URL.
+
+## Encar report enrichment
+
+After a controlled write, request the canonical Encar options, inspection and accident endpoints and store only the safe display summary:
+
+```bash
+npm run encar:enrich -- --apply-screening
+```
+
+`--apply-screening` removes from public visibility any vehicle whose inspection report confirms rental, taxi or commercial use. Vehicles with a reported accident are sent for manual review. License plates, raw VIN values and source report payloads never enter the public read model.
 
 Screening rule set `2026-08-09.1` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.”
 
