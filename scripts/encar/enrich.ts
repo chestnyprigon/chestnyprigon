@@ -2,6 +2,7 @@ import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
+import { reportScreening } from "./report-screening";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -44,6 +45,16 @@ function number(value: unknown) {
 
 function delay(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function integerArgument(name: string, fallback: number, minimum: number, maximum: number) {
+  const prefix = `--${name}=`;
+  const raw = process.argv.slice(2).find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  const parsed = raw === undefined ? fallback : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`--${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return parsed;
 }
 
 async function fetchJson(url: string, requestHeaders = headers) {
@@ -190,28 +201,53 @@ function usageFlags(summary: ReturnType<typeof inspectionSummary>) {
 
 async function main() {
   const applyScreening = process.argv.includes("--apply-screening");
+  const publishEligible = process.argv.includes("--publish-eligible");
+  const onlyMissing = process.argv.includes("--only-missing");
+  const limit = integerArgument("limit", 2_000, 1, 10_000);
+  if (publishEligible && !applyScreening) throw new Error("--publish-eligible requires --apply-screening");
   const client = createClient(
     requireEnvironment("NEXT_PUBLIC_SUPABASE_URL"),
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
-  const { data: vehicles, error: vehicleError } = await client
+  const { data: selectedVehicles, error: vehicleError } = await client
     .from("vehicles")
-    .select("id,source_listing_id")
+    .select("id,source_listing_id,price_usd")
     .eq("status", "active")
-    .limit(100);
+    .order("created_at", { ascending: true })
+    .limit(limit);
   if (vehicleError) throw new Error(vehicleError.message);
+  let vehicles = selectedVehicles ?? [];
+  if (onlyMissing && vehicles.length) {
+    const vehicleIds = vehicles.map((vehicle) => vehicle.id);
+    const reportedIds = new Set<string>();
+    for (let offset = 0; offset < vehicleIds.length; offset += 200) {
+      const { data, error } = await client
+        .from("vehicle_reports")
+        .select("vehicle_id")
+        .in("vehicle_id", vehicleIds.slice(offset, offset + 200));
+      if (error) throw new Error(error.message);
+      for (const row of data ?? []) reportedIds.add(row.vehicle_id);
+    }
+    vehicles = vehicles.filter((vehicle) => !reportedIds.has(vehicle.id));
+  }
+  console.log(`Enriching ${vehicles.length} active vehicles${onlyMissing ? " without reports" : ""}.`);
   const sourceIds = (vehicles ?? []).map((vehicle) => vehicle.source_listing_id);
-  const { data: rawRows, error: rawError } = await client
-    .from("encar_raw_listings")
-    .select("source_listing_id,payload")
-    .in("source_listing_id", sourceIds);
-  if (rawError) throw new Error(rawError.message);
+  const rawRows: Array<{ source_listing_id: string; payload: unknown }> = [];
+  for (let offset = 0; offset < sourceIds.length; offset += 50) {
+    const { data, error } = await client
+      .from("encar_raw_listings")
+      .select("source_listing_id,payload")
+      .in("source_listing_id", sourceIds.slice(offset, offset + 50));
+    if (error) throw new Error(error.message);
+    rawRows.push(...(data ?? []));
+  }
 
-  const rawBySource = new Map((rawRows ?? []).map((row) => [row.source_listing_id, row.payload]));
+  const rawBySource = new Map(rawRows.map((row) => [row.source_listing_id, row.payload]));
   const reportRows: RecordValue[] = [];
   const screeningRows: RecordValue[] = [];
   const unpublishIds: string[] = [];
+  const publishIds: string[] = [];
   let unavailable = 0;
 
   for (const vehicle of vehicles ?? []) {
@@ -245,7 +281,7 @@ async function main() {
     const accidents = accidentSummary(accidentPayload, historyPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
-    const hardExclusion = flags.rental || flags.taxi || flags.commercial;
+    const screening = reportScreening(flags, hasAccident);
 
     reportRows.push({
       vehicle_id: vehicle.id,
@@ -257,29 +293,24 @@ async function main() {
       fetched_at: new Date().toISOString(),
     });
 
-    if (applyScreening && (hardExclusion || hasAccident)) {
-      const reasonCodes = [
-        ...(flags.rental ? ["inspection_rental_history"] : []),
-        ...(flags.taxi ? ["inspection_taxi_history"] : []),
-        ...(flags.commercial ? ["inspection_commercial_history"] : []),
-        ...(hasAccident ? ["encar_accident_history"] : []),
-      ];
+    if (applyScreening) {
       screeningRows.push({
         source_listing_id: vehicle.source_listing_id,
-        decision: hardExclusion ? "rejected" : "manual_review",
+        decision: screening.decision,
         is_lease: false,
         is_rental: flags.rental,
         is_taxi: flags.taxi,
         is_commercial: flags.commercial,
-        is_problematic: hasAccident,
-        reason_codes: reasonCodes,
-        rules_version: "2026-08-09.2-enrichment",
+        is_problematic: screening.isProblematic,
+        reason_codes: screening.reasonCodes,
+        rules_version: "2026-08-12.1-report-disclosure",
         details: { inspection, accidents },
       });
-      unpublishIds.push(vehicle.id);
+      if (screening.hardExclusion) unpublishIds.push(vehicle.id);
+      else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
     }
 
-    console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${hardExclusion ? ", excluded" : hasAccident ? ", review" : ""}`);
+    console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.hardExclusion ? ", excluded" : hasAccident ? ", disclosed" : ""}`);
     await delay(350);
   }
 
@@ -292,11 +323,20 @@ async function main() {
       .from("listing_screening")
       .upsert(screeningRows, { onConflict: "source_listing_id" });
     if (screeningError) throw new Error(screeningError.message);
-    const { error: unpublishError } = await client
-      .from("vehicles")
-      .update({ is_public: false })
-      .in("id", unpublishIds);
-    if (unpublishError) throw new Error(unpublishError.message);
+    if (unpublishIds.length) {
+      const { error: unpublishError } = await client
+        .from("vehicles")
+        .update({ is_public: false })
+        .in("id", unpublishIds);
+      if (unpublishError) throw new Error(unpublishError.message);
+    }
+    if (publishIds.length) {
+      const { error: publishError } = await client
+        .from("vehicles")
+        .update({ is_public: true })
+        .in("id", publishIds);
+      if (publishError) throw new Error(publishError.message);
+    }
   }
 
   console.log({
@@ -304,6 +344,7 @@ async function main() {
     unavailable,
     screeningApplied: applyScreening,
     unpublished: unpublishIds.length,
+    published: publishIds.length,
   });
 }
 

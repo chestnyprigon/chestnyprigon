@@ -61,7 +61,7 @@ async function main() {
           .update({
             price_usd: calculation.totalUsd,
             krw_per_usd: EMAVTO_PRELIMINARY_PROFILE.rates.krwPerUsd,
-            is_public: publish,
+            ...(publish ? { is_public: true } : {}),
           })
           .eq("id", id);
         if (updateError) throw new Error(`${id}: ${updateError.message}`);

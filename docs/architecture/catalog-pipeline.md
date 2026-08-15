@@ -22,10 +22,10 @@ npm run encar:pilot -- --limit=20
 Write a screened batch to private raw/normalized tables without exposing it on the website:
 
 ```bash
-npm run encar:pilot -- --limit=20 --write
+npm run encar:pilot -- --offset=40 --limit=60 --write
 ```
 
-`--publish` is intentionally separate and requires `--write`. It must not be used until the normalized fields, calculator inputs and catalog card are approved. Search advertisements are deduplicated by Encar's canonical vehicle ID; the current advertisement ID remains in the private payload and source URL.
+`--offset` selects the next search window so expansion does not intentionally reread the first page. `--publish` is intentionally separate and requires `--write`. It must not be used until the normalized fields, calculator inputs and catalog card are approved. Search advertisements are deduplicated by Encar's canonical vehicle ID; the current advertisement ID remains in the private payload and source URL. Re-seen vehicles keep their existing calculated price and publication state until the dedicated pricing and report stages run.
 
 ## Encar report enrichment
 
@@ -35,9 +35,19 @@ After a controlled write, request the canonical Encar options, inspection and ac
 npm run encar:enrich -- --apply-screening
 ```
 
-`--apply-screening` removes from public visibility any vehicle whose inspection report confirms rental, taxi or commercial use. Vehicles with a reported accident are sent for manual review. License plates, raw VIN values and source report payloads never enter the public read model.
+For a resumable scale run, collect private rows first and then enrich only vehicles that do not yet have a canonical report:
 
-Screening rule set `2026-08-09.1` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.”
+```bash
+npm run encar:scale -- --target=1000
+npm run pricing:recalculate
+npm run encar:enrich -- --only-missing --limit=2000 --apply-screening --publish-eligible
+```
+
+If a moving Encar search window is exhausted mostly by canonical duplicates, resume from an explicitly verified later window with `--search-offset=<offset>`. Stored canonical IDs remain deduplicated, so this does not create duplicate public cards.
+
+`--apply-screening` removes from public visibility any vehicle whose inspection report confirms rental, taxi or commercial use. A reported accident remains visible as factual Encar history: the public card displays available insurance events, payment amounts and body repair/replacement findings. License plates, raw VIN values and source report payloads never enter the public read model.
+
+Screening rule set `2026-08-12.1-report-disclosure` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.” Accident and repair evidence is retained for disclosure instead of being classified as problematic.
 
 ## Remote project safety
 

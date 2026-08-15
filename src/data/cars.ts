@@ -76,6 +76,7 @@ export type CatalogCar = {
   images: string[];
   imageGroups: Array<{ url: string; group: "Кузов" | "Салон" | "Детали" | "Другие фото" }>;
   sourceUrl: string;
+  publishedAt: string | null;
   sourceUpdatedAt: string | null;
   lastSeenAt: string | null;
   status: "Проверено";

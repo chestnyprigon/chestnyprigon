@@ -23,10 +23,12 @@ export type Database = {
           body_type: string | null;
           exterior_color: string | null;
           location: string | null;
+          vin_masked: string | null;
           source_url: string;
           status: string;
           is_public: boolean;
           published_at: string | null;
+          source_updated_at: string | null;
           last_seen_at: string;
         };
         Insert: Record<string, never>;

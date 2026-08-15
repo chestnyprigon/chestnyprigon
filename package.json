@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "encar:pilot": "tsx scripts/encar/pilot.ts",
+    "encar:scale": "tsx scripts/encar/scale.ts",
     "encar:enrich": "tsx scripts/encar/enrich.ts",
     "encar:upgrade-images": "tsx scripts/encar/upgrade-image-urls.ts",
     "encar:backfill-specs": "tsx scripts/encar/backfill-vehicle-specs.ts",

@@ -20,7 +20,18 @@ function numericArgument(name: string, fallback: number, maximum: number) {
   return parsed;
 }
 
+function nonNegativeNumericArgument(name: string, fallback: number, maximum: number) {
+  const prefix = `--${name}=`;
+  const raw = process.argv.slice(2).find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+  const parsed = raw === undefined ? fallback : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > maximum) {
+    throw new Error(`--${name} must be an integer from 0 to ${maximum}`);
+  }
+  return parsed;
+}
+
 const limit = numericArgument("limit", Number(process.env.ENCAR_PILOT_LIMIT ?? 20), 100);
+const offset = nonNegativeNumericArgument("offset", Number(process.env.ENCAR_PILOT_OFFSET ?? 0), 100_000);
 const detailDelayMs = numericArgument(
   "detail-delay-ms",
   Number(process.env.ENCAR_DETAIL_DELAY_MS ?? 350),
@@ -34,11 +45,11 @@ if (publish && !write) throw new Error("--publish requires --write");
 async function main() {
   const now = new Date();
   const query = createDomesticQuery(now.getFullYear() - 5, now.getFullYear(), 150_000);
-  const page = await fetchSearchPage({ offset: 0, limit, query });
+  const page = await fetchSearchPage({ offset, limit, query });
   const items: PilotItem[] = [];
 
   console.log(`Encar reports ${page.total.toLocaleString("en-US")} matching domestic listings before screening.`);
-  console.log(`Fetching ${page.listings.length} listings (${write ? "write" : "dry-run"}${publish ? ", publish" : ""}).`);
+  console.log(`Fetching ${page.listings.length} listings from offset ${offset} (${write ? "write" : "dry-run"}${publish ? ", publish" : ""}).`);
 
   for (const [index, listing] of page.listings.entries()) {
     try {
@@ -75,6 +86,7 @@ async function main() {
 
   console.log("\nPilot summary:", {
     requested: limit,
+    offset,
     fetched: items.length,
     fetchErrors: page.listings.length - items.length,
     decisions,

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { PremiumCatalog } from "@/components/catalog/PremiumCatalog";
-import { loadCatalogCars } from "@/lib/catalog/load-catalog";
+import { loadCatalogPage, type CatalogSearch } from "@/lib/catalog/load-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,22 @@ export const metadata: Metadata = {
   description: "Подбор автомобилей из Южной Кореи с доставкой в Беларусь и ценами в долларах США.",
 };
 
-export default async function CatalogPage() {
-  const cars = await loadCatalogCars();
-  return <PremiumCatalog cars={cars} />;
+function integer(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export default async function CatalogPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const get = (name: string) => typeof params[name] === "string" ? params[name] : undefined;
+  const search: CatalogSearch = {
+    page: integer(get("page"), 1), query: get("q"), brand: get("brand"), model: get("model"), fuel: get("fuel"),
+    yearFrom: integer(get("yearFrom"), 2021), yearTo: integer(get("yearTo"), 2026),
+    minPrice: integer(get("minPrice"), 0), maxPrice: integer(get("maxPrice"), 100_000), maxMileage: integer(get("maxMileage"), 150_000),
+    transmission: get("transmission"), drive: get("drive"), bodyType: get("bodyType"),
+    accidents: get("accidents") === "clear" ? "clear" : get("accidents") === "with" ? "with" : undefined,
+    sort: get("sort") === "price-asc" ? "price-asc" : get("sort") === "price-desc" ? "price-desc" : "newest",
+  };
+  const catalog = await loadCatalogPage(search);
+  return <PremiumCatalog catalog={catalog} initialSearch={search} />;
 }

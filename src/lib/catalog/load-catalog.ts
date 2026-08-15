@@ -1,8 +1,42 @@
 import "server-only";
 import type { AccidentSummary, CatalogCar, CarFuel, InspectionSummary, VehicleOption } from "@/data/cars";
+import type { BelarusPriceCalculation } from "@/lib/pricing/emavto-profile";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
 import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
+import type { Database } from "@/lib/supabase/database.types";
+
+type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
+type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
+
+export type CatalogSearch = {
+  page?: number;
+  perPage?: number;
+  query?: string;
+  brand?: string;
+  model?: string;
+  fuel?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  maxMileage?: number;
+  transmission?: string;
+  drive?: string;
+  bodyType?: string;
+  accidents?: "clear" | "with";
+  sort?: "newest" | "price-asc" | "price-desc";
+};
+
+export type CatalogPage = {
+  cars: CatalogCar[];
+  total: number;
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  brands: string[];
+  models: string[];
+};
 
 function fuelName(source: string | null): CarFuel {
   const fuel = (source ?? "").toLowerCase();
@@ -228,18 +262,8 @@ function parseAccidents(value: unknown): AccidentSummary | null {
   };
 }
 
-export async function loadCatalogCars(): Promise<CatalogCar[]> {
-  const client = createSupabasePublicServerClient();
-  const { data, error } = await client
-    .from("catalog_vehicles")
-    .select("*")
-    .order("model_year", { ascending: false })
-    .order("published_at", { ascending: false })
-    .limit(100);
-
-  if (error) throw new Error(`Catalog request failed: ${error.message}`);
-
-  return (data ?? []).flatMap((row) => {
+function mapCatalogRows(data: CatalogRow[]): CatalogCar[] {
+  return data.flatMap((row) => {
     if (
       !row.id ||
       !row.source_listing_id ||
@@ -289,6 +313,7 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
         images,
         imageGroups: parseImageGroups(row.inspection_summary, images),
         sourceUrl: row.source_url,
+        publishedAt: row.published_at,
         sourceUpdatedAt: row.source_updated_at,
         lastSeenAt: row.last_seen_at,
         status: "Проверено" as const,
@@ -301,4 +326,129 @@ export async function loadCatalogCars(): Promise<CatalogCar[]> {
       },
     ];
   });
+}
+
+function mapVehicleRows(
+  data: VehicleRow[],
+  imagesByVehicle: Map<string, string[]>,
+  reportsByVehicle: Map<string, { inspection_summary: unknown; accident_summary: unknown; report_status: string; fetched_at: string }>,
+): CatalogCar[] {
+  return data.flatMap((row) => {
+    const images = (imagesByVehicle.get(row.id) ?? []).map(encarPhotoUrl);
+    if (!images.length) return [];
+    const report = reportsByVehicle.get(row.id);
+    let calculation: BelarusPriceCalculation;
+    try {
+      calculation = calculateBelarusPrice({
+        priceKrw: Number(row.price_krw), engineCc: row.engine_cc, firstRegistrationDate: row.first_registration_date,
+        fuelType: row.fuel_type, preferential: true,
+      });
+    } catch {
+      return [];
+    }
+    return [{
+      id: row.id, sourceListingId: row.source_listing_id, brand: row.manufacturer, model: row.model,
+      trim: trimName(row.trim) ?? trimName(row.generation) ?? "Комплектация не указана", generation: trimName(row.generation),
+      year: row.model_year, registrationDate: row.first_registration_date, mileage: row.mileage_km,
+      engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро", engineCc: row.engine_cc,
+      fuel: fuelName(row.fuel_type), sourceFuel: normalizedSourceFuel(row.fuel_type), drive: resolvedDrive(row.drive_type, row.trim),
+      bodyType: bodyName(row.body_type), color: colorName(row.exterior_color), transmission: transmissionName(row.transmission),
+      vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd, sourcePriceKrw: Number(row.price_krw),
+      location: locationName(row.location), images, imageGroups: parseImageGroups(report?.inspection_summary, images), sourceUrl: row.source_url,
+      publishedAt: row.published_at, sourceUpdatedAt: row.source_updated_at, lastSeenAt: row.last_seen_at, status: "Проверено" as const,
+      calculation, options: [], inspection: parseInspection(report?.inspection_summary), accidents: parseAccidents(report?.accident_summary),
+      reportStatus: report?.report_status ?? null, reportFetchedAt: report?.fetched_at ?? null,
+    }];
+  });
+}
+
+function normalizedSearch(search: CatalogSearch) {
+  return {
+    page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
+    query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", fuel: search.fuel ?? "",
+    yearFrom: search.yearFrom ?? 2021, yearTo: search.yearTo ?? 2026, minPrice: search.minPrice ?? 0,
+    maxPrice: search.maxPrice ?? 100_000, maxMileage: search.maxMileage ?? 150_000,
+    transmission: search.transmission ?? "", drive: search.drive ?? "", bodyType: search.bodyType ?? "",
+    accidents: search.accidents, sort: search.sort ?? "newest" as const,
+  };
+}
+
+export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
+  const client = createSupabasePublicServerClient();
+  const input = normalizedSearch(search);
+  const from = (input.page - 1) * input.perPage;
+  let query = client
+    .from("vehicles")
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", { count: "exact" })
+    .eq("is_public", true).eq("status", "active")
+    .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
+    .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
+    .lte("mileage_km", input.maxMileage);
+  if (input.brand) query = query.eq("manufacturer", input.brand);
+  if (input.model) query = query.eq("model", input.model);
+  if (input.fuel) query = query.ilike("fuel_type", `%${input.fuel === "Бензин" ? "가솔린" : input.fuel}%`);
+  if (input.transmission) query = query.ilike("transmission", `%${input.transmission === "Автомат" ? "자동" : input.transmission}%`);
+  if (input.drive) query = query.ilike("drive_type", `%${input.drive === "Полный" ? "4" : input.drive}%`);
+  if (input.bodyType) query = query.ilike("body_type", `%${input.bodyType === "Минивэн" ? "승합" : input.bodyType}%`);
+  if (input.query) query = query.or(`manufacturer.ilike.%${input.query}%,model.ilike.%${input.query}%,trim.ilike.%${input.query}%`);
+  query = input.sort === "price-asc" ? query.order("price_usd", { ascending: true }) : input.sort === "price-desc" ? query.order("price_usd", { ascending: false }) : query.order("published_at", { ascending: false }).order("id", { ascending: false });
+  const { data: vehicles, error, count } = await query.range(from, from + input.perPage - 1);
+  if (error) throw new Error(`Catalog request failed: ${error.message}`);
+  const ids = (vehicles ?? []).map((vehicle) => vehicle.id);
+  const [imagesResult, reportsResult] = ids.length ? await Promise.all([
+    client.from("vehicle_images").select("vehicle_id,source_url,position").in("vehicle_id", ids).order("position", { ascending: true }),
+    client.from("vehicle_reports").select("vehicle_id,inspection_summary,accident_summary,report_status,fetched_at").in("vehicle_id", ids),
+  ]) : [{ data: [], error: null }, { data: [], error: null }];
+  if (imagesResult.error || reportsResult.error) throw new Error(`Catalog related data failed: ${imagesResult.error?.message ?? reportsResult.error?.message}`);
+  const imagesByVehicle = new Map<string, string[]>();
+  for (const image of imagesResult.data ?? []) imagesByVehicle.set(image.vehicle_id, [...(imagesByVehicle.get(image.vehicle_id) ?? []), image.source_url]);
+  const reportsByVehicle = new Map((reportsResult.data ?? []).map((report) => [report.vehicle_id, report]));
+  const publicBrands = ["Chevrolet", "Genesis", "Hyundai", "KGM", "Kia", "Renault Korea"];
+  const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle);
+  return { cars: pageCars, total: count ?? 0, page: input.page, perPage: input.perPage, hasMore: from + input.perPage < (count ?? 0), brands: publicBrands, models: [...new Set(pageCars.map((car) => car.model))] };
+}
+
+export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
+  const client = createSupabasePublicServerClient();
+  const pageSize = 100;
+  const rows: CatalogRow[] = [];
+
+  // `catalog_vehicles` joins photos and the Encar report. Requesting the full
+  // catalogue in one statement times out once the catalogue grows. Small pages
+  // keep each database query predictable while preserving the current UI.
+  for (let from = 0; from < limit; from += pageSize) {
+    const { data, error } = await client
+      .from("catalog_vehicles")
+      .select("*")
+      .order("model_year", { ascending: false })
+      .order("published_at", { ascending: false })
+      .range(from, Math.min(from + pageSize - 1, limit - 1));
+
+    if (error) throw new Error(`Catalog request failed: ${error.message}`);
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+  }
+
+  return mapCatalogRows(rows);
+}
+
+export async function loadCatalogCar(id: string): Promise<CatalogCar | null> {
+  const client = createSupabasePublicServerClient();
+  const byId = await client
+    .from("catalog_vehicles")
+    .select("*")
+    .eq("id", id)
+    .limit(1);
+
+  if (byId.error) throw new Error(`Vehicle request failed: ${byId.error.message}`);
+  if (byId.data?.length) return mapCatalogRows(byId.data)[0] ?? null;
+
+  const byListingId = await client
+    .from("catalog_vehicles")
+    .select("*")
+    .eq("source_listing_id", id)
+    .limit(1);
+
+  if (byListingId.error) throw new Error(`Vehicle request failed: ${byListingId.error.message}`);
+  return mapCatalogRows(byListingId.data ?? [])[0] ?? null;
 }

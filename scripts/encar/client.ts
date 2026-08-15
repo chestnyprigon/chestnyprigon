@@ -18,13 +18,18 @@ type SearchResponse = {
 };
 
 async function fetchJson<T>(url: URL | string): Promise<T> {
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
-
-  if (!response.ok) {
-    throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
+      return (await response.json()) as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await delay(500 * 2 ** (attempt - 1));
+    }
   }
-
-  return (await response.json()) as T;
+  throw lastError instanceof Error ? lastError : new Error(`Encar request failed for ${url}`);
 }
 
 export const delay = (milliseconds: number) =>
