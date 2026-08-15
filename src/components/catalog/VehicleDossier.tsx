@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, ExternalLink, FileSearch, KeyRound, Maximize2, Minus, Plus, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, ExternalLink, FileSearch, KeyRound, Maximize2, Menu, Minus, Plus, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
 import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
 
@@ -76,6 +76,7 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
   const [photoGroup, setPhotoGroup] = useState<GalleryGroup>("Все фото");
   const [zoom, setZoom] = useState(1);
   const [preferential, setPreferential] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
   const thumbsRef = useRef<HTMLDivElement>(null);
   const calculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential }), [car, preferential]);
   const standardCodes = useMemo(() => new Set(car.inspection?.standardOptionCodes ?? []), [car.inspection?.standardOptionCodes]);
@@ -116,8 +117,27 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [changePhoto, lightboxOpen]);
 
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [menuOpen]);
+
   return <main className="dossier-page">
-    <header className="dossier-header"><Link href="/catalog"><ArrowLeft size={16} />Вернуться в каталог</Link><span>ЧЕСТНЫЙ <em>ПРИГОН</em> · Корея</span><Link href="/#contacts">Получить консультацию <ArrowRight size={15} /></Link></header>
+    <header className="catalog-header">
+      <Link className="premium-brand" href="/" aria-label="На главную"><Image className="premium-brand-mark" src="/assets/logo-prigon.png" alt="" aria-hidden="true" width={800} height={719} priority /><span className="premium-brand-copy"><b>ЧЕСТНЫЙ <em>ПРИГОН</em></b><small>Автомобили<br />из-за границы</small></span></Link>
+      <nav className={menuOpen ? "catalog-nav is-open" : "catalog-nav"}>
+        <Link href="/" onClick={() => setMenuOpen(false)}>Главная</Link>
+        <Link className="is-active" href="/catalog" onClick={() => setMenuOpen(false)}>Каталог</Link>
+        <Link href="/#services" onClick={() => setMenuOpen(false)}>Услуги</Link>
+        <Link href="/#reviews" onClick={() => setMenuOpen(false)}>Отзывы</Link>
+        <Link href="/#contacts" onClick={() => setMenuOpen(false)}>Контакты</Link>
+      </nav>
+      <Link className="premium-header-cta" href="/#contacts">Получить консультацию <ArrowRight size={16} /></Link>
+      <button className="premium-menu-button" type="button" onClick={() => setMenuOpen((value) => !value)} aria-label="Меню">{menuOpen ? <X /> : <Menu />}</button>
+    </header>
+    <div className="dossier-contextbar"><Link href="/catalog"><ArrowLeft size={16} />К каталогу</Link></div>
     <section className="dossier-layout">
       <div className="dossier-content">
         <section className="dossier-vehicle-heading"><div><p>Автомобиль из Южной Кореи · Encar</p><h1>{car.brand} {car.model}</h1><h2>{car.trim}</h2></div><div className="dossier-vehicle-facts"><span>{car.year} год</span><span>{number.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span></div></section>
