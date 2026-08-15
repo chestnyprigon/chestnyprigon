@@ -126,7 +126,7 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
 
   return <main className="dossier-page">
     <header className="catalog-header">
-      <Link className="premium-brand" href="/" aria-label="На главную"><span className="premium-brand-art"><Image className="premium-brand-mark" src="/logo.jpeg" alt="Честный пригон" width={1280} height={1280} priority /></span></Link>
+      <Link className="premium-brand" href="/" aria-label="На главную"><span className="premium-brand-art"><Image className="premium-brand-mark" src="/assets/logo-header-dark.png" alt="Честный пригон" width={2172} height={724} priority /></span></Link>
       <nav className={menuOpen ? "catalog-nav is-open" : "catalog-nav"}>
         <Link href="/" onClick={() => setMenuOpen(false)}>Главная</Link>
         <Link className="is-active" href="/catalog" onClick={() => setMenuOpen(false)}>Каталог</Link>

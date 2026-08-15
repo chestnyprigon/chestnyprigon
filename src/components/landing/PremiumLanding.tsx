@@ -85,7 +85,7 @@ export function PremiumLanding({ cars }: { cars: CatalogCar[] }) {
 
   return <main>
     <header className="premium-header">
-      <a className="premium-brand" href="#home" aria-label="Честный пригон"><span className="premium-brand-art"><Image className="premium-brand-mark" src="/logo.jpeg" alt="Честный пригон" width={1280} height={1280} priority /></span></a>
+      <a className="premium-brand" href="#home" aria-label="Честный пригон"><span className="premium-brand-art"><Image className="premium-brand-mark" src="/assets/logo-header-dark.png" alt="Честный пригон" width={2172} height={724} priority /></span></a>
       <nav className={menuOpen ? "premium-nav is-open" : "premium-nav"}><a href="#home" onClick={() => setMenuOpen(false)}>Главная</a><Link href="/catalog" onClick={() => setMenuOpen(false)}>Каталог</Link><a href="#services" onClick={() => setMenuOpen(false)}>Услуги</a><a href="#reviews" onClick={() => setMenuOpen(false)}>Отзывы</a><a href="#contacts" onClick={() => setMenuOpen(false)}>Контакты</a></nav>
       <button className="premium-header-cta" type="button" onClick={() => setModalOpen(true)}>Получить консультацию <ArrowRight size={16} /></button>
       <button className="premium-menu-button" type="button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Меню">{menuOpen ? <X /> : <Menu />}</button>
