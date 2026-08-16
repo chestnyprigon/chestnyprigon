@@ -18,15 +18,30 @@ async function main() {
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
-  const { data: vehicles, error } = await client
-    .from("vehicles")
-    .select("id,price_krw,engine_cc,first_registration_date,fuel_type,status")
-    .eq("status", "active");
-  if (error) throw new Error(error.message);
+  const vehicles: Array<{
+    id: string;
+    price_krw: number;
+    engine_cc: number | null;
+    first_registration_date: string | null;
+    fuel_type: string;
+    status: string;
+  }> = [];
+  const pageSize = 1_000;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await client
+      .from("vehicles")
+      .select("id,price_krw,engine_cc,first_registration_date,fuel_type,status")
+      .eq("status", "active")
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw new Error(error.message);
+    vehicles.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
 
   const updates: Array<{ id: string; calculation: ReturnType<typeof calculateBelarusPrice> }> = [];
   const skipped: Array<{ id: string; reason: string }> = [];
-  for (const vehicle of vehicles ?? []) {
+  for (const vehicle of vehicles) {
     try {
       updates.push({
         id: vehicle.id,

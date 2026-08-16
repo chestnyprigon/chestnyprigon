@@ -204,33 +204,45 @@ async function main() {
   const publishEligible = process.argv.includes("--publish-eligible");
   const onlyMissing = process.argv.includes("--only-missing");
   const limit = integerArgument("limit", 2_000, 1, 10_000);
+  const batchSize = integerArgument("batch-size", limit, 1, 10_000);
   if (publishEligible && !applyScreening) throw new Error("--publish-eligible requires --apply-screening");
   const client = createClient(
     requireEnvironment("NEXT_PUBLIC_SUPABASE_URL"),
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
-  const { data: selectedVehicles, error: vehicleError } = await client
-    .from("vehicles")
-    .select("id,source_listing_id,price_usd")
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (vehicleError) throw new Error(vehicleError.message);
-  let vehicles = selectedVehicles ?? [];
+  const selectedVehicles: Array<{ id: string; source_listing_id: string; price_usd: number | null }> = [];
+  const pageSize = 1_000;
+  for (let offset = 0; selectedVehicles.length < limit; offset += pageSize) {
+    const take = Math.min(pageSize, limit - selectedVehicles.length);
+    const { data, error: vehicleError } = await client
+      .from("vehicles")
+      .select("id,source_listing_id,price_usd")
+      .eq("status", "active")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + take - 1);
+    if (vehicleError) throw new Error(vehicleError.message);
+    selectedVehicles.push(...(data ?? []));
+    if ((data?.length ?? 0) < take) break;
+  }
+  let vehicles = selectedVehicles;
   if (onlyMissing && vehicles.length) {
     const vehicleIds = vehicles.map((vehicle) => vehicle.id);
     const reportedIds = new Set<string>();
     for (let offset = 0; offset < vehicleIds.length; offset += 200) {
       const { data, error } = await client
         .from("vehicle_reports")
-        .select("vehicle_id")
+        .select("vehicle_id,report_status")
         .in("vehicle_id", vehicleIds.slice(offset, offset + 200));
       if (error) throw new Error(error.message);
-      for (const row of data ?? []) reportedIds.add(row.vehicle_id);
+      for (const row of data ?? []) {
+        if (row.report_status === "ready") reportedIds.add(row.vehicle_id);
+      }
     }
     vehicles = vehicles.filter((vehicle) => !reportedIds.has(vehicle.id));
   }
+  vehicles = vehicles.slice(0, batchSize);
   console.log(`Enriching ${vehicles.length} active vehicles${onlyMissing ? " without reports" : ""}.`);
   const sourceIds = (vehicles ?? []).map((vehicle) => vehicle.source_listing_id);
   const rawRows: Array<{ source_listing_id: string; payload: unknown }> = [];
@@ -257,6 +269,7 @@ async function main() {
     const vehicleNo = string(detail.vehicleNo);
     if (!canonicalId || !vehicleNo) {
       unavailable += 1;
+      if (applyScreening) unpublishIds.push(vehicle.id);
       continue;
     }
 
@@ -282,6 +295,8 @@ async function main() {
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
     const screening = reportScreening(flags, hasAccident);
+    const reportReady = Boolean(inspectionPayload && accidentPayload);
+    if (!reportReady) unavailable += 1;
 
     reportRows.push({
       vehicle_id: vehicle.id,
@@ -289,25 +304,29 @@ async function main() {
       options,
       inspection_summary: inspection,
       accident_summary: accidents,
-      report_status: optionsPayload || inspectionPayload || accidentPayload ? "ready" : "unavailable",
+      report_status: reportReady ? "ready" : "unavailable",
       fetched_at: new Date().toISOString(),
     });
 
     if (applyScreening) {
-      screeningRows.push({
-        source_listing_id: vehicle.source_listing_id,
-        decision: screening.decision,
-        is_lease: false,
-        is_rental: flags.rental,
-        is_taxi: flags.taxi,
-        is_commercial: flags.commercial,
-        is_problematic: screening.isProblematic,
-        reason_codes: screening.reasonCodes,
-        rules_version: "2026-08-12.1-report-disclosure",
-        details: { inspection, accidents },
-      });
-      if (screening.hardExclusion) unpublishIds.push(vehicle.id);
-      else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
+      if (!reportReady) {
+        unpublishIds.push(vehicle.id);
+      } else {
+        screeningRows.push({
+          source_listing_id: vehicle.source_listing_id,
+          decision: screening.decision,
+          is_lease: false,
+          is_rental: flags.rental,
+          is_taxi: flags.taxi,
+          is_commercial: flags.commercial,
+          is_problematic: screening.isProblematic,
+          reason_codes: screening.reasonCodes,
+          rules_version: "2026-08-12.1-report-disclosure",
+          details: { inspection, accidents },
+        });
+        if (screening.hardExclusion) unpublishIds.push(vehicle.id);
+        else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
+      }
     }
 
     console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.hardExclusion ? ", excluded" : hasAccident ? ", disclosed" : ""}`);

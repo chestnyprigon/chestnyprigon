@@ -40,8 +40,10 @@ For a resumable scale run, collect private rows first and then enrich only vehic
 ```bash
 npm run encar:scale -- --target=1000
 npm run pricing:recalculate
-npm run encar:enrich -- --only-missing --limit=2000 --apply-screening --publish-eligible
+npm run encar:enrich -- --only-missing --limit=10000 --batch-size=200 --apply-screening --publish-eligible
 ```
+
+Pricing and report selection are paginated in 1,000-row database windows so Supabase's response cap cannot leave a scaled catalog partially processed. Report enrichment is intentionally bounded with `--batch-size`; rerun the same command until only source-unavailable reports remain. An unavailable inspection or accident report is never treated as publication-ready and is retried by the next `--only-missing` pass.
 
 If a moving Encar search window is exhausted mostly by canonical duplicates, resume from an explicitly verified later window with `--search-offset=<offset>`. Stored canonical IDs remain deduplicated, so this does not create duplicate public cards.
 
