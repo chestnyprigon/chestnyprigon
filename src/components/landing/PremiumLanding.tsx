@@ -93,7 +93,7 @@ export function PremiumLanding({ cars }: { cars: CatalogCar[] }) {
 
     <section className="premium-hero" id="home">
       <div className="premium-hero-bg" />
-      <div className="premium-hero-content"><p className="premium-kicker"><span />Автомобили из Южной Кореи</p><h1>Автомобили<br />из Кореи<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="/catalog">Смотреть каталог</Link></div></div>
+      <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br />из Кореи<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="/catalog">Смотреть каталог</Link></div></div>
       <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="korea-flag"><Image src="/assets/flags/flag-korea.png" alt="Флаг Южной Кореи" width={280} height={200} /></span><b>Корея → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
