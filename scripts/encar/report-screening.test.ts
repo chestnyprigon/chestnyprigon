@@ -18,3 +18,10 @@ test("keeps rental, taxi and commercial history as hard exclusions", () => {
     assert.equal(reportScreening(flags, true).decision, "rejected");
   }
 });
+
+test("keeps a vehicle public when the Encar report is unavailable", () => {
+  const result = reportScreening({ rental: false, taxi: false, commercial: false }, false, false);
+  assert.equal(result.decision, "approved");
+  assert.equal(result.hardExclusion, false);
+  assert.deepEqual(result.reasonCodes, ["encar_report_unavailable"]);
+});

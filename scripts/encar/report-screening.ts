@@ -4,9 +4,10 @@ export type ReportUsageFlags = {
   commercial: boolean;
 };
 
-export function reportScreening(flags: ReportUsageFlags, hasAccident: boolean) {
+export function reportScreening(flags: ReportUsageFlags, hasAccident: boolean, reportReady = true) {
   const hardExclusion = flags.rental || flags.taxi || flags.commercial;
   const reasonCodes = [
+    ...(!reportReady ? ["encar_report_unavailable"] : []),
     ...(flags.rental ? ["inspection_rental_history"] : []),
     ...(flags.taxi ? ["inspection_taxi_history"] : []),
     ...(flags.commercial ? ["inspection_commercial_history"] : []),

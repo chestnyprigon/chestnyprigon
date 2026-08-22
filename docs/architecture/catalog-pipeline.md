@@ -43,13 +43,13 @@ npm run pricing:recalculate
 npm run encar:enrich -- --only-missing --limit=10000 --batch-size=200 --apply-screening --publish-eligible
 ```
 
-Pricing and report selection are paginated in 1,000-row database windows so Supabase's response cap cannot leave a scaled catalog partially processed. Report enrichment is intentionally bounded with `--batch-size`; rerun the same command until only source-unavailable reports remain. An unavailable inspection or accident report is never treated as publication-ready and is retried by the next `--only-missing` pass.
+Pricing and report selection are paginated in 1,000-row database windows so Supabase's response cap cannot leave a scaled catalog partially processed. Report enrichment is intentionally bounded with `--batch-size`; rerun the same command until only source-unavailable reports remain. An unavailable inspection or accident report is published as `Нет данных` when the vehicle otherwise passes the usage filters; the next `--only-missing` pass can fill the missing evidence later.
 
 If a moving Encar search window is exhausted mostly by canonical duplicates, resume from an explicitly verified later window with `--search-offset=<offset>`. Stored canonical IDs remain deduplicated, so this does not create duplicate public cards.
 
-`--apply-screening` removes from public visibility any vehicle whose inspection report confirms rental, taxi or commercial use. A reported accident remains visible as factual Encar history: the public card displays available insurance events, payment amounts and body repair/replacement findings. License plates, raw VIN values and source report payloads never enter the public read model.
+`--apply-screening` removes from public visibility any vehicle whose available inspection evidence confirms rental, taxi or commercial use. Missing inspection or accident data is not an exclusion: the card remains public with `Нет данных`. A reported accident remains visible as factual Encar history: the public card displays available insurance events, payment amounts and body repair/replacement findings. License plates, raw VIN values and source report payloads never enter the public read model.
 
-Screening rule set `2026-08-12.1-report-disclosure` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.” Accident and repair evidence is retained for disclosure instead of being classified as problematic.
+Screening rule set `2026-08-16.1-report-optional` uses structured identity and usage fields plus rental plate markers. Free-form seller descriptions are not a hard exclusion source because they frequently advertise finance/lease options or contain phrases such as “no rental/taxi history.” Accident and repair evidence is retained for disclosure instead of being classified as problematic. Report availability is informational, not a publication requirement.
 
 ## Remote project safety
 

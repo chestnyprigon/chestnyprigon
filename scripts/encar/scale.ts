@@ -29,6 +29,7 @@ const target = integerArgument("target", 1_000, 1, 10_000);
 const pageSize = integerArgument("page-size", 100, 20, 100);
 const batchSize = integerArgument("batch-size", 20, 5, 50);
 const detailDelayMs = integerArgument("detail-delay-ms", 300, 100, 10_000);
+const detailConcurrency = integerArgument("detail-concurrency", 1, 1, 4);
 const searchOffsetArgument = integerArgument("search-offset", 0, 0, 60_000);
 
 async function main() {
@@ -81,20 +82,25 @@ async function main() {
     cursor += take;
     const items: PilotItem[] = [];
 
-    for (const listing of listings) {
-      try {
-        const bundle = await fetchBundle(listing);
-        const screening = screenListing(bundle);
-        items.push({
-          bundle,
-          screening,
-          normalized: screening.decision === "approved" ? normalizeListing(bundle) : null,
-        });
-      } catch (error) {
-        fetchErrors += 1;
-        console.error(`${String(listing.Id)} fetch_error:`, error instanceof Error ? error.message : error);
-      }
-      await delay(detailDelayMs);
+    for (let start = 0; start < listings.length; start += detailConcurrency) {
+      const group = listings.slice(start, start + detailConcurrency);
+      const results = await Promise.all(group.map(async (listing, index) => {
+        await delay(index * detailDelayMs);
+        try {
+          const bundle = await fetchBundle(listing);
+          const screening = screenListing(bundle);
+          return {
+            bundle,
+            screening,
+            normalized: screening.decision === "approved" ? normalizeListing(bundle) : null,
+          } satisfies PilotItem;
+        } catch (error) {
+          fetchErrors += 1;
+          console.error(`${String(listing.Id)} fetch_error:`, error instanceof Error ? error.message : error);
+          return null;
+        }
+      }));
+      items.push(...results.filter((item): item is PilotItem => item !== null));
     }
 
     if (items.length) await persistPilot(items, false);

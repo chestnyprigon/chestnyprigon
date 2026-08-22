@@ -269,7 +269,21 @@ async function main() {
     const vehicleNo = string(detail.vehicleNo);
     if (!canonicalId || !vehicleNo) {
       unavailable += 1;
-      if (applyScreening) unpublishIds.push(vehicle.id);
+      if (applyScreening) {
+        screeningRows.push({
+          source_listing_id: vehicle.source_listing_id,
+          decision: "approved",
+          is_lease: false,
+          is_rental: false,
+          is_taxi: false,
+          is_commercial: false,
+          is_problematic: false,
+          reason_codes: ["encar_report_unavailable"],
+          rules_version: "2026-08-16.1-report-optional",
+          details: { reportStatus: "unavailable" },
+        });
+        if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
+      }
       continue;
     }
 
@@ -294,8 +308,8 @@ async function main() {
     const accidents = accidentSummary(accidentPayload, historyPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
-    const screening = reportScreening(flags, hasAccident);
     const reportReady = Boolean(inspectionPayload && accidentPayload);
+    const screening = reportScreening(flags, hasAccident, reportReady);
     if (!reportReady) unavailable += 1;
 
     reportRows.push({
@@ -309,24 +323,20 @@ async function main() {
     });
 
     if (applyScreening) {
-      if (!reportReady) {
-        unpublishIds.push(vehicle.id);
-      } else {
-        screeningRows.push({
-          source_listing_id: vehicle.source_listing_id,
-          decision: screening.decision,
-          is_lease: false,
-          is_rental: flags.rental,
-          is_taxi: flags.taxi,
-          is_commercial: flags.commercial,
-          is_problematic: screening.isProblematic,
-          reason_codes: screening.reasonCodes,
-          rules_version: "2026-08-12.1-report-disclosure",
-          details: { inspection, accidents },
-        });
-        if (screening.hardExclusion) unpublishIds.push(vehicle.id);
-        else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
-      }
+      screeningRows.push({
+        source_listing_id: vehicle.source_listing_id,
+        decision: screening.decision,
+        is_lease: false,
+        is_rental: flags.rental,
+        is_taxi: flags.taxi,
+        is_commercial: flags.commercial,
+        is_problematic: screening.isProblematic,
+        reason_codes: screening.reasonCodes,
+        rules_version: "2026-08-16.1-report-optional",
+        details: { inspection, accidents, reportStatus: reportReady ? "ready" : "unavailable" },
+      });
+      if (screening.hardExclusion) unpublishIds.push(vehicle.id);
+      else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
     }
 
     console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.hardExclusion ? ", excluded" : hasAccident ? ", disclosed" : ""}`);
