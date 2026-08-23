@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, ExternalLink, FileSearch, KeyRound, Maximize2, Menu, Minus, Plus, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
-import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
+import { calculateBelarusPrice, type BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
+import type { PricingContext } from "@/lib/pricing/pricing-context";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const number = new Intl.NumberFormat("ru-RU");
@@ -17,6 +18,7 @@ function date(value: string | null) {
 }
 
 function krw(value: number) { return `${number.format(value)}\u00a0₩`; }
+function eur(value: number) { return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value); }
 
 const equipmentCatalog = [
   { name: "Экстерьер и интерьер", items: [["010", "Люк"], ["075", "LED-фары"], ["029", "Ксеноновые фары"], ["059", "Электропривод багажника"], ["080", "Доводчики дверей"], ["024", "Электроскладывание зеркал"], ["017", "Легкосплавные диски"], ["062", "Рейлинги на крыше"]] },
@@ -70,15 +72,39 @@ function InsuranceBreakdown({ events }: { events: AccidentSummary["insuranceEven
   return <details className="dossier-insurance"><summary><span>Детализация страховых выплат</span><b>{krw(total)}</b><ChevronDown size={17} /></summary><div>{events.map((event) => <article key={`${event.date}-${event.amountKrw}`}><header><div><b>{event.date}</b><span>{event.type}</span></div><strong>{krw(event.amountKrw)}</strong></header><p><span>Запчасти</span><b>{event.partsKrw ? krw(event.partsKrw) : "Нет данных"}</b></p><p><span>Окрас</span><b>{event.paintingKrw ? krw(event.paintingKrw) : "Нет данных"}</b></p><p><span>Работы</span><b>{event.laborKrw ? krw(event.laborKrw) : "Нет данных"}</b></p></article>)}</div></details>;
 }
 
-export function VehicleDossier({ car }: { car: CatalogCar }) {
+function ClientPriceTable({ calculation }: { calculation: BelarusPriceCalculation }) {
+  const dollar = (value: number | null) => value === null ? "Расчёт уточняется" : money.format(value);
+  const euro = (value: number | null) => value === null ? "Расчёт уточняется" : eur(value);
+  return <details className="dossier-calculation" open>
+    <summary><Calculator size={15} />Расчёт цены <ChevronDown size={16} /></summary>
+    <div className="dossier-client-table">
+      <p><span>Цена авто (KRW)</span><b>{krw(calculation.sourcePriceKrw)}</b></p>
+      <p><span>Курс</span><b>₩{number.format(calculation.krwPerUsd)}</b></p>
+      <p className="is-emphasis"><span>Стоимость в Корее</span><b>{dollar(calculation.sourcePriceUsd)}</b></p>
+      <p><span>Доставка до Минска</span><b>{dollar(calculation.deliveryUsd)}</b></p>
+      <p><span>Комиссия 2,5 %</span><b>{dollar(calculation.commissionUsd)}</b></p>
+      <p className="is-emphasis"><span>Первый платёж</span><b>{dollar(calculation.firstPaymentUsd)}</b></p>
+      <p><span>Услуги СВХ и декларант</span><b>{euro(calculation.svhDeclarantEur)}</b></p>
+      <p><span>Таможенная пошлина</span><b>{euro(calculation.customsDutyEur)}</b></p>
+      <p><span>Сбор за таможенное оформление</span><b>{euro(calculation.customsClearanceEur)}</b></p>
+      <p><span>Утилизационный сбор</span><b>{euro(calculation.utilizationFeeEur)}</b></p>
+      <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
+      <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
+      <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>
+      <small className="dossier-rate-note">Курс НБРБ: {calculation.rates.rateDate}{calculation.rates.source === "fallback" ? " · резервное значение" : ""}. Льгота применяется только после подтверждения права на неё.</small>
+    </div>
+  </details>;
+}
+
+export function VehicleDossier({ car, pricingContext }: { car: CatalogCar; pricingContext: PricingContext }) {
   const [photo, setPhoto] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [photoGroup, setPhotoGroup] = useState<GalleryGroup>("Все фото");
   const [zoom, setZoom] = useState(1);
-  const [preferential, setPreferential] = useState(true);
+  const [preferential, setPreferential] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const thumbsRef = useRef<HTMLDivElement>(null);
-  const calculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential }), [car, preferential]);
+  const calculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates }), [car, preferential, pricingContext]);
   const standardCodes = useMemo(() => new Set(car.inspection?.standardOptionCodes ?? []), [car.inspection?.standardOptionCodes]);
   const accident = Boolean(car.accidents?.accidentCount || car.inspection?.reportedAccident);
   const historyBadge = car.accidents?.accidentCount
@@ -150,7 +176,7 @@ export function VehicleDossier({ car }: { car: CatalogCar }) {
         <section className="dossier-card"><h2><KeyRound />Комплектация</h2><div className="dossier-options">{equipmentCatalog.map((group, index) => { const installed = group.items.filter(([code]) => standardCodes.has(code)).length; return <details key={group.name} open={index === 0}><summary><span><b>{group.name}</b><small>{installed} установлено · не установлено: {group.items.length - installed}</small></span><ChevronDown size={18} /></summary><div>{group.items.map(([code, name]) => { const isInstalled = standardCodes.has(code); return <article className={isInstalled ? "" : "is-missing"} key={`${group.name}-${code}`}><span className="equipment-mark">{isInstalled ? <Check size={13} /> : <X size={13} />}</span><span>{name}<small>{isInstalled ? "Установлено" : "Не установлено"}</small></span></article>; })}</div></details>; })}</div></section>
       </div>
 
-      <aside className="dossier-price"><div className="dossier-source"><span><ShieldCheck size={14} />Источник Encar</span><a href={car.sourceUrl} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div><div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div><div className="dossier-total"><span>Предварительная цена под ключ</span><strong>{money.format(calculation.totalUsd)}</strong><small>с доставкой и оформлением в Беларуси</small></div><div className="dossier-price-bar"><i /><i /><i /></div><div className="dossier-price-legend"><span>Стоимость авто</span><span>Расходы в Корее</span><span>Логистика и услуги</span></div><div className="dossier-notice">Итог зависит от курса, даты оформления и параметров автомобиля.</div><div className="dossier-lines dossier-price-lines"><div><span>Цена автомобиля в Корее</span><b>{krw(car.sourcePriceKrw)}</b></div></div><label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={car.fuel === "Электро"} onChange={(event) => setPreferential(event.target.checked)} />Льготная растаможка</label><details className="dossier-calculation"><summary><Calculator size={15} />Показать расчёт цены <ChevronDown size={16} /></summary><div>{[["Авто и расходы в Корее", calculation.koreaAndExportUsd], ["Доставка до Минска", calculation.deliveryUsd], ["Транзитная декларация", calculation.transitUsd], ["Растаможка", calculation.customsDutyUsd], ["СВХ, платежи и утиль", calculation.customsServicesUsd], ["Подбор и сопровождение", calculation.companyServicesUsd]].map(([label, value]) => <p key={String(label)}><span>{label}</span><b>{money.format(Number(value))}</b></p>)}</div></details><Link className="dossier-lead" href="/#contacts">Оставить заявку <ArrowRight size={17} /></Link></aside>
+      <aside className="dossier-price"><div className="dossier-source"><span><ShieldCheck size={14} />Источник Encar</span><a href={car.sourceUrl} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div><div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div><div className="dossier-total"><span>Предварительная цена под ключ</span><strong>{calculation.totalUsd === null ? "Расчёт уточняется" : money.format(calculation.totalUsd)}</strong><small>{calculation.calculationAvailable ? "с доставкой и оформлением в Беларуси" : calculation.unavailableReason}</small></div><div className="dossier-price-bar"><i /><i /><i /></div><div className="dossier-price-legend"><span>Стоимость авто</span><span>Расходы в Корее</span><span>Логистика и услуги</span></div><div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div><label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation.calculationAvailable} onChange={(event) => setPreferential(event.target.checked)} />Льготная растаможка</label><ClientPriceTable calculation={calculation} /><Link className="dossier-lead" href="/#contacts">Оставить заявку <ArrowRight size={17} /></Link></aside>
     </section>{lightboxOpen ? <div className="dossier-lightbox" role="dialog" aria-modal="true" aria-label="Просмотр фотографий" onClick={() => setLightboxOpen(false)}><div className="dossier-lightbox-panel" onClick={(event) => event.stopPropagation()}><header><div className="dossier-lightbox-title"><b>{car.brand} {car.model}</b><span>Фото {visiblePhotoIndexes.indexOf(photo) + 1} из {visiblePhotoIndexes.length}</span></div><div className="dossier-lightbox-tools"><button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom === 1} aria-label="Уменьшить"><Minus size={18} /></button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(2.5, value + .25))} aria-label="Увеличить"><Plus size={18} /></button><button className="dossier-lightbox-close" type="button" onClick={() => setLightboxOpen(false)} aria-label="Закрыть"><X size={20} /></button></div></header><div className={`dossier-lightbox-image ${zoom > 1 ? "is-zoomed" : ""}`} onClick={() => setZoom((value) => value === 1 ? 1.75 : 1)}><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}, фото ${photo + 1}`} fill priority sizes="100vw" style={{ transform: `scale(${zoom})` }} /></div>{visiblePhotoIndexes.length > 1 ? <><button className="dossier-lightbox-nav is-prev" type="button" onClick={() => changePhoto(-1)} aria-label="Предыдущее фото"><ArrowLeft size={23} /></button><button className="dossier-lightbox-nav is-next" type="button" onClick={() => changePhoto(1)} aria-label="Следующее фото"><ArrowRight size={23} /></button></> : null}<footer><div className="dossier-lightbox-groups">{availableGroups.map((group) => <button type="button" key={group} className={photoGroup === group ? "is-active" : ""} onClick={() => chooseGroup(group)}>{group}</button>)}</div><div className="dossier-lightbox-thumbs">{visiblePhotoIndexes.map((index) => <button type="button" key={car.images[index]} className={index === photo ? "is-active" : ""} onClick={() => { setPhoto(index); setZoom(1); }}><Image src={car.images[index]} alt={`Фото ${index + 1}`} fill sizes="72px" /></button>)}</div></footer></div></div> : null}
   </main>;
 }

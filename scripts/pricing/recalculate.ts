@@ -1,7 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { calculateBelarusPrice, EMAVTO_PRELIMINARY_PROFILE } from "../../src/lib/pricing/emavto-profile";
+import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "../../src/lib/pricing/chestny-prigon-profile";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -50,7 +50,7 @@ async function main() {
           engineCc: vehicle.engine_cc,
           firstRegistrationDate: vehicle.first_registration_date,
           fuelType: vehicle.fuel_type,
-          preferential: true,
+            preferential: false,
         }),
       });
     } catch (error) {
@@ -62,7 +62,7 @@ async function main() {
     skipped.map(async ({ id }) => {
       const { error: updateError } = await client
         .from("vehicles")
-        .update({ price_usd: null, krw_per_usd: null, is_public: false })
+        .update({ price_usd: null, krw_per_usd: CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd })
         .eq("id", id);
       if (updateError) throw new Error(`${id}: ${updateError.message}`);
     }),
@@ -75,7 +75,7 @@ async function main() {
           .from("vehicles")
           .update({
             price_usd: calculation.totalUsd,
-            krw_per_usd: EMAVTO_PRELIMINARY_PROFILE.rates.krwPerUsd,
+            krw_per_usd: CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd,
             ...(publish ? { is_public: true } : {}),
           })
           .eq("id", id);
@@ -85,13 +85,13 @@ async function main() {
   }
 
   console.log({
-    profile: EMAVTO_PRELIMINARY_PROFILE.version,
+    profile: CHESTNY_PRIGON_PRICING_PROFILE.version,
     recalculated: updates.length,
     skipped: skipped.length,
     skippedReasons: [...new Set(skipped.map((item) => item.reason))],
     published: publish,
-    minTotalUsd: updates.length ? Math.min(...updates.map((item) => item.calculation.totalUsd)) : null,
-    maxTotalUsd: updates.length ? Math.max(...updates.map((item) => item.calculation.totalUsd)) : null,
+    minTotalUsd: updates.length ? Math.min(...updates.map((item) => item.calculation.totalUsd ?? Number.POSITIVE_INFINITY)) : null,
+    maxTotalUsd: updates.length ? Math.max(...updates.map((item) => item.calculation.totalUsd ?? 0)) : null,
   });
 }
 

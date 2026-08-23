@@ -1,23 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateBelarusPrice, EMAVTO_PRELIMINARY_PROFILE } from "./emavto-profile";
+import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "./chestny-prigon-profile";
 
-test("reproduces the Emavto HAR calculation inputs for the captured Volvo", () => {
+test("reproduces the client table's KRW, delivery and 2.5 percent first payment", () => {
   const result = calculateBelarusPrice({
-    priceKrw: 31_500_000,
-    engineCc: 1969,
-    firstRegistrationDate: "2022-05-01",
+    priceKrw: 50_440_000,
+    engineCc: 1_500,
+    firstRegistrationDate: "2023-05-01",
     fuelType: "Бензин",
-    preferential: true,
-    now: new Date("2026-08-07T12:00:00Z"),
+    preferential: false,
+    now: new Date("2026-08-23T12:00:00Z"),
   });
 
-  assert.equal(EMAVTO_PRELIMINARY_PROFILE.version, "emavto-har-2026-08-07-v1");
-  assert.equal(result.sourcePriceUsd, 22_404);
-  assert.equal(result.koreaAndExportUsd, 24_181);
-  assert.equal(result.transitUsd, 1730);
-  assert.equal(result.customsDutyUsd, 3068);
-  assert.equal(result.totalUsd, 33_929);
+  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v1");
+  assert.equal(result.sourcePriceUsd, 36_106);
+  assert.equal(result.deliveryUsd, 4_700);
+  assert.equal(result.commissionUsd, 1_020);
+  assert.equal(result.firstPaymentUsd, 41_826);
 });
 
 test("applies the preferential coefficient only to customs duty", () => {
@@ -31,27 +30,30 @@ test("applies the preferential coefficient only to customs duty", () => {
   const preferential = calculateBelarusPrice({ ...base, preferential: true });
   const regular = calculateBelarusPrice({ ...base, preferential: false });
 
-  assert.equal(regular.customsDutyUsd, preferential.customsDutyUsd * 2);
-  assert.equal(regular.totalUsd - preferential.totalUsd, preferential.customsDutyUsd);
+  assert.equal(regular.customsDutyEur, preferential.customsDutyEur! * 2);
+  assert.equal(regular.totalUsd! - preferential.totalUsd!, Math.round(preferential.customsDutyEur! / preferential.eurPerUsd));
 });
 
-test("uses zero customs duty for electric vehicles like the reference", () => {
+test("does not invent a customs amount for an electric vehicle", () => {
   const result = calculateBelarusPrice({
     priceKrw: 42_000_000,
     engineCc: null,
     firstRegistrationDate: "2024-01-01",
     fuelType: "전기",
   });
-  assert.equal(result.customsDutyUsd, 0);
+  assert.equal(result.customsDutyEur, null);
+  assert.equal(result.totalUsd, null);
+  assert.equal(result.calculationAvailable, false);
 });
 
-test("refuses to guess duty for a non-electric vehicle without displacement", () => {
-  assert.throws(() =>
-    calculateBelarusPrice({
-      priceKrw: 22_000_000,
-      engineCc: null,
-      firstRegistrationDate: "2022-04-01",
-      fuelType: "수소",
-    }),
-  );
+test("uses inclusive displacement brackets at legal boundaries", () => {
+  const result = calculateBelarusPrice({
+    priceKrw: 22_000_000,
+    engineCc: 1_000,
+    firstRegistrationDate: "2022-04-01",
+    fuelType: "Бензин",
+    preferential: false,
+    now: new Date("2026-08-23T12:00:00Z"),
+  });
+  assert.equal(result.customsDutyEur, 1_500);
 });

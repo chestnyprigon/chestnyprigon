@@ -56,6 +56,18 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      pricing_profiles: {
+        Row: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at: string };
+        Insert: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at?: string };
+        Update: Partial<{ version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at: string }>;
+        Relationships: [];
+      };
+      pricing_exchange_rates: {
+        Row: { id: string; rate_date: string; usd_byn: number; eur_byn: number; source_url: string; fetched_at: string; updated_at: string };
+        Insert: { id: string; rate_date: string; usd_byn: number; eur_byn: number; source_url: string; fetched_at?: string; updated_at?: string };
+        Update: Partial<{ rate_date: string; usd_byn: number; eur_byn: number; source_url: string; fetched_at: string; updated_at: string }>;
+        Relationships: [];
+      };
     };
     Views: {
       catalog_vehicles: {

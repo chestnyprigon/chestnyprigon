@@ -1,7 +1,7 @@
 import "server-only";
 import type { AccidentSummary, CatalogCar, CarFuel, InspectionSummary, VehicleOption } from "@/data/cars";
-import type { BelarusPriceCalculation } from "@/lib/pricing/emavto-profile";
-import { calculateBelarusPrice } from "@/lib/pricing/emavto-profile";
+import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
+import { calculateBelarusPrice } from "@/lib/pricing/chestny-prigon-profile";
 import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
@@ -282,7 +282,7 @@ function mapCatalogRows(data: CatalogRow[]): CatalogCar[] {
       engineCc: row.engine_cc,
       firstRegistrationDate: row.first_registration_date,
       fuelType: row.fuel_type,
-      preferential: true,
+      preferential: false,
     });
     const images = (row.image_urls ?? []).map(encarPhotoUrl);
     if (!images.length) return [];
@@ -307,7 +307,7 @@ function mapCatalogRows(data: CatalogRow[]): CatalogCar[] {
         color: colorName(row.exterior_color),
         transmission: transmissionName(row.transmission),
         vinMasked: row.vin_masked,
-        price: calculation.totalUsd,
+        price: calculation.totalUsd ?? 0,
         sourcePriceKrw: Number(row.price_krw),
         location: locationName(row.location),
         images,
@@ -341,7 +341,7 @@ function mapVehicleRows(
     try {
       calculation = calculateBelarusPrice({
         priceKrw: Number(row.price_krw), engineCc: row.engine_cc, firstRegistrationDate: row.first_registration_date,
-        fuelType: row.fuel_type, preferential: true,
+        fuelType: row.fuel_type, preferential: false,
       });
     } catch {
       return [];
@@ -353,7 +353,7 @@ function mapVehicleRows(
       engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро", engineCc: row.engine_cc,
       fuel: fuelName(row.fuel_type), sourceFuel: normalizedSourceFuel(row.fuel_type), drive: resolvedDrive(row.drive_type, row.trim),
       bodyType: bodyName(row.body_type), color: colorName(row.exterior_color), transmission: transmissionName(row.transmission),
-      vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd, sourcePriceKrw: Number(row.price_krw),
+      vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd ?? 0, sourcePriceKrw: Number(row.price_krw),
       location: locationName(row.location), images, imageGroups: parseImageGroups(report?.inspection_summary, images), sourceUrl: row.source_url,
       publishedAt: row.published_at, sourceUpdatedAt: row.source_updated_at, lastSeenAt: row.last_seen_at, status: "Проверено" as const,
       calculation, options: [], inspection: parseInspection(report?.inspection_summary), accidents: parseAccidents(report?.accident_summary),

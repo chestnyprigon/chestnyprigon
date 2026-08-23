@@ -1,4 +1,4 @@
-import type { BelarusPriceCalculation } from "@/lib/pricing/emavto-profile";
+import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
 
 export type CarFuel = "Бензин" | "Дизель" | "Гибрид" | "Электро" | "Газ" | "Другое";
 
