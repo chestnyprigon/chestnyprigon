@@ -1,4 +1,5 @@
 import type { EncarBundle, ScreeningResult } from "./types";
+import { ENCAR_MAX_MILEAGE_KM } from "./config";
 
 export const SCREENING_RULES_VERSION = "2026-08-09.1";
 
@@ -105,7 +106,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   if (!Number.isInteger(year) || year < 1990 || year > new Date().getFullYear() + 1) {
     reasons.push("invalid_model_year");
   }
-  if (mileage === null || mileage < 0 || mileage > 150_000) reasons.push("invalid_mileage");
+  if (mileage === null || mileage < 0 || mileage > ENCAR_MAX_MILEAGE_KM) reasons.push("invalid_mileage");
   if (price === null || price <= 0) reasons.push("invalid_price");
   if (!bundle.search.Manufacturer || !bundle.search.Model) reasons.push("missing_identity");
   if (photos.length < 5) reasons.push("insufficient_photos");

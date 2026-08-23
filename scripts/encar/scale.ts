@@ -6,6 +6,7 @@ import { normalizeListing } from "./normalize";
 import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
 import type { EncarSearchListing, PilotItem } from "./types";
+import { encarYearFrom, ENCAR_MAX_MILEAGE_KM } from "./config";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -51,7 +52,7 @@ async function main() {
   }
 
   const now = new Date();
-  const query = createDomesticQuery(now.getFullYear() - 5, now.getFullYear(), 150_000);
+  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM);
   const desired = target - stored;
   const snapshotSize = Math.ceil((desired + Math.max(200, desired * 0.25)) / pageSize) * pageSize;
   const snapshot: EncarSearchListing[] = [];

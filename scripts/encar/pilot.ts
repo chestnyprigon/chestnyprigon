@@ -1,6 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createDomesticQuery, delay, fetchBundle, fetchSearchPage } from "./client";
+import { encarYearFrom, ENCAR_MAX_MILEAGE_KM } from "./config";
 import { normalizeListing } from "./normalize";
 import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
@@ -44,7 +45,7 @@ if (publish && !write) throw new Error("--publish requires --write");
 
 async function main() {
   const now = new Date();
-  const query = createDomesticQuery(now.getFullYear() - 5, now.getFullYear(), 150_000);
+  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM);
   const page = await fetchSearchPage({ offset, limit, query });
   const items: PilotItem[] = [];
 
