@@ -15,11 +15,16 @@ export type CatalogSearch = {
   query?: string;
   brand?: string;
   model?: string;
+  generation?: string;
+  trim?: string;
   fuel?: string;
   yearFrom?: number;
   yearTo?: number;
+  minEngine?: number;
+  maxEngine?: number;
   minPrice?: number;
   maxPrice?: number;
+  minMileage?: number;
   maxMileage?: number;
   transmission?: string;
   drive?: string;
@@ -36,6 +41,8 @@ export type CatalogPage = {
   hasMore: boolean;
   brands: string[];
   models: string[];
+  generations: string[];
+  trims: string[];
 };
 
 function fuelName(source: string | null): CarFuel {
@@ -365,12 +372,41 @@ function mapVehicleRows(
 function normalizedSearch(search: CatalogSearch) {
   return {
     page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
-    query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", fuel: search.fuel ?? "",
+    query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", generation: search.generation ?? "", trim: search.trim ?? "", fuel: search.fuel ?? "",
     yearFrom: search.yearFrom ?? 2021, yearTo: search.yearTo ?? 2026, minPrice: search.minPrice ?? 0,
-    maxPrice: search.maxPrice ?? 100_000, maxMileage: search.maxMileage ?? 150_000,
+    maxPrice: search.maxPrice ?? 100_000, minMileage: search.minMileage ?? 0, maxMileage: search.maxMileage ?? 190_000,
+    minEngine: search.minEngine ?? 0, maxEngine: search.maxEngine ?? 8_000,
     transmission: search.transmission ?? "", drive: search.drive ?? "", bodyType: search.bodyType ?? "",
     accidents: search.accidents, sort: search.sort ?? "newest" as const,
   };
+}
+
+async function loadAccidentVehicleIds(
+  client: ReturnType<typeof createSupabasePublicServerClient>,
+  filter: NonNullable<CatalogSearch["accidents"]>,
+) {
+  const ids: string[] = [];
+  const pageSize = 1_000;
+
+  for (let from = 0; from < 50_000; from += pageSize) {
+    const { data, error } = await client
+      .from("vehicle_reports")
+      .select("vehicle_id,accident_summary")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Accident filter request failed: ${error.message}`);
+
+    for (const report of data ?? []) {
+      const summary = record(report.accident_summary);
+      const accidentCount = asNumber(summary.accidentCount);
+      const reportAvailable = asBoolean(summary.available);
+      if ((filter === "with" && accidentCount > 0) || (filter === "clear" && reportAvailable && accidentCount === 0)) {
+        ids.push(report.vehicle_id);
+      }
+    }
+    if (!data || data.length < pageSize) break;
+  }
+
+  return ids;
 }
 
 export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
@@ -380,20 +416,56 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   let query = client
     .from("vehicles")
     .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", { count: "exact" })
-    .eq("is_public", true).eq("status", "active")
+    .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
     .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
     .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
-    .lte("mileage_km", input.maxMileage);
+    .gte("mileage_km", Math.min(input.minMileage, input.maxMileage)).lte("mileage_km", Math.max(input.minMileage, input.maxMileage))
+    .gte("engine_cc", Math.min(input.minEngine, input.maxEngine)).lte("engine_cc", Math.max(input.minEngine, input.maxEngine));
   if (input.brand) query = query.eq("manufacturer", input.brand);
   if (input.model) query = query.eq("model", input.model);
-  if (input.fuel) query = query.ilike("fuel_type", `%${input.fuel === "Бензин" ? "가솔린" : input.fuel}%`);
-  if (input.transmission) query = query.ilike("transmission", `%${input.transmission === "Автомат" ? "자동" : input.transmission}%`);
-  if (input.drive) query = query.ilike("drive_type", `%${input.drive === "Полный" ? "4" : input.drive}%`);
+  if (input.generation) query = query.eq("generation", input.generation);
+  if (input.trim) query = query.eq("trim", input.trim);
+  if (input.fuel === "Бензин") query = query.ilike("fuel_type", "%가솔린%").not("fuel_type", "ilike", "%전기%");
+  if (input.fuel === "Дизель") query = query.ilike("fuel_type", "%디젤%").not("fuel_type", "ilike", "%전기%");
+  if (input.fuel === "Гибрид") query = query.or("fuel_type.ilike.%하이브리드%,fuel_type.ilike.%전기%,fuel_type.ilike.%hev%,fuel_type.ilike.%phev%").neq("fuel_type", "전기");
+  if (input.fuel === "Газ") query = query.or("fuel_type.ilike.%LPG%,fuel_type.ilike.%가스%");
+  if (input.transmission === "Автомат") query = query.or("transmission.ilike.%자동%,transmission.ilike.%오토%");
+  if (input.transmission === "Механика") query = query.ilike("transmission", "%수동%");
+  if (input.transmission === "Вариатор") query = query.ilike("transmission", "%무단%");
+  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%");
+  if (input.drive === "Передний") query = query.ilike("drive_type", "%전륜%");
+  if (input.drive === "Задний") query = query.ilike("drive_type", "%후륜%");
+  if (input.drive === "2WD") query = query.ilike("drive_type", "%2WD%");
   if (input.bodyType) query = query.ilike("body_type", `%${input.bodyType === "Минивэн" ? "승합" : input.bodyType}%`);
-  if (input.query) query = query.or(`manufacturer.ilike.%${input.query}%,model.ilike.%${input.query}%,trim.ilike.%${input.query}%`);
+  if (input.query) {
+    const term = input.query.replace(/[,%()]/g, " ").trim();
+    if (term) query = query.or(`manufacturer.ilike.%${term}%,model.ilike.%${term}%,generation.ilike.%${term}%,trim.ilike.%${term}%`);
+  }
   query = input.sort === "price-asc" ? query.order("price_usd", { ascending: true }) : input.sort === "price-desc" ? query.order("price_usd", { ascending: false }) : query.order("published_at", { ascending: false }).order("id", { ascending: false });
-  const { data: vehicles, error, count } = await query.range(from, from + input.perPage - 1);
-  if (error) throw new Error(`Catalog request failed: ${error.message}`);
+  let vehicles: VehicleRow[] | null = null;
+  let count: number | null = null;
+  if (input.accidents) {
+    // A large PostgREST `id IN (...)` request exceeds the URL limit. For this
+    // optional filter we load the already narrowed vehicle set, apply report
+    // identifiers in memory, then paginate. The ordinary catalogue path stays
+    // database-paginated and fast.
+    const matchingIds = new Set(await loadAccidentVehicleIds(client, input.accidents));
+    if (matchingIds.size) {
+      const { data, error } = await query.limit(10_000);
+      if (error) throw new Error(`Catalog request failed: ${error.message}`);
+      const matching = ((data ?? []) as VehicleRow[]).filter((vehicle) => matchingIds.has(vehicle.id));
+      count = matching.length;
+      vehicles = matching.slice(from, from + input.perPage);
+    } else {
+      vehicles = [];
+      count = 0;
+    }
+  } else {
+    const result = await query.range(from, from + input.perPage - 1);
+    if (result.error) throw new Error(`Catalog request failed: ${result.error.message}`);
+    vehicles = result.data as VehicleRow[] | null;
+    count = result.count;
+  }
   const ids = (vehicles ?? []).map((vehicle) => vehicle.id);
   const [imagesResult, reportsResult] = ids.length ? await Promise.all([
     client.from("vehicle_images").select("vehicle_id,source_url,position").in("vehicle_id", ids).order("position", { ascending: true }),
@@ -405,7 +477,17 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   const reportsByVehicle = new Map((reportsResult.data ?? []).map((report) => [report.vehicle_id, report]));
   const publicBrands = ["Chevrolet", "Genesis", "Hyundai", "KGM", "Kia", "Renault Korea"];
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle);
-  return { cars: pageCars, total: count ?? 0, page: input.page, perPage: input.perPage, hasMore: from + input.perPage < (count ?? 0), brands: publicBrands, models: [...new Set(pageCars.map((car) => car.model))] };
+  return {
+    cars: pageCars,
+    total: count ?? 0,
+    page: input.page,
+    perPage: input.perPage,
+    hasMore: from + input.perPage < (count ?? 0),
+    brands: publicBrands,
+    models: [...new Set(pageCars.map((car) => car.model))],
+    generations: [...new Set((vehicles ?? []).flatMap((car) => car.generation ? [car.generation] : []))],
+    trims: [...new Set((vehicles ?? []).flatMap((car) => car.trim ? [car.trim] : []))],
+  };
 }
 
 export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {

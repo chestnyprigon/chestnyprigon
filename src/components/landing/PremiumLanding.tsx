@@ -27,6 +27,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import type { CatalogCar } from "@/data/cars";
+import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
+import { HomeCatalog } from "@/components/catalog/HomeCatalog";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -71,7 +73,7 @@ const faqs = [
   ["Вы помогаете с постановкой на учёт?", "Подскажем порядок действий и необходимый комплект документов после выдачи автомобиля."],
 ];
 
-export function PremiumLanding({ cars }: { cars: CatalogCar[] }) {
+export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
   const [processOpen, setProcessOpen] = useState(0);
   const [faqOpen, setFaqOpen] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -102,9 +104,9 @@ export function PremiumLanding({ cars }: { cars: CatalogCar[] }) {
       <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="korea-flag"><Image src="/assets/flags/flag-korea.png" alt="Флаг Южной Кореи" width={280} height={200} /></span><b>Корея → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
-    <section className="premium-process premium-section" id="services"><div className="premium-section-copy"><p className="premium-kicker"><span />Как мы работаем</p><h2>Маршрут сделки<br />от заявки до ключей</h2><p>Вы сразу видите последовательность работы, документы и действия на каждом этапе.</p></div><div className="process-list">{processSteps.map((step, index) => { const Icon = step.icon; const open = processOpen === index; return <article className={open ? "process-item is-open" : "process-item"} key={step.title}><button type="button" onClick={() => setProcessOpen(open ? -1 : index)}><span className="process-number">{String(index + 1).padStart(2, "0")}</span><Icon size={18} /><b>{step.title}</b><em>{step.short}</em><span className="process-toggle">{open ? "×" : "+"}</span></button>{open && <div className="process-details"><p>{step.text}</p><ul>{step.points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul></div>}</article>; })}</div></section>
+    <HomeCatalog catalog={catalog} initialSearch={initialSearch} />
 
-    <section className="premium-catalog premium-section" id="catalog"><div className="premium-section-head"><div><p className="premium-kicker"><span />Каталог автомобилей</p><h2>Актуальные предложения<br />из Кореи</h2></div><div className="catalog-meta"><span className="korea-pill">Проверенные объявления Encar</span><p>Реальные автомобили с предварительной стоимостью под ключ в Беларуси.</p></div></div>{cars.length ? <div className="premium-car-grid">{cars.map((car) => { const badge = historyBadge(car); return <article className="premium-car-card" key={car.id}><Link className="premium-car-image" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 720px) 100vw, 25vw" style={{ objectFit: "cover" }} /><span className={`premium-history-badge ${badge.tone}`}>{badge.label}</span></Link><div className="premium-car-body"><h3>{car.brand} {car.model}</h3><p>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</p><div><strong>{catalogPrice(car)}</strong><Link href={`/catalog/${car.id}`}>Подробнее <ArrowRight size={15} /></Link></div></div></article>; })}</div> : <p className="catalog-preview-empty">Каталог обновляется. Скоро здесь появятся актуальные предложения.</p>}<div className="premium-catalog-footer"><Link className="premium-button primary" href="/catalog">Смотреть весь каталог <ArrowRight size={17} /></Link></div></section>
+    <section className="premium-process premium-section" id="services"><div className="premium-section-copy"><p className="premium-kicker"><span />Как мы работаем</p><h2>Маршрут сделки<br />от заявки до ключей</h2><p>Вы сразу видите последовательность работы, документы и действия на каждом этапе.</p></div><div className="process-list">{processSteps.map((step, index) => { const Icon = step.icon; const open = processOpen === index; return <article className={open ? "process-item is-open" : "process-item"} key={step.title}><button type="button" onClick={() => setProcessOpen(open ? -1 : index)}><span className="process-number">{String(index + 1).padStart(2, "0")}</span><Icon size={18} /><b>{step.title}</b><em>{step.short}</em><span className="process-toggle">{open ? "×" : "+"}</span></button>{open && <div className="process-details"><p>{step.text}</p><ul>{step.points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul></div>}</article>; })}</div></section>
 
     <section className="premium-reviews" id="reviews"><div className="premium-section-copy centered"><p className="premium-kicker"><span />Отзывы</p><h2>Люди, которые уже<br />забрали свои автомобили</h2><p>Здесь будут подтверждённые отзывы клиентов. Пока блок показывает согласуемый дизайн и формат.</p></div><div className="reviews-track">{[...reviews, ...reviews].map(([initials, name, city, text], index) => <article key={`${name}-${index}`}><div><span>{initials}</span><p><b>{name}</b><small>{city}</small></p></div><p>{text}</p></article>)}</div></section>
 

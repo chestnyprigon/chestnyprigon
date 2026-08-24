@@ -18,9 +18,10 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const get = (name: string) => typeof params[name] === "string" ? params[name] : undefined;
   const search: CatalogSearch = {
-    page: integer(get("page"), 1), query: get("q"), brand: get("brand"), model: get("model"), fuel: get("fuel"),
+    page: integer(get("page"), 1), query: get("q"), brand: get("brand"), model: get("model"), generation: get("generation"), trim: get("trim"), fuel: get("fuel"),
     yearFrom: integer(get("yearFrom"), 2021), yearTo: integer(get("yearTo"), 2026),
-    minPrice: integer(get("minPrice"), 0), maxPrice: integer(get("maxPrice"), 100_000), maxMileage: integer(get("maxMileage"), 150_000),
+    minEngine: integer(get("minEngine"), 0), maxEngine: integer(get("maxEngine"), 8_000),
+    minPrice: integer(get("minPrice"), 0), maxPrice: integer(get("maxPrice"), 100_000), minMileage: integer(get("minMileage"), 0), maxMileage: integer(get("maxMileage"), 190_000),
     transmission: get("transmission"), drive: get("drive"), bodyType: get("bodyType"),
     accidents: get("accidents") === "clear" ? "clear" : get("accidents") === "with" ? "with" : undefined,
     sort: get("sort") === "price-asc" ? "price-asc" : get("sort") === "price-desc" ? "price-desc" : "newest",
