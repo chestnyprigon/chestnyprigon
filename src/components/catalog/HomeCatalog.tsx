@@ -25,7 +25,8 @@ function price(car: CatalogCar) {
 
 export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [query, setQuery] = useState(initialSearch.query ?? "");
   const [brand, setBrand] = useState(initialSearch.brand ?? "");
   const [model, setModel] = useState(initialSearch.model ?? "");
@@ -54,28 +55,29 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   };
 
   const reset = () => {
-    setQuery(""); setBrand(""); setModel(""); setGeneration(""); setTrim(""); setFuel(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026");
+    setQuery(""); setBrand(""); setModel(""); setGeneration(""); setTrim(""); setFuel(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
     setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage("190000"); setMinPrice(""); setMaxPrice("100000");
     router.push("/#catalog"); setOpen(false);
   };
 
   return <section className="home-catalog premium-section" id="catalog">
-    <div className="home-catalog-heading"><div><p className="premium-kicker"><span />Каталог авто</p><h2>Найдите свой<br />автомобиль</h2><p>Актуальные предложения Encar с расчётом стоимости под ключ в Беларуси.</p></div><button className="home-filter-toggle" type="button" onClick={() => setOpen(!open)}><SlidersHorizontal size={17} />Параметры поиска</button></div>
-    <div className={open ? "home-filter-panel is-open" : "home-filter-panel"}>
+    <div className="home-catalog-heading"><div><p className="premium-kicker"><span />Каталог авто</p><h2>Найдите свой<br />автомобиль</h2><p>Актуальные предложения Encar с расчётом стоимости под ключ в Беларуси.</p></div><button className="home-filter-toggle" type="button" onClick={() => setOpen(!open)}><SlidersHorizontal size={17} />{open ? "Свернуть параметры" : "Параметры поиска"}</button></div>
+    <div className={`${open ? "home-filter-panel is-open" : "home-filter-panel"} ${advancedOpen ? "is-advanced" : ""}`}>
       <div className="home-filter-title"><b>Фильтр параметров</b><button type="button" onClick={reset}><X size={15} />Сбросить</button></div>
       <div className="home-filter-grid">
         <label className="home-filter-country"><span>🇰🇷</span> Корея</label><label className="home-filter-disabled"><span>Европа</span> скоро</label>
         <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setGeneration(""); setTrim(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Модель</span><select value={model} onChange={(e) => setModel(e.target.value)}><option value="">Все модели</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span>Поколение</span><select value={generation} onChange={(e) => setGeneration(e.target.value)}><option value="">Любое</option>{catalog.generations.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span>Модификация</span><select value={trim} onChange={(e) => setTrim(e.target.value)}><option value="">Любая</option>{catalog.trims.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Поколение</span><select value={generation} onChange={(e) => setGeneration(e.target.value)}><option value="">Любое</option>{catalog.generations.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Модификация</span><select value={trim} onChange={(e) => setTrim(e.target.value)}><option value="">Любая</option>{catalog.trims.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
-        <label><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
         <label><span>Год от</span><input inputMode="numeric" value={yearFrom} onChange={(e) => setYearFrom(e.target.value)} /></label><label><span>Год до</span><input inputMode="numeric" value={yearTo} onChange={(e) => setYearTo(e.target.value)} /></label>
-        <label><span>Объём от, см³</span><input inputMode="numeric" value={minEngine} onChange={(e) => setMinEngine(e.target.value)} placeholder="Любой" /></label><label><span>Объём до, см³</span><input inputMode="numeric" value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)} placeholder="Любой" /></label>
-        <label><span>Пробег от, км</span><input inputMode="numeric" value={minMileage} onChange={(e) => setMinMileage(e.target.value)} placeholder="Любой" /></label><label><span>Пробег до, км</span><input inputMode="numeric" value={maxMileage} onChange={(e) => setMaxMileage(e.target.value)} /></label>
+        <label className="home-filter-advanced"><span>Объём от, см³</span><input inputMode="numeric" value={minEngine} onChange={(e) => setMinEngine(e.target.value)} placeholder="Любой" /></label><label className="home-filter-advanced"><span>Объём до, см³</span><input inputMode="numeric" value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)} placeholder="Любой" /></label>
+        <label className="home-filter-advanced"><span>Пробег от, км</span><input inputMode="numeric" value={minMileage} onChange={(e) => setMinMileage(e.target.value)} placeholder="Любой" /></label><label className="home-filter-advanced"><span>Пробег до, км</span><input inputMode="numeric" value={maxMileage} onChange={(e) => setMaxMileage(e.target.value)} /></label>
         <label><span>Цена от, $</span><input inputMode="numeric" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="Любая" /></label><label><span>Цена до, $</span><input inputMode="numeric" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} /></label>
       </div>
+      <button className="home-filter-advanced-toggle" type="button" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "Скрыть дополнительные параметры" : "Дополнительные параметры"}<span>{advancedOpen ? "−" : "+"}</span></button>
       <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>Показать {catalog.total} авто <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
     </div>
     <div className="home-results-toolbar"><div><b>{catalog.total} автомобилей</b><span>Показано {catalog.cars.length} актуальных объявлений</span></div><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && navigate()} placeholder="Марка или модель" /></label></div>
