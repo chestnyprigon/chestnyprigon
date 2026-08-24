@@ -40,7 +40,7 @@ export type CatalogPage = {
 
 function fuelName(source: string | null): CarFuel {
   const fuel = (source ?? "").toLowerCase();
-  if (fuel.includes("하이브리드") || fuel.includes("hybrid")) return "Гибрид";
+  if (/하이브리드|hybrid|hev|phev|plug[ -]?in|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(fuel)) return "Гибрид";
   if (fuel.includes("전기") || fuel.includes("electric")) return "Электро";
   if (fuel.includes("디젤") || fuel.includes("diesel")) return "Дизель";
   if (fuel.includes("lpg") || fuel.includes("가스")) return "Газ";

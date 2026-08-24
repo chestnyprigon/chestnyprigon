@@ -46,6 +46,18 @@ test("does not invent a customs amount for an electric vehicle", () => {
   assert.equal(result.calculationAvailable, false);
 });
 
+test("calculates a hybrid by its combustion-engine displacement", () => {
+  const result = calculateBelarusPrice({
+    priceKrw: 12_000_000,
+    engineCc: 1_598,
+    firstRegistrationDate: "2024-01-01",
+    fuelType: "가솔린+전기",
+    now: new Date("2026-08-24T00:00:00Z"),
+  });
+  assert.equal(result.calculationAvailable, true);
+  assert.equal(result.customsDutyEur, 1_598 * 2.5);
+});
+
 test("uses inclusive displacement brackets at legal boundaries", () => {
   const result = calculateBelarusPrice({
     priceKrw: 22_000_000,

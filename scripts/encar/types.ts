@@ -56,6 +56,10 @@ export type ScreeningResult = {
   isRental: boolean;
   isTaxi: boolean;
   isCommercial: boolean;
+  isElectric: boolean;
+  isHydrogen: boolean;
+  isHybrid: boolean;
+  isUnsupportedPowertrain: boolean;
   isProblematic: boolean;
   reasonCodes: string[];
   matchedTerms: Record<string, string[]>;

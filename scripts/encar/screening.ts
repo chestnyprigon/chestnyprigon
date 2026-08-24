@@ -1,7 +1,7 @@
 import type { EncarBundle, ScreeningResult } from "./types";
 import { ENCAR_MAX_MILEAGE_KM } from "./config";
 
-export const SCREENING_RULES_VERSION = "2026-08-09.1";
+export const SCREENING_RULES_VERSION = "2026-08-24.1";
 
 const TERM_GROUPS = {
   lease: ["리스", "운용리스", "금융리스", "리스승계", "리스 승계"],
@@ -64,6 +64,22 @@ function nestedNumber(record: unknown, key: string) {
   return asNumber((record as Record<string, unknown>)[key]);
 }
 
+function fuelText(bundle: EncarBundle) {
+  const spec = record(bundle.detail.spec);
+  return [bundle.search.FuelType, spec.fuelName]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+}
+
+function powertrainFlags(bundle: EncarBundle) {
+  const fuel = fuelText(bundle);
+  const isHybrid = /하이브리드|hybrid|hev|phev|plug[ -]?in|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(fuel);
+  const isHydrogen = /수소|hydrogen/u.test(fuel);
+  const isElectric = !isHybrid && /전기|electric|\bev\b/u.test(fuel);
+  return { isElectric, isHydrogen, isHybrid, isUnsupportedPowertrain: isElectric || isHydrogen };
+}
+
 export function screenListing(bundle: EncarBundle): ScreeningResult {
   const text = identityText(bundle);
   const advertisement = record(bundle.detail.advertisement);
@@ -85,12 +101,15 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   const isRental = rentalTerms.length > 0 || rentalPlate;
   const isTaxi = taxiTerms.length > 0;
   const isCommercial = commercialTerms.length > 0;
+  const powertrain = powertrainFlags(bundle);
   const reasons: string[] = [];
 
   if (isLease) reasons.push("lease_detected");
   if (isRental) reasons.push(rentalPlate ? "rental_plate_detected" : "rental_detected");
   if (isTaxi) reasons.push("taxi_detected");
   if (isCommercial) reasons.push("commercial_detected");
+  if (powertrain.isElectric) reasons.push("electric_powertrain_excluded");
+  if (powertrain.isHydrogen) reasons.push("hydrogen_powertrain_excluded");
 
   const year = Math.floor(Number(bundle.search.Year) / 100) || Number(bundle.search.FormYear);
   const mileage = asNumber(bundle.search.Mileage);
@@ -114,7 +133,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   if ((seizingCount ?? 0) > 0) reasons.push("seizure_record");
   if ((pledgeCount ?? 0) > 0) reasons.push("pledge_record");
 
-  const hardExclusion = isLease || isRental || isTaxi || isCommercial;
+  const hardExclusion = isLease || isRental || isTaxi || isCommercial || powertrain.isUnsupportedPowertrain;
   const invalidData = reasons.some((reason) =>
     [
       "invalid_model_year",
@@ -134,6 +153,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
     isRental,
     isTaxi,
     isCommercial,
+    ...powertrain,
     isProblematic,
     reasonCodes: [...new Set(reasons)],
     matchedTerms: {

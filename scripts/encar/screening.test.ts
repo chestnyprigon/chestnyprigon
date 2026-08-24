@@ -9,6 +9,7 @@ function bundle(overrides: {
   contents?: string;
   photos?: number;
   serviceCopyCar?: string;
+  fuelType?: string;
 } = {}): EncarBundle {
   return {
     fetchedAt: "2026-08-09T00:00:00.000Z",
@@ -20,6 +21,7 @@ function bundle(overrides: {
       Year: 202401,
       Mileage: 12_000,
       Price: 3500,
+      FuelType: overrides.fuelType ?? "가솔린",
       ServiceCopyCar: overrides.serviceCopyCar,
     },
     detail: {
@@ -70,4 +72,19 @@ test("does not reject seller financing text or a negated usage history", () => {
     bundle({ contents: "할부 및 리스 가능. 렌트 및 영업용 이력 전혀 없음. 택시로 오세요." }),
   );
   assert.equal(result.decision, "approved");
+});
+
+test("keeps hybrids and excludes pure electric and hydrogen powertrains", () => {
+  const hybrid = screenListing(bundle({ fuelType: "가솔린+전기" }));
+  assert.equal(hybrid.decision, "approved");
+  assert.equal(hybrid.isHybrid, true);
+  assert.equal(hybrid.isUnsupportedPowertrain, false);
+
+  const electric = screenListing(bundle({ fuelType: "전기" }));
+  assert.equal(electric.decision, "rejected");
+  assert.equal(electric.reasonCodes.includes("electric_powertrain_excluded"), true);
+
+  const hydrogen = screenListing(bundle({ fuelType: "수소" }));
+  assert.equal(hydrogen.decision, "rejected");
+  assert.equal(hydrogen.reasonCodes.includes("hydrogen_powertrain_excluded"), true);
 });

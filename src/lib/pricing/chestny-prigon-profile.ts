@@ -84,7 +84,10 @@ function monthsBetween(registration: string | null, now: Date) {
 
 function isElectricOrNonStandardFuel(fuelType: string) {
   const fuel = fuelType.toLowerCase();
-  return fuel.includes("전기") || fuel.includes("electric") || fuel.includes("электро") || fuel.includes("수소") || fuel.includes("hydrogen");
+  const isHybrid = /하이브리드|hybrid|hev|phev|plug[ -]?in|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(fuel);
+  const isHydrogen = fuel.includes("수소") || fuel.includes("hydrogen");
+  const isElectric = !isHybrid && (fuel.includes("전기") || fuel.includes("electric") || fuel.includes("электро"));
+  return isElectric || isHydrogen;
 }
 
 function rateForDisplacement(engineCc: number, rates: Array<[number, number]>) {

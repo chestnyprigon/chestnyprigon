@@ -40,7 +40,11 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
       .single(),
   );
   const runId = (run as { id: string }).id;
-  const approvedItems = uniqueItems.filter(
+  // Unsupported powertrains are intentionally not persisted, including raw payloads.
+  // The client confirmed that hybrids are accepted and calculated by ICE displacement;
+  // pure EV and hydrogen listings wait for a separate customs rule.
+  const persistableItems = uniqueItems.filter((item) => !item.screening.isUnsupportedPowertrain);
+  const approvedItems = persistableItems.filter(
     (item) => item.screening.decision === "approved" && item.normalized,
   );
   const rejectedCount = uniqueItems.length - approvedItems.length;
@@ -48,7 +52,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
   try {
     await checked(
       supabase.from("encar_raw_listings").upsert(
-        uniqueItems.map((item) => {
+        persistableItems.map((item) => {
           const sourceListingId = canonicalSourceId(item.bundle);
           const advertisedListingId = String(item.bundle.search.Id);
           return {
@@ -67,7 +71,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
 
     await checked(
       supabase.from("listing_screening").upsert(
-        uniqueItems.map((item) => ({
+        persistableItems.map((item) => ({
           source_listing_id: canonicalSourceId(item.bundle),
           decision: item.screening.decision,
           is_lease: item.screening.isLease,
