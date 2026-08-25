@@ -24,7 +24,7 @@ a { color: inherit; text-decoration: none; }
 
 .premium-header { align-items: center; background: rgba(4, 13, 22, .9); border-bottom: 1px solid rgba(255,255,255,.07); display: grid; grid-template-columns: 285px 1fr 250px; height: 78px; padding: 0 30px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px); }
 .premium-brand { align-items: center; display: flex; width: max-content; }
-.premium-brand-art { display: block; flex: 0 0 250px; height: 68px; position: relative; width: 250px; }
+.premium-brand-art { display: block; flex: 0 0 260px; height: 72px; position: relative; width: 260px; }
 .premium-brand-art .premium-brand-mark { height: 100%; inset: 0; object-fit: contain; object-position: left center; position: absolute; width: 100%; }
 .premium-brand-mark { display: block; flex: 0 0 52px; height: auto; object-fit: contain; width: 52px; }
 .premium-brand-copy { display: flex; flex-direction: column; transform: translateY(-1px); }
@@ -108,7 +108,7 @@ a { color: inherit; text-decoration: none; }
 /* Mobile navigation scrolls away with the page; the home showcase stays compact. */
 @media (max-width: 640px) {
   .premium-header, .catalog-header { position: relative; top: auto; }
-  .premium-brand-art { flex-basis: 204px; height: 60px; width: 204px; }
+  .premium-brand-art { flex-basis: 218px; height: 64px; width: 218px; }
   .premium-catalog .premium-car-grid { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .premium-catalog .premium-car-card:nth-child(n+3) { display: block; }
   .premium-catalog .premium-car-card:nth-child(n+5) { display: none; }
