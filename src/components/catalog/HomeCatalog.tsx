@@ -31,7 +31,6 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [query, setQuery] = useState(initialSearch.query ?? "");
   const [brand, setBrand] = useState(initialSearch.brand ?? "");
   const [model, setModel] = useState(initialSearch.model ?? "");
-  const [generation, setGeneration] = useState(initialSearch.generation ?? "");
   const [fuel, setFuel] = useState(initialSearch.fuel ?? "");
   const [drive, setDrive] = useState(initialSearch.drive ?? "");
   const [accidents, setAccidents] = useState(initialSearch.accidents ?? "");
@@ -51,7 +50,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const navigate = (toCatalog = false) => {
     const params = new URLSearchParams();
     const add = (key: string, value: string) => { if (value) params.set(key, value); };
-    add("q", query.trim()); add("brand", brand); add("model", model); add("generation", generation); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
+    add("q", query.trim()); add("brand", brand); add("model", model); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
     add("yearFrom", yearFrom); add("yearTo", yearTo); add("minEngine", minEngine); add("maxEngine", maxEngine);
     add("minMileage", minMileage); add("maxMileage", maxMileage); add("minPrice", minPrice); add("maxPrice", maxPrice);
     router.push(`${toCatalog ? "/catalog" : "/"}${params.size ? `?${params.toString()}` : ""}${toCatalog ? "" : "#catalog"}`);
@@ -59,7 +58,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   };
 
   const reset = () => {
-    setQuery(""); setBrand(""); setModel(""); setGeneration(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
+    setQuery(""); setBrand(""); setModel(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
     setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage("190000"); setMinPrice(""); setMaxPrice("100000");
     router.push("/#catalog"); setOpen(false);
   };
@@ -70,9 +69,8 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-title"><b>Фильтр параметров</b><button type="button" onClick={reset}><X size={15} />Сбросить</button></div>
       <div className="home-filter-grid">
         <label className="home-filter-country"><span>🇰🇷</span> Корея</label>
-        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setGeneration(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Модель</span><select value={model} onChange={(e) => setModel(e.target.value)}><option value="">Все модели</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label className="home-filter-advanced"><span>Поколение</span><select value={generation} onChange={(e) => setGeneration(e.target.value)}><option value="">Любое</option>{catalog.generations.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Привод</span><select value={drive} onChange={(e) => setDrive(e.target.value)}>{drives.map((value) => <option key={value} value={value}>{value || "Любой"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
