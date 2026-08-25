@@ -11,6 +11,7 @@ import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
 const fuels = ["", "Бензин", "Дизель", "Гибрид", "Газ"];
+const drives = ["", "Полный", "Передний", "Задний", "2WD"];
 const accidentOptions = ["", "clear", "with"] as const;
 
 function badge(car: CatalogCar) {
@@ -31,8 +32,8 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [brand, setBrand] = useState(initialSearch.brand ?? "");
   const [model, setModel] = useState(initialSearch.model ?? "");
   const [generation, setGeneration] = useState(initialSearch.generation ?? "");
-  const [trim, setTrim] = useState(initialSearch.trim ?? "");
   const [fuel, setFuel] = useState(initialSearch.fuel ?? "");
+  const [drive, setDrive] = useState(initialSearch.drive ?? "");
   const [accidents, setAccidents] = useState(initialSearch.accidents ?? "");
   const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? 2021));
   const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? 2026));
@@ -42,12 +43,15 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? 190000));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? ""));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? 100000));
-  const models = useMemo(() => [...new Set(catalog.models)], [catalog.models]);
+  const models = useMemo(
+    () => [...new Set(catalog.cars.filter((car) => !brand || car.brand === brand).map((car) => car.model))].sort((left, right) => left.localeCompare(right, "ru")),
+    [brand, catalog.cars],
+  );
 
   const navigate = (toCatalog = false) => {
     const params = new URLSearchParams();
     const add = (key: string, value: string) => { if (value) params.set(key, value); };
-    add("q", query.trim()); add("brand", brand); add("model", model); add("generation", generation); add("trim", trim); add("fuel", fuel); add("accidents", accidents);
+    add("q", query.trim()); add("brand", brand); add("model", model); add("generation", generation); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
     add("yearFrom", yearFrom); add("yearTo", yearTo); add("minEngine", minEngine); add("maxEngine", maxEngine);
     add("minMileage", minMileage); add("maxMileage", maxMileage); add("minPrice", minPrice); add("maxPrice", maxPrice);
     router.push(`${toCatalog ? "/catalog" : "/"}${params.size ? `?${params.toString()}` : ""}${toCatalog ? "" : "#catalog"}`);
@@ -55,7 +59,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   };
 
   const reset = () => {
-    setQuery(""); setBrand(""); setModel(""); setGeneration(""); setTrim(""); setFuel(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
+    setQuery(""); setBrand(""); setModel(""); setGeneration(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
     setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage("190000"); setMinPrice(""); setMaxPrice("100000");
     router.push("/#catalog"); setOpen(false);
   };
@@ -65,12 +69,12 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
     <div className={`${open ? "home-filter-panel is-open" : "home-filter-panel"} ${advancedOpen ? "is-advanced" : ""}`}>
       <div className="home-filter-title"><b>Фильтр параметров</b><button type="button" onClick={reset}><X size={15} />Сбросить</button></div>
       <div className="home-filter-grid">
-        <label className="home-filter-country"><span>🇰🇷</span> Корея</label><label className="home-filter-disabled"><span>Европа</span> скоро</label>
-        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setGeneration(""); setTrim(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="home-filter-country"><span>🇰🇷</span> Корея</label>
+        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setGeneration(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Модель</span><select value={model} onChange={(e) => setModel(e.target.value)}><option value="">Все модели</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Поколение</span><select value={generation} onChange={(e) => setGeneration(e.target.value)}><option value="">Любое</option>{catalog.generations.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label className="home-filter-advanced"><span>Модификация</span><select value={trim} onChange={(e) => setTrim(e.target.value)}><option value="">Любая</option>{catalog.trims.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Привод</span><select value={drive} onChange={(e) => setDrive(e.target.value)}>{drives.map((value) => <option key={value} value={value}>{value || "Любой"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
         <label><span>Год от</span><input inputMode="numeric" value={yearFrom} onChange={(e) => setYearFrom(e.target.value)} /></label><label><span>Год до</span><input inputMode="numeric" value={yearTo} onChange={(e) => setYearTo(e.target.value)} /></label>
         <label className="home-filter-advanced"><span>Объём от, см³</span><input inputMode="numeric" value={minEngine} onChange={(e) => setMinEngine(e.target.value)} placeholder="Любой" /></label><label className="home-filter-advanced"><span>Объём до, см³</span><input inputMode="numeric" value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)} placeholder="Любой" /></label>

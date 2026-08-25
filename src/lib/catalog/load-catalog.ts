@@ -432,10 +432,13 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   if (input.transmission === "Автомат") query = query.or("transmission.ilike.%자동%,transmission.ilike.%오토%");
   if (input.transmission === "Механика") query = query.ilike("transmission", "%수동%");
   if (input.transmission === "Вариатор") query = query.ilike("transmission", "%무단%");
-  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%");
-  if (input.drive === "Передний") query = query.ilike("drive_type", "%전륜%");
-  if (input.drive === "Задний") query = query.ilike("drive_type", "%후륜%");
-  if (input.drive === "2WD") query = query.ilike("drive_type", "%2WD%");
+  // `drive` is sometimes recorded in a trim description rather than a
+  // dedicated Encar field. Query both sources so the filter matches the
+  // drive value shown on the vehicle card.
+  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%");
+  if (input.drive === "Передний") query = query.or("drive_type.ilike.%전륜%,drive_type.ilike.%FWD%,trim.ilike.%FWD%");
+  if (input.drive === "Задний") query = query.or("drive_type.ilike.%후륜%,drive_type.ilike.%RWD%,trim.ilike.%RWD%");
+  if (input.drive === "2WD") query = query.or("drive_type.ilike.%2WD%,drive_type.ilike.%2륜%");
   if (input.bodyType) query = query.ilike("body_type", `%${input.bodyType === "Минивэн" ? "승합" : input.bodyType}%`);
   if (input.query) {
     const term = input.query.replace(/[,%()]/g, " ").trim();
