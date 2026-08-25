@@ -86,8 +86,23 @@ function trimName(value: string | null) {
 }
 
 function bodyName(value: string | null) {
-  return normalizedValue(value, [["세단", "Седан"], ["SUV", "SUV"], ["승합", "Минивэн"], ["해치백", "Хэтчбек"], ["쿠페", "Купе"], ["왜건", "Универсал"], ["트럭", "Пикап"]], "Не указан");
+  return normalizedValue(value, [["경차", "Компакт"], ["준중형차", "Гольф-класс"], ["중형차", "Средний класс"], ["대형차", "Представительский класс"], ["SUV", "SUV"], ["RV", "RV"], ["승합", "Минивэн"], ["세단", "Седан"], ["해치백", "Хэтчбек"], ["쿠페", "Купе"], ["왜건", "Универсал"], ["트럭", "Пикап"]], "Не указан");
 }
+
+// Encar supplies a market class in this field for most listings rather than a
+// literal Russian body name. These are the actual values present in our data.
+const ENCAR_BODY_TYPES: Record<string, string[]> = {
+  SUV: ["SUV"],
+  RV: ["RV"],
+  "Минивэн": ["승합차"],
+  "Компакт": ["경차"],
+  "Гольф-класс": ["준중형차"],
+  "Средний класс": ["중형차"],
+  "Представительский класс": ["대형차"],
+  // Legacy URL compatibility: old links used this label, although Encar
+  // stores a class rather than a strict sedan body shape.
+  "Седан": ["준중형차", "중형차", "대형차"],
+};
 
 function driveName(value: string | null) {
   return normalizedValue(value, [["전륜", "Передний"], ["후륜", "Задний"], ["4륜", "Полный"], ["2륜", "2WD"], ["구동", " привод"], ["4WD", "Полный"]], "Не указан");
@@ -439,7 +454,11 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   if (input.drive === "Передний") query = query.or("drive_type.ilike.%전륜%,drive_type.ilike.%FWD%,trim.ilike.%FWD%");
   if (input.drive === "Задний") query = query.or("drive_type.ilike.%후륜%,drive_type.ilike.%RWD%,trim.ilike.%RWD%");
   if (input.drive === "2WD") query = query.or("drive_type.ilike.%2WD%,drive_type.ilike.%2륜%");
-  if (input.bodyType) query = query.ilike("body_type", `%${input.bodyType === "Минивэн" ? "승합" : input.bodyType}%`);
+  if (input.bodyType) {
+    const rawTypes = ENCAR_BODY_TYPES[input.bodyType];
+    if (rawTypes?.length) query = query.in("body_type", rawTypes);
+    else query = query.ilike("body_type", `%${input.bodyType}%`);
+  }
   if (input.query) {
     const term = input.query.replace(/[,%()]/g, " ").trim();
     if (term) query = query.or(`manufacturer.ilike.%${term}%,model.ilike.%${term}%,generation.ilike.%${term}%,trim.ilike.%${term}%`);

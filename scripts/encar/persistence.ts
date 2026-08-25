@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { canonicalSourceId } from "./identity";
 import type { PilotItem } from "./types";
+import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "../../src/lib/pricing/chestny-prigon-profile";
 
 function requireEnvironment(name: string) {
   const value = process.env[name]?.trim();
@@ -95,6 +96,17 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
           .upsert(
             approvedItems.map((item) => {
               const vehicle = item.normalized!;
+              // Store the same calculation used by the public catalogue at
+              // ingestion time. Without it a newly accepted hybrid receives
+              // a null price and gets excluded by price-range queries until a
+              // separate maintenance task happens to run.
+              const calculation = calculateBelarusPrice({
+                priceKrw: vehicle.priceKrw,
+                engineCc: vehicle.engineCc,
+                firstRegistrationDate: vehicle.firstRegistrationDate,
+                fuelType: vehicle.fuelType,
+                preferential: false,
+              });
               return {
                 source_listing_id: vehicle.sourceListingId,
                 manufacturer: vehicle.manufacturer,
@@ -105,6 +117,8 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
                 first_registration_date: vehicle.firstRegistrationDate,
                 mileage_km: vehicle.mileageKm,
                 price_krw: vehicle.priceKrw,
+                price_usd: calculation.totalUsd,
+                krw_per_usd: CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd,
                 engine_cc: vehicle.engineCc,
                 fuel_type: vehicle.fuelType,
                 transmission: vehicle.transmission,

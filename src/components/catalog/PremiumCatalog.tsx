@@ -18,11 +18,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogCar, CarFuel } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
+import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
 const drives = ["Все", "Полный", "Передний", "Задний", "2WD"] as const;
-const bodyTypes = ["Все", "SUV", "Седан", "Минивэн", "Хэтчбек", "Купе", "Универсал", "Пикап"] as const;
+const bodyTypes = ["Все", "SUV", "RV", "Минивэн", "Компакт", "Гольф-класс", "Средний класс", "Представительский класс"] as const;
 const accidentFilters = ["Все", "Без ДТП", "Есть страховые случаи"] as const;
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -65,7 +66,19 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const [sort, setSort] = useState(initialSearch.sort ?? "newest");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const models = useMemo(() => ["Все", ...new Set([...catalog.models, ...cars.filter((car) => brand === "Все" || car.brand === brand).map((car) => car.model)])], [brand, cars, catalog.models]);
+  const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
+  const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
+    q: query.trim(),
+    brand: brand === "Все" ? "" : brand,
+    model: model === "Все" ? "" : model,
+    fuel: fuel === "Все" ? "" : fuel,
+    yearFrom, yearTo, minPrice, maxPrice, maxMileage,
+    transmission: transmission === "Все" ? "" : transmission,
+    drive: drive === "Все" ? "" : drive,
+    bodyType: bodyType === "Все" ? "" : bodyType,
+    accidents: accidentFilter === "Без ДТП" ? "clear" : accidentFilter === "Есть страховые случаи" ? "with" : "",
+  }, catalog.total);
+  const models = useMemo(() => ["Все", ...new Set([...modelOptions, ...cars.filter((car) => brand === "Все" || car.brand === brand).map((car) => car.model)])], [brand, cars, modelOptions]);
 
   useEffect(() => {
     document.body.style.overflow = menuOpen ? "hidden" : "";
@@ -74,14 +87,26 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     };
   }, [menuOpen]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const selectedBrand = brand === "Все" ? "" : brand;
+    fetch(`/api/catalog/models${selectedBrand ? `?brand=${encodeURIComponent(selectedBrand)}` : ""}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { models?: unknown } | null) => {
+        if (Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [brand]);
+
   const visible = cars;
 
-  const applySearch = (page = 1) => {
+  const applySearch = (page = 1, override?: { sort?: "newest" | "price-asc" | "price-desc" }) => {
     const params = new URLSearchParams();
     const add = (key: string, value: string, fallback: string) => { if (value && value !== fallback) params.set(key, value); };
     add("q", query.trim(), ""); add("brand", brand, "Все"); add("model", model, "Все"); add("fuel", fuel, "Все");
     add("yearFrom", yearFrom, "2021"); add("yearTo", yearTo, "2026"); add("minPrice", minPrice, "0"); add("maxPrice", maxPrice, "100000"); add("maxMileage", maxMileage, "190000");
-    add("transmission", transmission, "Все"); add("drive", drive, "Все"); add("bodyType", bodyType, "Все"); add("sort", sort, "newest");
+    add("transmission", transmission, "Все"); add("drive", drive, "Все"); add("bodyType", bodyType, "Все"); add("sort", override?.sort ?? sort, "newest");
     if (accidentFilter === "Без ДТП") params.set("accidents", "clear");
     if (accidentFilter === "Есть страховые случаи") params.set("accidents", "with");
     if (page > 1) params.set("page", String(page));
@@ -135,11 +160,11 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <fieldset><legend>Привод</legend><div className="filter-pills">{drives.map((item) => <button className={drive === item ? "is-selected" : ""} type="button" key={item} onClick={() => setDrive(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>Кузов</legend><div className="filter-pills">{bodyTypes.map((item) => <button className={bodyType === item ? "is-selected" : ""} type="button" key={item} onClick={() => setBodyType(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>История Encar</legend><div className="filter-pills">{accidentFilters.map((item) => <button className={accidentFilter === item ? "is-selected" : ""} type="button" key={item} onClick={() => setAccidentFilter(item)}>{item}</button>)}</div></fieldset>
-          <button className="apply-filters" type="button" onClick={() => applySearch()}>Показать {catalog.total} авто <ArrowRight size={16} /></button>
+          <button className="apply-filters" type="button" onClick={() => applySearch()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button>
         </aside>
 
         <div className="catalog-results">
-          <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { setSort(event.target.value as "newest" | "price-asc" | "price-desc"); setTimeout(() => applySearch(), 0); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
+          <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); return <article className="result-car" key={car.id}>
             <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
             <div className="result-car-body"><p><span>{car.location} · Encar</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>

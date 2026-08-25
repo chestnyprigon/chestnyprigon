@@ -3,10 +3,11 @@
 import { ArrowRight, Search, SlidersHorizontal, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CatalogCar } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
+import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -42,10 +43,26 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? 190000));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? ""));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? 100000));
+  const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
+  const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
+    q: query.trim(), brand, model, fuel, drive, accidents,
+    yearFrom, yearTo, minEngine, maxEngine, minMileage, maxMileage, minPrice, maxPrice,
+  }, catalog.total);
   const models = useMemo(
-    () => [...new Set(catalog.cars.filter((car) => !brand || car.brand === brand).map((car) => car.model))].sort((left, right) => left.localeCompare(right, "ru")),
-    [brand, catalog.cars],
+    () => [...new Set([...modelOptions, ...catalog.cars.filter((car) => !brand || car.brand === brand).map((car) => car.model)])].sort((left, right) => left.localeCompare(right, "ru")),
+    [brand, catalog.cars, modelOptions],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/catalog/models${brand ? `?brand=${encodeURIComponent(brand)}` : ""}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { models?: unknown } | null) => {
+        if (Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [brand]);
 
   const navigate = (toCatalog = false) => {
     const params = new URLSearchParams();
@@ -80,7 +97,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
         <label><span>Цена от, $</span><input inputMode="numeric" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="Любая" /></label><label><span>Цена до, $</span><input inputMode="numeric" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} /></label>
       </div>
       <button className="home-filter-advanced-toggle" type="button" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "Скрыть дополнительные параметры" : "Дополнительные параметры"}<span>{advancedOpen ? "−" : "+"}</span></button>
-      <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>Показать {catalog.total} авто <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
+      <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
     </div>
     <div className="home-results-toolbar"><div><b>{catalog.total} автомобилей</b><span>Показано {catalog.cars.length} актуальных объявлений</span></div><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && navigate()} placeholder="Марка или модель" /></label></div>
     {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); return <article className="home-result-card" key={car.id}><Link href={`/catalog/${car.id}`} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p>{car.location} · Encar</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link href={`/catalog/${car.id}`}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
