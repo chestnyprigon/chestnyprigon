@@ -259,3 +259,13 @@ a { color: inherit; text-decoration: none; }
   .premium-section { padding-bottom: 58px; padding-top: 58px; }
   .premium-brand-art { flex-basis: 226px; height: 66px; width: 226px; }
 }
+
+/* Touch-first gallery: mobile users swipe, while desktop retains ribbon controls. */
+.dossier-main-photo, .dossier-lightbox-image { touch-action: pan-y; }
+@media (max-width: 600px) {
+  .dossier-thumbs-wrap { grid-template-columns: minmax(0, 1fr); padding-inline: 8px; }
+  .dossier-thumbs-nav { display: none; }
+  .dossier-thumbs { -webkit-overflow-scrolling: touch; padding-bottom: 4px; scroll-snap-type: x proximity; }
+  .dossier-thumbs button { scroll-snap-align: start; }
+  .dossier-lightbox-nav { display: none; }
+}
