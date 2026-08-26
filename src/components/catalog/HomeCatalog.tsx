@@ -7,7 +7,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CatalogCar } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
+import {
+  ENGINE_MAX_OPTIONS,
+  ENGINE_MIN_OPTIONS,
+  MILEAGE_MAX_OPTIONS,
+  MILEAGE_MIN_OPTIONS,
+  PRICE_MAX_OPTIONS,
+  PRICE_MIN_OPTIONS,
+  YEAR_OPTIONS,
+} from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
+import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -35,12 +45,12 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [fuel, setFuel] = useState(initialSearch.fuel ?? "");
   const [drive, setDrive] = useState(initialSearch.drive ?? "");
   const [accidents, setAccidents] = useState(initialSearch.accidents ?? "");
-  const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? 2021));
-  const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? 2026));
+  const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? catalogYearFrom()));
+  const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? catalogYearTo()));
   const [minEngine, setMinEngine] = useState(String(initialSearch.minEngine ?? ""));
   const [maxEngine, setMaxEngine] = useState(String(initialSearch.maxEngine ?? ""));
   const [minMileage, setMinMileage] = useState(String(initialSearch.minMileage ?? ""));
-  const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? 190000));
+  const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? CATALOG_MAX_MILEAGE_KM));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? ""));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? 100000));
   const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
@@ -75,8 +85,8 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   };
 
   const reset = () => {
-    setQuery(""); setBrand(""); setModel(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom("2021"); setYearTo("2026"); setAdvancedOpen(false);
-    setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage("190000"); setMinPrice(""); setMaxPrice("100000");
+    setQuery(""); setBrand(""); setModel(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom(String(catalogYearFrom())); setYearTo(String(catalogYearTo())); setAdvancedOpen(false);
+    setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage(String(CATALOG_MAX_MILEAGE_KM)); setMinPrice(""); setMaxPrice("100000");
     router.push("/#catalog"); setOpen(false);
   };
 
@@ -91,10 +101,10 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Привод</span><select value={drive} onChange={(e) => setDrive(e.target.value)}>{drives.map((value) => <option key={value} value={value}>{value || "Любой"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
-        <label><span>Год от</span><input inputMode="numeric" value={yearFrom} onChange={(e) => setYearFrom(e.target.value)} /></label><label><span>Год до</span><input inputMode="numeric" value={yearTo} onChange={(e) => setYearTo(e.target.value)} /></label>
-        <label className="home-filter-advanced"><span>Объём от, см³</span><input inputMode="numeric" value={minEngine} onChange={(e) => setMinEngine(e.target.value)} placeholder="Любой" /></label><label className="home-filter-advanced"><span>Объём до, см³</span><input inputMode="numeric" value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)} placeholder="Любой" /></label>
-        <label className="home-filter-advanced"><span>Пробег от, км</span><input inputMode="numeric" value={minMileage} onChange={(e) => setMinMileage(e.target.value)} placeholder="Любой" /></label><label className="home-filter-advanced"><span>Пробег до, км</span><input inputMode="numeric" value={maxMileage} onChange={(e) => setMaxMileage(e.target.value)} /></label>
-        <label><span>Цена от, $</span><input inputMode="numeric" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="Любая" /></label><label><span>Цена до, $</span><input inputMode="numeric" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} /></label>
+        <label><span>Год от</span><select value={yearFrom} onChange={(e) => setYearFrom(e.target.value)}>{YEAR_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Год до</span><select value={yearTo} onChange={(e) => setYearTo(e.target.value)}>{YEAR_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Объём от</span><select value={minEngine} onChange={(e) => setMinEngine(e.target.value)}><option value="0">Любой</option>{ENGINE_MIN_OPTIONS.filter(Boolean).map((value) => <option key={value} value={value}>{(value / 1_000).toFixed(1)} л</option>)}</select></label><label className="home-filter-advanced"><span>Объём до</span><select value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)}>{ENGINE_MAX_OPTIONS.map((value) => <option key={value} value={value}>{value === 8_000 ? "Любой" : `${(value / 1_000).toFixed(1)} л`}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Пробег от</span><select value={minMileage} onChange={(e) => setMinMileage(e.target.value)}><option value="0">Любой</option>{MILEAGE_MIN_OPTIONS.filter(Boolean).map((value) => <option key={value} value={value}>{distance.format(value)} км</option>)}</select></label><label className="home-filter-advanced"><span>Пробег до</span><select value={maxMileage} onChange={(e) => setMaxMileage(e.target.value)}>{MILEAGE_MAX_OPTIONS.map((value) => <option key={value} value={value}>{value === 190_000 ? "Любой" : `${distance.format(value)} км`}</option>)}</select></label>
+        <label><span>Цена от</span><select value={minPrice} onChange={(e) => setMinPrice(e.target.value)}><option value="0">Любая</option>{PRICE_MIN_OPTIONS.filter(Boolean).map((value) => <option key={value} value={value}>{money.format(value)}</option>)}</select></label><label><span>Цена до</span><select value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)}>{PRICE_MAX_OPTIONS.map((value) => <option key={value} value={value}>{value === 100_000 ? "Любая" : money.format(value)}</option>)}</select></label>
       </div>
       <button className="home-filter-advanced-toggle" type="button" onClick={() => setAdvancedOpen(!advancedOpen)}>{advancedOpen ? "Скрыть дополнительные параметры" : "Дополнительные параметры"}<span>{advancedOpen ? "−" : "+"}</span></button>
       <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>

@@ -18,7 +18,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogCar, CarFuel } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
+import {
+  ENGINE_MAX_OPTIONS,
+  ENGINE_MIN_OPTIONS,
+  MILEAGE_MAX_OPTIONS,
+  MILEAGE_MIN_OPTIONS,
+  PRICE_MAX_OPTIONS,
+  PRICE_MIN_OPTIONS,
+  YEAR_OPTIONS,
+} from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
+import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
@@ -54,11 +64,14 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const [brand, setBrand] = useState(initialSearch.brand ?? "Все");
   const [model, setModel] = useState(initialSearch.model ?? "Все");
   const [fuel, setFuel] = useState<(typeof fuels)[number]>((initialSearch.fuel as (typeof fuels)[number]) ?? "Все");
-  const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? 2021));
-  const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? 2026));
+  const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? catalogYearFrom()));
+  const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? catalogYearTo()));
+  const [minEngine, setMinEngine] = useState(String(initialSearch.minEngine ?? 0));
+  const [maxEngine, setMaxEngine] = useState(String(initialSearch.maxEngine ?? 8000));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? 0));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? 100000));
-  const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? 190000));
+  const [minMileage, setMinMileage] = useState(String(initialSearch.minMileage ?? 0));
+  const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? CATALOG_MAX_MILEAGE_KM));
   const [transmission, setTransmission] = useState<(typeof transmissions)[number]>((initialSearch.transmission as (typeof transmissions)[number]) ?? "Все");
   const [drive, setDrive] = useState<(typeof drives)[number]>((initialSearch.drive as (typeof drives)[number]) ?? "Все");
   const [bodyType, setBodyType] = useState<(typeof bodyTypes)[number]>((initialSearch.bodyType as (typeof bodyTypes)[number]) ?? "Все");
@@ -72,7 +85,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     brand: brand === "Все" ? "" : brand,
     model: model === "Все" ? "" : model,
     fuel: fuel === "Все" ? "" : fuel,
-    yearFrom, yearTo, minPrice, maxPrice, maxMileage,
+    yearFrom, yearTo, minEngine, maxEngine, minPrice, maxPrice, minMileage, maxMileage,
     transmission: transmission === "Все" ? "" : transmission,
     drive: drive === "Все" ? "" : drive,
     bodyType: bodyType === "Все" ? "" : bodyType,
@@ -105,7 +118,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     const params = new URLSearchParams();
     const add = (key: string, value: string, fallback: string) => { if (value && value !== fallback) params.set(key, value); };
     add("q", query.trim(), ""); add("brand", brand, "Все"); add("model", model, "Все"); add("fuel", fuel, "Все");
-    add("yearFrom", yearFrom, "2021"); add("yearTo", yearTo, "2026"); add("minPrice", minPrice, "0"); add("maxPrice", maxPrice, "100000"); add("maxMileage", maxMileage, "190000");
+    add("yearFrom", yearFrom, String(catalogYearFrom())); add("yearTo", yearTo, String(catalogYearTo())); add("minEngine", minEngine, "0"); add("maxEngine", maxEngine, "8000"); add("minPrice", minPrice, "0"); add("maxPrice", maxPrice, "100000"); add("minMileage", minMileage, "0"); add("maxMileage", maxMileage, String(CATALOG_MAX_MILEAGE_KM));
     add("transmission", transmission, "Все"); add("drive", drive, "Все"); add("bodyType", bodyType, "Все"); add("sort", override?.sort ?? sort, "newest");
     if (accidentFilter === "Без ДТП") params.set("accidents", "clear");
     if (accidentFilter === "Есть страховые случаи") params.set("accidents", "with");
@@ -119,11 +132,14 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     setBrand("Все");
     setModel("Все");
     setFuel("Все");
-    setYearFrom("2021");
-    setYearTo("2026");
+    setYearFrom(String(catalogYearFrom()));
+    setYearTo(String(catalogYearTo()));
+    setMinEngine("0");
+    setMaxEngine("8000");
     setMinPrice("0");
     setMaxPrice("100000");
-    setMaxMileage("190000");
+    setMinMileage("0");
+    setMaxMileage(String(CATALOG_MAX_MILEAGE_KM));
     setTransmission("Все");
     setDrive("Все");
     setBodyType("Все");
@@ -152,9 +168,10 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <label className="filter-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Марка или модель" /></label>
           <fieldset><legend>Марка</legend><div className="filter-pills">{brands.map((item) => <button className={brand === item ? "is-selected" : ""} type="button" key={item} onClick={() => { setBrand(item); setModel("Все"); }}>{item}</button>)}</div></fieldset>
           <label className="filter-select"><span>Модель</span><select value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <div className="filter-pair"><label className="filter-select"><span>Год от</span><select value={yearFrom} onChange={(event) => setYearFrom(event.target.value)}>{[2021, 2022, 2023, 2024, 2025, 2026].map((item) => <option key={item}>{item}</option>)}</select></label><label className="filter-select"><span>до</span><select value={yearTo} onChange={(event) => setYearTo(event.target.value)}>{[2021, 2022, 2023, 2024, 2025, 2026].map((item) => <option key={item}>{item}</option>)}</select></label></div>
-          <div className="filter-pair"><label className="filter-select"><span>Цена от, $</span><select value={minPrice} onChange={(event) => setMinPrice(event.target.value)}>{[0, 15000, 25000, 40000, 60000].map((item) => <option key={item} value={item}>{item ? money.format(item) : "Любая"}</option>)}</select></label><label className="filter-select"><span>до, $</span><select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)}>{[20000, 30000, 50000, 75000, 100000].map((item) => <option key={item} value={item}>{money.format(item)}</option>)}</select></label></div>
-          <label className="filter-range"><span>Пробег до <b>{distance.format(Number(maxMileage))} км</b></span><input type="range" min="10000" max="190000" step="5000" value={maxMileage} onChange={(event) => setMaxMileage(event.target.value)} /></label>
+          <div className="filter-pair"><label className="filter-select"><span>Год от</span><select value={yearFrom} onChange={(event) => setYearFrom(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="filter-select"><span>до</span><select value={yearTo} onChange={(event) => setYearTo(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
+          <div className="filter-pair"><label className="filter-select"><span>Объём от</span><select value={minEngine} onChange={(event) => setMinEngine(event.target.value)}><option value="0">Любой</option>{ENGINE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{(item / 1_000).toFixed(1)} л</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxEngine} onChange={(event) => setMaxEngine(event.target.value)}>{ENGINE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 8_000 ? "Любой" : `${(item / 1_000).toFixed(1)} л`}</option>)}</select></label></div>
+          <div className="filter-pair"><label className="filter-select"><span>Цена от</span><select value={minPrice} onChange={(event) => setMinPrice(event.target.value)}><option value="0">Любая</option>{PRICE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{money.format(item)}</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)}>{PRICE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 100_000 ? "Любая" : money.format(item)}</option>)}</select></label></div>
+          <div className="filter-pair"><label className="filter-select"><span>Пробег от</span><select value={minMileage} onChange={(event) => setMinMileage(event.target.value)}><option value="0">Любой</option>{MILEAGE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{distance.format(item)} км</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxMileage} onChange={(event) => setMaxMileage(event.target.value)}>{MILEAGE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 190_000 ? "Любой" : `${distance.format(item)} км`}</option>)}</select></label></div>
           <fieldset><legend>Тип двигателя</legend><div className="filter-pills">{fuels.map((item) => <button className={fuel === item ? "is-selected" : ""} type="button" key={item} onClick={() => setFuel(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>Коробка передач</legend><div className="filter-pills">{transmissions.map((item) => <button className={transmission === item ? "is-selected" : ""} type="button" key={item} onClick={() => setTransmission(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>Привод</legend><div className="filter-pills">{drives.map((item) => <button className={drive === item ? "is-selected" : ""} type="button" key={item} onClick={() => setDrive(item)}>{item}</button>)}</div></fieldset>

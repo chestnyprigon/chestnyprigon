@@ -2,6 +2,8 @@
 
 Scope: South Korea only, prices shown in USD, no admin panel. Autoexport remains an independent reference project and is never modified by this repository.
 
+Customer-confirmed intake limits (August 2026): the catalog covers the last 7 years relative to the current year (2019–2026 in 2026) and mileage up to 190,000 km. These limits are shared by the UI filters, catalog API, Encar parser and screening rules.
+
 | # | Stage | Status | Completion rule |
 |---|---|---|---|
 | 1 | Approve concept and MVP | Complete | Korea-only scope, no admin panel, paid developer support model agreed |

@@ -1,6 +1,11 @@
 /** Shared base limits for the Encar intake pipeline. */
-export const ENCAR_MIN_VEHICLE_AGE_YEARS = 7;
-export const ENCAR_MAX_MILEAGE_KM = 190_000;
+import {
+  CATALOG_MAX_MILEAGE_KM,
+  CATALOG_VEHICLE_AGE_YEARS,
+} from "../../src/lib/catalog/catalog-rules";
+
+export const ENCAR_MIN_VEHICLE_AGE_YEARS = CATALOG_VEHICLE_AGE_YEARS;
+export const ENCAR_MAX_MILEAGE_KM = CATALOG_MAX_MILEAGE_KM;
 
 export function encarYearFrom(yearTo: number) {
   return yearTo - ENCAR_MIN_VEHICLE_AGE_YEARS;

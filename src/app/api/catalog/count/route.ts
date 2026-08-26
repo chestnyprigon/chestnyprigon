@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadCatalogPage, type CatalogSearch } from "@/lib/catalog/load-catalog";
+import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +21,14 @@ export async function GET(request: Request) {
     brand: get("brand"),
     model: get("model"),
     fuel: get("fuel"),
-    yearFrom: integer(get("yearFrom"), 2021),
-    yearTo: integer(get("yearTo"), 2026),
+    yearFrom: integer(get("yearFrom"), catalogYearFrom()),
+    yearTo: integer(get("yearTo"), catalogYearTo()),
     minEngine: integer(get("minEngine"), 0),
     maxEngine: integer(get("maxEngine"), 8_000),
     minPrice: integer(get("minPrice"), 0),
     maxPrice: integer(get("maxPrice"), 100_000),
     minMileage: integer(get("minMileage"), 0),
-    maxMileage: integer(get("maxMileage"), 190_000),
+    maxMileage: integer(get("maxMileage"), CATALOG_MAX_MILEAGE_KM),
     transmission: get("transmission"),
     drive: get("drive"),
     bodyType: get("bodyType"),
