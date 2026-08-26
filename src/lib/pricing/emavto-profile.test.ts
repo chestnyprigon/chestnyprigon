@@ -33,6 +33,8 @@ test("uses the current Belarus utilization fee by the vehicle age", () => {
 
   assert.equal(upToThreeYears.utilizationFeeByn, 624.92);
   assert.equal(overThreeYears.utilizationFeeByn, 1_282.02);
+  assert.equal(upToThreeYears.utilizationFeeEur, Math.round(624.92 / upToThreeYears.rates.eurByn));
+  assert.equal(overThreeYears.utilizationFeeEur, Math.round(1_282.02 / overThreeYears.rates.eurByn));
 });
 
 test("applies the preferential coefficient only to customs duty", () => {

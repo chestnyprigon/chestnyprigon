@@ -70,6 +70,7 @@ export type BelarusPriceCalculation = {
   customsDutyEur: number | null;
   customsClearanceEur: number;
   utilizationFeeByn: number | null;
+  utilizationFeeEur: number | null;
   arrivalMinskEur: number | null;
   companyServiceUsd: number;
   totalUsd: number | null;
@@ -163,6 +164,7 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
         : null;
   const dutyEur = unavailableReason ? null : customsDutyEur({ priceEur: sourcePriceEur, engineCc: input.engineCc, ageBand, preferential });
   const utilizationByn = dutyEur === null ? null : utilizationFeeByn(ageBand);
+  const utilizationEur = utilizationByn === null ? null : Math.round(utilizationByn / rates.eurByn);
   const arrivalMinskEur = dutyEur === null || utilizationByn === null
     ? null
     : Math.round(profile.svhDeclarantEur + dutyEur + profile.customsClearanceEur + utilizationByn / rates.eurByn);
@@ -186,6 +188,7 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
     customsDutyEur: dutyEur,
     customsClearanceEur: profile.customsClearanceEur,
     utilizationFeeByn: utilizationByn,
+    utilizationFeeEur: utilizationEur,
     arrivalMinskEur,
     companyServiceUsd: profile.companyServiceUsd,
     totalUsd,

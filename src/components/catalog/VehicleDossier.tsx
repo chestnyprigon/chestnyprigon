@@ -19,7 +19,6 @@ function date(value: string | null) {
 
 function krw(value: number) { return `${number.format(value)}\u00a0₩`; }
 function eur(value: number) { return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value); }
-function byn(value: number) { return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "BYN", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value); }
 
 const equipmentCatalog = [
   { name: "Экстерьер и интерьер", items: [["010", "Люк"], ["075", "LED-фары"], ["029", "Ксеноновые фары"], ["059", "Электропривод багажника"], ["080", "Доводчики дверей"], ["024", "Электроскладывание зеркал"], ["017", "Легкосплавные диски"], ["062", "Рейлинги на крыше"]] },
@@ -76,7 +75,6 @@ function InsuranceBreakdown({ events }: { events: AccidentSummary["insuranceEven
 function ClientPriceTable({ calculation }: { calculation: BelarusPriceCalculation }) {
   const dollar = (value: number | null) => value === null ? "Расчёт уточняется" : money.format(value);
   const euro = (value: number | null) => value === null ? "Расчёт уточняется" : eur(value);
-  const belarusianRubles = (value: number | null) => value === null ? "Расчёт уточняется" : byn(value);
   return <details className="dossier-calculation">
     <summary><Calculator size={15} />Расчёт цены <ChevronDown size={16} /></summary>
     <div className="dossier-client-table">
@@ -89,7 +87,7 @@ function ClientPriceTable({ calculation }: { calculation: BelarusPriceCalculatio
       <p><span>Услуги СВХ и декларант</span><b>{euro(calculation.svhDeclarantEur)}</b></p>
       <p><span>Таможенная пошлина</span><b>{euro(calculation.customsDutyEur)}</b></p>
       <p><span>Оформление и сопровождение</span><b>{euro(calculation.customsClearanceEur)}</b></p>
-      <p><span>Утилизационный сбор</span><b>{belarusianRubles(calculation.utilizationFeeByn)}</b></p>
+      <p><span>Утилизационный сбор</span><b>{euro(calculation.utilizationFeeEur)}</b></p>
       <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
       <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
       <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>

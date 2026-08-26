@@ -19,7 +19,7 @@ Profile version: `chestny-prigon-client-table-v2-dynamic-state-fees`.
 
 1. USD/BYN and EUR/BYN are obtained from the daily NBRB API. A labelled fallback is used only if NBRB is unavailable.
 2. Customs duty is calculated by vehicle age, engine displacement and—only for vehicles up to three years old—customs value. The rates follow the EAEU personal-import brackets.
-3. For a M1 vehicle imported by a private person for personal use, utilization fee is calculated in BYN: 624.92 BYN up to three years inclusive and 1,282.02 BYN after three years, effective 2026-04-29. It is then included in the USD total using the NBRB rate.
+3. For a M1 vehicle imported by a private person for personal use, utilization fee is calculated from the legal BYN rates: 624.92 BYN up to three years inclusive and 1,282.02 BYN after three years, effective 2026-04-29. The client table displays this line in EUR after conversion using the current NBRB EUR/BYN rate; the total uses the same converted value.
 4. Preferential treatment affects only customs duty and remains a scenario until the buyer's eligibility is confirmed.
 
 The Encar payload currently provides first-registration date rather than an independently verified production date. It is used for the preliminary age group; the final customs amount must be checked against the vehicle documents.
