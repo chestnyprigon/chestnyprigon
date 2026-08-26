@@ -146,6 +146,14 @@ supabase db push
 
 Файл: `scripts/encar/client.ts`.
 
+Перед первым поиском или запросом деталей parser выполняет обязательную проверку доступа Encar:
+
+1. `GET /international/communication/validate-request-ip` получает текущий внешний IP запуска;
+2. `POST /pass/user/verify` передаёт этот IP и текущий User-Agent;
+3. дальнейшие запросы выполняются только после ответа `{"status":"VERIFIED"}`.
+
+Реализация находится в `scripts/encar/auth.ts` и используется также enrichment-запросами. IP не хранится в конфигурации и не фиксируется в коде; проверка выполняется один раз за процесс с общей защитой от параллельных повторных запросов.
+
 Текущий запрос строится функцией `createDomesticQuery(yearFrom, yearTo, maxMileage)`:
 
 ```text

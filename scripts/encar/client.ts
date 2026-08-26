@@ -1,16 +1,8 @@
 import type { EncarBundle, EncarDetail, EncarSearchListing } from "./types";
+import { encarHeaders, ensureEncarVerified } from "./auth";
 
 const LIST_ENDPOINT = "https://api.encar.com/search/car/list/general";
 const DETAIL_ENDPOINT = "https://api.encar.com/v1/readside/vehicle";
-
-const headers = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
-  Accept: "application/json, text/plain, */*",
-  "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-  Referer: "https://www.encar.com/",
-  Origin: "https://www.encar.com",
-};
 
 type SearchResponse = {
   Count?: number;
@@ -21,7 +13,8 @@ async function fetchJson<T>(url: URL | string): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+      await ensureEncarVerified();
+      const response = await fetch(url, { headers: encarHeaders(), signal: AbortSignal.timeout(20_000) });
       if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
       return (await response.json()) as T;
     } catch (error) {

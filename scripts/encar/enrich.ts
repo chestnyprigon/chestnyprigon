@@ -2,23 +2,12 @@ import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
+import { encarHeaders, ensureEncarVerified } from "./auth";
 import { reportScreening } from "./report-screening";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
-const headers = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
-  Accept: "application/json, text/plain, */*",
-  "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-  Referer: "https://www.encar.com/",
-  Origin: "https://www.encar.com",
-};
-
-const historyHeaders = {
-  ...headers,
-  Authorization: "Bearer WqtHVjmpGX7lWsf63vwCGVPrF1BzYk",
-};
+const historyHeaders = encarHeaders({ Authorization: "Bearer WqtHVjmpGX7lWsf63vwCGVPrF1BzYk" });
 
 type RecordValue = Record<string, unknown>;
 
@@ -57,8 +46,9 @@ function integerArgument(name: string, fallback: number, minimum: number, maximu
   return parsed;
 }
 
-async function fetchJson(url: string, requestHeaders = headers) {
+async function fetchJson(url: string, requestHeaders = encarHeaders()) {
   try {
+    await ensureEncarVerified();
     const response = await fetch(url, { headers: requestHeaders, signal: AbortSignal.timeout(20_000) });
     if (!response.ok) return null;
     return response.json() as Promise<unknown>;
