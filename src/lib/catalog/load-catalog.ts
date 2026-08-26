@@ -2,6 +2,7 @@ import "server-only";
 import type { AccidentSummary, CatalogCar, CarFuel, InspectionSummary, VehicleOption } from "@/data/cars";
 import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
 import { calculateBelarusPrice } from "@/lib/pricing/chestny-prigon-profile";
+import { loadPricingContext, type PricingContext } from "@/lib/pricing/pricing-context";
 import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
@@ -285,7 +286,7 @@ function parseAccidents(value: unknown): AccidentSummary | null {
   };
 }
 
-function mapCatalogRows(data: CatalogRow[]): CatalogCar[] {
+function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): CatalogCar[] {
   return data.flatMap((row) => {
     if (
       !row.id ||
@@ -306,6 +307,8 @@ function mapCatalogRows(data: CatalogRow[]): CatalogCar[] {
       firstRegistrationDate: row.first_registration_date,
       fuelType: row.fuel_type,
       preferential: false,
+      profile: pricingContext.profile,
+      exchangeRates: pricingContext.exchangeRates,
     });
     const images = (row.image_urls ?? []).map(encarPhotoUrl);
     if (!images.length) return [];
@@ -355,6 +358,7 @@ function mapVehicleRows(
   data: VehicleRow[],
   imagesByVehicle: Map<string, string[]>,
   reportsByVehicle: Map<string, { inspection_summary: unknown; accident_summary: unknown; report_status: string; fetched_at: string }>,
+  pricingContext: PricingContext,
 ): CatalogCar[] {
   return data.flatMap((row) => {
     const images = (imagesByVehicle.get(row.id) ?? []).map(encarPhotoUrl);
@@ -364,7 +368,7 @@ function mapVehicleRows(
     try {
       calculation = calculateBelarusPrice({
         priceKrw: Number(row.price_krw), engineCc: row.engine_cc, firstRegistrationDate: row.first_registration_date,
-        fuelType: row.fuel_type, preferential: false,
+        fuelType: row.fuel_type, preferential: false, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates,
       });
     } catch {
       return [];
@@ -427,6 +431,7 @@ async function loadAccidentVehicleIds(
 
 export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
   const client = createSupabasePublicServerClient();
+  const pricingContext = await loadPricingContext();
   const input = normalizedSearch(search);
   const from = (input.page - 1) * input.perPage;
   let query = client
@@ -499,7 +504,7 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   for (const image of imagesResult.data ?? []) imagesByVehicle.set(image.vehicle_id, [...(imagesByVehicle.get(image.vehicle_id) ?? []), image.source_url]);
   const reportsByVehicle = new Map((reportsResult.data ?? []).map((report) => [report.vehicle_id, report]));
   const publicBrands = ["Chevrolet", "Genesis", "Hyundai", "KGM", "Kia", "Renault Korea"];
-  const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle);
+  const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   return {
     cars: pageCars,
     total: count ?? 0,
@@ -515,6 +520,7 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
 
 export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
   const client = createSupabasePublicServerClient();
+  const pricingContext = await loadPricingContext();
   const pageSize = 100;
   const rows: CatalogRow[] = [];
 
@@ -534,11 +540,12 @@ export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
     if (!data || data.length < pageSize) break;
   }
 
-  return mapCatalogRows(rows);
+  return mapCatalogRows(rows, pricingContext);
 }
 
 export async function loadCatalogCar(id: string): Promise<CatalogCar | null> {
   const client = createSupabasePublicServerClient();
+  const pricingContext = await loadPricingContext();
   const byId = await client
     .from("catalog_vehicles")
     .select("*")
@@ -546,7 +553,7 @@ export async function loadCatalogCar(id: string): Promise<CatalogCar | null> {
     .limit(1);
 
   if (byId.error) throw new Error(`Vehicle request failed: ${byId.error.message}`);
-  if (byId.data?.length) return mapCatalogRows(byId.data)[0] ?? null;
+  if (byId.data?.length) return mapCatalogRows(byId.data, pricingContext)[0] ?? null;
 
   const byListingId = await client
     .from("catalog_vehicles")
@@ -555,5 +562,5 @@ export async function loadCatalogCar(id: string): Promise<CatalogCar | null> {
     .limit(1);
 
   if (byListingId.error) throw new Error(`Vehicle request failed: ${byListingId.error.message}`);
-  return mapCatalogRows(byListingId.data ?? [])[0] ?? null;
+  return mapCatalogRows(byListingId.data ?? [], pricingContext)[0] ?? null;
 }

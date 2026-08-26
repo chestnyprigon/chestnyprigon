@@ -1,43 +1,32 @@
-# Preliminary Belarus pricing profile
+# Belarus pricing model
 
-The initial calculator reproduces the structure observed in the user-provided Emavto HAR capture from 2026-08-07. It is deliberately isolated in `src/lib/pricing/emavto-profile.ts`, so client-specific rates can replace the profile without changing catalog or vehicle-card components.
+The live calculator is `src/lib/pricing/chestny-prigon-profile.ts`. It separates commercial tariffs supplied by the client from statutory Belarus payments.
 
-Profile version: `emavto-har-2026-08-07-v1`.
+Profile version: `chestny-prigon-client-table-v2-dynamic-state-fees`.
 
-## Captured rates and fixed costs
+## Commercial tariffs
 
-| Input | Value |
-|---|---:|
-| KRW per USD | 1406 |
-| KRW per EUR | 1608 |
-| EUR per USD | 0.8664 |
-| RUB per USD | 80.93 |
-| Fixed Korea amount | 1,200,000 KRW |
-| Export extra | 1,060 USD |
-| Delivery to Minsk | 4,050 USD |
-| Transit declaration | 140,000 RUB |
-| Customs warehouse, payments and recycling | 600 USD |
-| Selection and transaction support | 300 USD |
+| Input | Current profile value | Rule |
+|---|---:|---|
+| KRW per USD | 1,397 | Client commercial rate; update as a versioned tariff |
+| Delivery to Minsk | 4,700 USD | Standard passenger-car route tariff |
+| Commission | 2.5% | Calculated from source price and delivery |
+| SVH and declarant | 150 EUR | Client operational tariff |
+| Handling and accompaniment | 400 EUR | Client operational tariff, not a statutory customs fee |
+| Company service | 300 USD | Client service tariff |
 
-## Calculation structure
+## Dynamic statutory calculations
 
-1. Convert the Encar price from units of 10,000 KRW to KRW.
-2. Apply the Korean tax adjustment used by the reference: `price / 1.1 × 0.1 × 0.4`.
-3. Korea/export block: `(price − adjustment + 1,200,000) × 1.01 × 1.02 / KRW_USD + 1,060`.
-4. Convert the transit amount from RUB to USD.
-5. Calculate customs duty by the vehicle's full age in months and engine displacement:
-   - under 3 years: maximum of the customs-value percentage and EUR-per-cc bracket;
-   - 3–5 years: EUR-per-cc bracket from 1.5 to 3.6;
-   - over 5 years: EUR-per-cc bracket from 3.0 to 5.7;
-   - explicit electric fuel: zero duty in the captured reference formula.
-6. The enabled preferential option halves customs duty only.
-7. Add Korea/export, delivery, transit, customs duty, customs services and company services.
+1. USD/BYN and EUR/BYN are obtained from the daily NBRB API. A labelled fallback is used only if NBRB is unavailable.
+2. Customs duty is calculated by vehicle age, engine displacement and—only for vehicles up to three years old—customs value. The rates follow the EAEU personal-import brackets.
+3. For a M1 vehicle imported by a private person for personal use, utilization fee is calculated in BYN: 624.92 BYN up to three years inclusive and 1,282.02 BYN after three years, effective 2026-04-29. It is then included in the USD total using the NBRB rate.
+4. Preferential treatment affects only customs duty and remains a scenario until the buyer's eligibility is confirmed.
 
-Every displayed value is marked preliminary. Cars without a registration date, or non-electric cars without engine displacement, are not published with a guessed price. The first pilot therefore publishes 33 of 34 normalized vehicles; Hyundai Nexo stays private until a client-approved hydrogen rule exists.
+The Encar payload currently provides first-registration date rather than an independently verified production date. It is used for the preliminary age group; the final customs amount must be checked against the vehicle documents.
 
 ## Recalculation
 
-Recalculate private values:
+Refresh saved catalog prices with the same NBRB rate logic used by the UI:
 
 ```bash
 npm run pricing:recalculate

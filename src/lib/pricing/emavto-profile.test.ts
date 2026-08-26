@@ -12,11 +12,27 @@ test("reproduces the client table's KRW, delivery and 2.5 percent first payment"
     now: new Date("2026-08-23T12:00:00Z"),
   });
 
-  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v1");
+  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v2-dynamic-state-fees");
   assert.equal(result.sourcePriceUsd, 36_106);
   assert.equal(result.deliveryUsd, 4_700);
   assert.equal(result.commissionUsd, 1_020);
   assert.equal(result.firstPaymentUsd, 41_826);
+});
+
+test("uses the current Belarus utilization fee by the vehicle age", () => {
+  const base = {
+    priceKrw: 20_000_000,
+    engineCc: 1_598,
+    fuelType: "Бензин",
+    preferential: false,
+    now: new Date("2026-08-26T00:00:00Z"),
+  };
+
+  const upToThreeYears = calculateBelarusPrice({ ...base, firstRegistrationDate: "2023-08-26" });
+  const overThreeYears = calculateBelarusPrice({ ...base, firstRegistrationDate: "2023-08-25" });
+
+  assert.equal(upToThreeYears.utilizationFeeByn, 624.92);
+  assert.equal(overThreeYears.utilizationFeeByn, 1_282.02);
 });
 
 test("applies the preferential coefficient only to customs duty", () => {

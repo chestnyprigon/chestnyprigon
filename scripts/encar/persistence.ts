@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { canonicalSourceId } from "./identity";
 import type { PilotItem } from "./types";
-import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "../../src/lib/pricing/chestny-prigon-profile";
+import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
+import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
 
 function requireEnvironment(name: string) {
   const value = process.env[name]?.trim();
@@ -30,6 +31,7 @@ async function checked<T>(promise: PromiseLike<{ data: T; error: { message: stri
 
 export async function persistPilot(items: PilotItem[], publish: boolean) {
   const supabase = adminClient();
+  const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
   const uniqueItems = [
     ...new Map(items.map((item) => [canonicalSourceId(item.bundle), item])).values(),
   ];
@@ -106,6 +108,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
                 firstRegistrationDate: vehicle.firstRegistrationDate,
                 fuelType: vehicle.fuelType,
                 preferential: false,
+                exchangeRates,
               });
               return {
                 source_listing_id: vehicle.sourceListingId,

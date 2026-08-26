@@ -1,7 +1,8 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "../../src/lib/pricing/chestny-prigon-profile";
+import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
+import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -18,6 +19,7 @@ async function main() {
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
+  const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
   const vehicles: Array<{
     id: string;
     price_krw: number;
@@ -50,7 +52,8 @@ async function main() {
           engineCc: vehicle.engine_cc,
           firstRegistrationDate: vehicle.first_registration_date,
           fuelType: vehicle.fuel_type,
-            preferential: false,
+          preferential: false,
+          exchangeRates,
         }),
       });
     } catch (error) {
@@ -86,6 +89,7 @@ async function main() {
 
   console.log({
     profile: CHESTNY_PRIGON_PRICING_PROFILE.version,
+    rates: exchangeRates,
     recalculated: updates.length,
     skipped: skipped.length,
     skippedReasons: [...new Set(skipped.map((item) => item.reason))],
