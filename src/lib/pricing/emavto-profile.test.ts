@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE } from "./chestny-prigon-profile";
 
-test("reproduces the client table's KRW, delivery and 2.5 percent first payment", () => {
+test("reproduces the approved client delivery and commission first payment", () => {
   const result = calculateBelarusPrice({
     priceKrw: 50_440_000,
     engineCc: 1_500,
@@ -12,10 +12,10 @@ test("reproduces the client table's KRW, delivery and 2.5 percent first payment"
     now: new Date("2026-08-23T12:00:00Z"),
   });
 
-  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v2-dynamic-state-fees");
+  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v3-preferential-default");
   assert.equal(result.sourcePriceUsd, 36_106);
-  assert.equal(result.deliveryUsd, 4_700);
-  assert.equal(result.commissionUsd, 1_020);
+  assert.equal(result.deliveryUsd, 4_900);
+  assert.equal(result.commissionUsd, 820);
   assert.equal(result.firstPaymentUsd, 41_826);
 });
 
@@ -73,7 +73,7 @@ test("calculates a hybrid by its combustion-engine displacement", () => {
     now: new Date("2026-08-24T00:00:00Z"),
   });
   assert.equal(result.calculationAvailable, true);
-  assert.equal(result.customsDutyEur, 1_598 * 2.5);
+  assert.equal(result.customsDutyEur, Math.round(1_598 * 2.5 * 0.5));
 });
 
 test("uses inclusive displacement brackets at legal boundaries", () => {

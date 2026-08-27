@@ -306,7 +306,7 @@ function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): Cat
       engineCc: row.engine_cc,
       firstRegistrationDate: row.first_registration_date,
       fuelType: row.fuel_type,
-      preferential: false,
+      preferential: true,
       profile: pricingContext.profile,
       exchangeRates: pricingContext.exchangeRates,
     });
@@ -368,7 +368,7 @@ function mapVehicleRows(
     try {
       calculation = calculateBelarusPrice({
         priceKrw: Number(row.price_krw), engineCc: row.engine_cc, firstRegistrationDate: row.first_registration_date,
-        fuelType: row.fuel_type, preferential: false, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates,
+        fuelType: row.fuel_type, preferential: true, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates,
       });
     } catch {
       return [];

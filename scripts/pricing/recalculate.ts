@@ -34,6 +34,7 @@ async function main() {
       .from("vehicles")
       .select("id,price_krw,engine_cc,first_registration_date,fuel_type,status")
       .eq("status", "active")
+      .eq("is_public", true)
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (error) throw new Error(error.message);
@@ -52,7 +53,7 @@ async function main() {
           engineCc: vehicle.engine_cc,
           firstRegistrationDate: vehicle.first_registration_date,
           fuelType: vehicle.fuel_type,
-          preferential: false,
+          preferential: true,
           exchangeRates,
         }),
       });

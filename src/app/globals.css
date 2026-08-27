@@ -283,10 +283,24 @@ a { color: inherit; text-decoration: none; }
 
 /* Touch-first gallery: mobile users swipe, while desktop retains ribbon controls. */
 .dossier-main-photo, .dossier-lightbox-image { touch-action: pan-y; }
+
+/* Desktop cards use the image badge; mobile cards move the same context below the image. */
+.home-result-card .card-history-meta,
+.result-car-body .card-history-meta { display: none; }
+.dossier-preferential-block { background: rgba(118,100,43,.12); border: 1px solid rgba(219,196,102,.24); border-radius: 6px; margin-top: 16px; padding: 10px 11px; }
+.dossier-preferential-block .dossier-preferential { color: #edf2ee; font-size: 10px; font-weight: 800; margin: 0; }
+.dossier-preferential-block .dossier-preferential span { align-items: center; display: inline-flex; gap: 7px; }
+.dossier-preferential-block .dossier-preferential b { background: rgba(95,205,164,.14); border: 1px solid rgba(95,205,164,.28); border-radius: 99px; color: #bcebd9; font-size: 8px; padding: 3px 6px; }
+.dossier-preferential-block .dossier-preferential b.is-off { background: rgba(151,168,180,.1); border-color: rgba(151,168,180,.22); color: #b5c1ca; }
+.dossier-preferential-block>small { color: #b8c1b8; display: block; font-size: 8px; line-height: 1.45; margin-top: 7px; }
 @media (max-width: 600px) {
   .dossier-thumbs-wrap { grid-template-columns: minmax(0, 1fr); padding-inline: 8px; }
   .dossier-thumbs-nav { display: none; }
   .dossier-thumbs { -webkit-overflow-scrolling: touch; padding-bottom: 4px; scroll-snap-type: x proximity; }
   .dossier-thumbs button { scroll-snap-align: start; }
   .dossier-lightbox-nav { display: none; }
+}
+@media (max-width: 700px) {
+  .home-result-card .card-history-meta,
+  .result-car-body .card-history-meta { display: block; }
 }

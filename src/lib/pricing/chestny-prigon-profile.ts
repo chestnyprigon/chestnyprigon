@@ -16,11 +16,11 @@ export type ExchangeRates = {
 };
 
 export const CHESTNY_PRIGON_PRICING_PROFILE: PricingProfile = {
-  version: "chestny-prigon-client-table-v2-dynamic-state-fees",
+  version: "chestny-prigon-client-table-v3-preferential-default",
   // Commercial KRW/USD rate is supplied and approved by the client.
   krwPerUsd: 1397,
-  deliveryUsd: 4_700,
-  commissionRate: 0.025,
+  deliveryUsd: 4_900,
+  commissionRate: 0.02,
   svhDeclarantEur: 150,
   // Commercial handling and accompaniment tariff, not a statutory customs fee.
   customsClearanceEur: 400,
@@ -146,7 +146,7 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
   const rates = input.exchangeRates ?? FALLBACK_EXCHANGE_RATES;
   if (rates.usdByn <= 0 || rates.eurByn <= 0 || profile.krwPerUsd <= 0) throw new Error("pricing rates must be positive");
 
-  const preferential = input.preferential ?? false;
+  const preferential = input.preferential ?? true;
   const now = input.now ?? new Date();
   const ageMonths = monthsBetween(input.firstRegistrationDate, now);
   const ageBand = vehicleAgeBand(input.firstRegistrationDate, now);
