@@ -275,7 +275,7 @@ async function main() {
       if (applyScreening) {
         screeningRows.push({
           source_listing_id: vehicle.source_listing_id,
-          decision: "approved",
+          decision: "manual_review",
           is_lease: false,
           is_rental: false,
           is_taxi: false,
@@ -285,7 +285,6 @@ async function main() {
           rules_version: "2026-08-16.1-report-optional",
           details: { reportStatus: "unavailable" },
         });
-        if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
       }
       continue;
     }
@@ -339,7 +338,7 @@ async function main() {
         details: { inspection, accidents, reportStatus: reportReady ? "ready" : "unavailable" },
       });
       if (screening.hardExclusion) unpublishIds.push(vehicle.id);
-      else if (publishEligible && vehicle.price_usd !== null) publishIds.push(vehicle.id);
+      else if (publishEligible && vehicle.price_usd !== null && screening.decision === "approved") publishIds.push(vehicle.id);
     }
 
     console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.hardExclusion ? ", excluded" : hasAccident ? ", disclosed" : ""}`);

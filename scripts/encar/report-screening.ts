@@ -15,7 +15,7 @@ export function reportScreening(flags: ReportUsageFlags, hasAccident: boolean, r
   ];
 
   return {
-    decision: hardExclusion ? ("rejected" as const) : ("approved" as const),
+    decision: hardExclusion ? ("rejected" as const) : !reportReady ? ("manual_review" as const) : ("approved" as const),
     hardExclusion,
     // An accident is disclosed in the public report. It is not a publication blocker.
     isProblematic: false,
