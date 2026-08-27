@@ -43,16 +43,23 @@ const detailDelayMs = numericArgument(
 const write = args.has("--write");
 const publish = args.has("--publish");
 const imported = args.has("--imported");
+const manufacturerArgument = process.argv.find((argument) => argument.startsWith("--manufacturer="))?.slice("--manufacturer=".length).trim() || undefined;
+const manufacturerAliases: Record<string, string> = {
+  "Mercedes-Benz": "벤츠",
+  Audi: "아우디",
+  Volkswagen: "폭스바겐",
+};
+const manufacturer = manufacturerArgument ? manufacturerAliases[manufacturerArgument] ?? manufacturerArgument : undefined;
 
 if (publish && !write) throw new Error("--publish requires --write");
 
 async function main() {
   const now = new Date();
-  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, imported ? "N" : "Y");
+  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, imported ? "N" : "Y", manufacturer);
   const page = await fetchSearchPage({ offset, limit, query });
   const items: PilotItem[] = [];
 
-  console.log(`Encar reports ${page.total.toLocaleString("en-US")} matching ${imported ? "imported" : "domestic"} listings before screening.`);
+  console.log(`Encar reports ${page.total.toLocaleString("en-US")} matching ${manufacturerArgument ? `${manufacturerArgument} ` : ""}${imported ? "imported" : "domestic"} listings before screening.`);
   console.log(`Fetching ${page.listings.length} listings from offset ${offset} (${write ? "write" : "dry-run"}${publish ? ", publish" : ""}).`);
 
   for (const [index, listing] of page.listings.entries()) {
