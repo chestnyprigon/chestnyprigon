@@ -55,6 +55,8 @@ Screening rule set `2026-08-16.1-report-optional` uses structured identity and u
 
 This repository must only be linked to a newly created Supabase project for Chestny Prigon. Never link it to Autoexport or TMA. Before every remote migration, verify the linked reference with `supabase projects list` and preview changes with `supabase db push --dry-run`.
 
+The same isolation rule applies to GitHub and Vercel: use only the Chestny Prigon account and its matching repository/project. Never push, deploy, change environment variables, run migrations, or write catalog data in another account or project without explicit user approval. If the local CLI is authenticated as another account, stop and ask the user to switch or provide access.
+
 Current production target: `chestny_prigon` (`ojnybjomttolhsfgkdqq`). The project ref is not a secret; credentials remain exclusively in `.env.local` and Supabase CLI secure storage.
 
 ## Deployment sequence
