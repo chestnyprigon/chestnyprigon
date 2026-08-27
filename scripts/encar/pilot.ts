@@ -42,16 +42,17 @@ const detailDelayMs = numericArgument(
 );
 const write = args.has("--write");
 const publish = args.has("--publish");
+const imported = args.has("--imported");
 
 if (publish && !write) throw new Error("--publish requires --write");
 
 async function main() {
   const now = new Date();
-  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM);
+  const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, imported ? "N" : "Y");
   const page = await fetchSearchPage({ offset, limit, query });
   const items: PilotItem[] = [];
 
-  console.log(`Encar reports ${page.total.toLocaleString("en-US")} matching domestic listings before screening.`);
+  console.log(`Encar reports ${page.total.toLocaleString("en-US")} matching ${imported ? "imported" : "domestic"} listings before screening.`);
   console.log(`Fetching ${page.listings.length} listings from offset ${offset} (${write ? "write" : "dry-run"}${publish ? ", publish" : ""}).`);
 
   for (const [index, listing] of page.listings.entries()) {
@@ -101,6 +102,11 @@ async function main() {
     missingEngineOrDate: pricing.filter((item) => item.totalUsd === null).length,
     rates: { eurByn: rates.eurByn, usdByn: rates.usdByn, date: rates.rateDate, source: rates.source },
   };
+  const manufacturerCounts = items.reduce<Record<string, number>>((counts, item) => {
+    const manufacturer = item.normalized?.manufacturer ?? String(item.bundle.search.Manufacturer ?? "Unknown");
+    counts[manufacturer] = (counts[manufacturer] ?? 0) + 1;
+    return counts;
+  }, {});
 
   console.log("\nPilot summary:", {
     requested: limit,
@@ -109,6 +115,7 @@ async function main() {
     fetchErrors: page.listings.length - items.length,
     decisions,
     reasonCounts,
+    manufacturerCounts,
     pricingSummary,
   });
 

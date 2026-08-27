@@ -10,4 +10,5 @@ test("uses the customer-confirmed seven-year and mileage limits", () => {
   assert.equal(ENCAR_MIN_VEHICLE_AGE_YEARS, 7);
   assert.match(query, /Year\.range\(201900\.\.202699\)/);
   assert.match(query, /Mileage\.range\(\.\.190000\)/);
+  assert.match(createDomesticQuery(encarYearFrom(yearTo), yearTo, ENCAR_MAX_MILEAGE_KM, "N"), /CarType\.N/);
 });

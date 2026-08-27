@@ -20,11 +20,14 @@ const MANUFACTURERS: Array<[RegExp, string]> = [
   [/미니|MINI/u, "MINI"],
   [/지프|Jeep/u, "Jeep"],
   [/렉서스|Lexus/u, "Lexus"],
-  [/토요타|Toyota/u, "Toyota"],
+  [/토요타|도요타|Toyota/u, "Toyota"],
   [/혼다|Honda/u, "Honda"],
   [/닛산|Nissan/u, "Nissan"],
   [/인피니티|Infiniti/u, "Infiniti"],
   [/테슬라|Tesla/u, "Tesla"],
+  [/포드|Ford/u, "Ford"],
+  [/푸조|Peugeot/u, "Peugeot"],
+  [/시트로엥|Citroen|Citroën/u, "Citroën"],
 ];
 
 const PHOTO_PRIORITY: Record<string, number> = { OUTER: 0, INNER: 1, OPTION: 2 };

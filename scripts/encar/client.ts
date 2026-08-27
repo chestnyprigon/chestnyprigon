@@ -28,8 +28,8 @@ async function fetchJson<T>(url: URL | string): Promise<T> {
 export const delay = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-export function createDomesticQuery(yearFrom: number, yearTo: number, maxMileage: number) {
-  return `(And.Hidden.N._.CarType.Y._.Year.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})._.Price.range(300..15000).)`;
+export function createDomesticQuery(yearFrom: number, yearTo: number, maxMileage: number, carType: "Y" | "N" = "Y") {
+  return `(And.Hidden.N._.CarType.${carType}._.Year.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})._.Price.range(300..15000).)`;
 }
 
 export async function fetchSearchPage({
