@@ -193,6 +193,10 @@ async function main() {
   const applyScreening = process.argv.includes("--apply-screening");
   const publishEligible = process.argv.includes("--publish-eligible");
   const onlyMissing = process.argv.includes("--only-missing");
+  const sourceIdsArgument = process.argv.find((argument) => argument.startsWith("--source-ids="))?.slice("--source-ids=".length);
+  const requestedSourceIds = sourceIdsArgument
+    ? [...new Set(sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean))]
+    : [];
   const limit = integerArgument("limit", 2_000, 1, 10_000);
   const batchSize = integerArgument("batch-size", limit, 1, 10_000);
   if (publishEligible && !applyScreening) throw new Error("--publish-eligible requires --apply-screening");
@@ -203,7 +207,16 @@ async function main() {
   );
   const selectedVehicles: Array<{ id: string; source_listing_id: string; price_usd: number | null }> = [];
   const pageSize = 1_000;
-  for (let offset = 0; selectedVehicles.length < limit; offset += pageSize) {
+  if (requestedSourceIds.length) {
+    const { data, error: vehicleError } = await client
+      .from("vehicles")
+      .select("id,source_listing_id,price_usd")
+      .eq("status", "active")
+      .in("source_listing_id", requestedSourceIds);
+    if (vehicleError) throw new Error(vehicleError.message);
+    selectedVehicles.push(...(data ?? []));
+  }
+  for (let offset = 0; !requestedSourceIds.length && selectedVehicles.length < limit; offset += pageSize) {
     const take = Math.min(pageSize, limit - selectedVehicles.length);
     const { data, error: vehicleError } = await client
       .from("vehicles")
