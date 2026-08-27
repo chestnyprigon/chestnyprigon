@@ -6,6 +6,8 @@ import { normalizeListing } from "./normalize";
 import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
 import type { PilotItem } from "./types";
+import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
+import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -84,6 +86,21 @@ async function main() {
       counts[reason] = (counts[reason] ?? 0) + 1;
       return counts;
     }, {});
+  const rates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
+  const pricing = items
+    .filter((item) => item.normalized)
+    .map((item) => calculateBelarusPrice({
+      priceKrw: item.normalized!.priceKrw,
+      engineCc: item.normalized!.engineCc,
+      firstRegistrationDate: item.normalized!.firstRegistrationDate,
+      fuelType: item.normalized!.fuelType,
+      exchangeRates: rates,
+    }));
+  const pricingSummary = {
+    calculable: pricing.filter((item) => item.totalUsd !== null).length,
+    missingEngineOrDate: pricing.filter((item) => item.totalUsd === null).length,
+    rates: { eurByn: rates.eurByn, usdByn: rates.usdByn, date: rates.rateDate, source: rates.source },
+  };
 
   console.log("\nPilot summary:", {
     requested: limit,
@@ -92,6 +109,7 @@ async function main() {
     fetchErrors: page.listings.length - items.length,
     decisions,
     reasonCounts,
+    pricingSummary,
   });
 
   console.log(

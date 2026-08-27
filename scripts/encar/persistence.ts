@@ -131,7 +131,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
                 location: vehicle.location,
                 vin_masked: vehicle.vinMasked,
                 status: "active",
-                ...(publish ? { is_public: true } : {}),
+                ...(publish && calculation.totalUsd !== null ? { is_public: true } : {}),
                 source_url: vehicle.sourceUrl,
                 source_updated_at: vehicle.sourceUpdatedAt,
                 last_seen_at: item.bundle.fetchedAt,

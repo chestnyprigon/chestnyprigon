@@ -9,6 +9,22 @@ const MANUFACTURERS: Array<[RegExp, string]> = [
   [/쉐보레|GM대우/u, "Chevrolet"],
   [/르노/u, "Renault Korea"],
   [/KG모빌리티|쌍용/u, "KGM"],
+  [/BMW|비엠더블유/u, "BMW"],
+  [/벤츠|메르세데스|Mercedes/u, "Mercedes-Benz"],
+  [/아우디|Audi/u, "Audi"],
+  [/폭스바겐|Volkswagen/u, "Volkswagen"],
+  [/볼보|Volvo/u, "Volvo"],
+  [/포르쉐|Porsche/u, "Porsche"],
+  [/랜드로버|Land Rover/u, "Land Rover"],
+  [/재규어|Jaguar/u, "Jaguar"],
+  [/미니|MINI/u, "MINI"],
+  [/지프|Jeep/u, "Jeep"],
+  [/렉서스|Lexus/u, "Lexus"],
+  [/토요타|Toyota/u, "Toyota"],
+  [/혼다|Honda/u, "Honda"],
+  [/닛산|Nissan/u, "Nissan"],
+  [/인피니티|Infiniti/u, "Infiniti"],
+  [/테슬라|Tesla/u, "Tesla"],
 ];
 
 const PHOTO_PRIORITY: Record<string, number> = { OUTER: 0, INNER: 1, OPTION: 2 };
@@ -24,6 +40,18 @@ function text(value: unknown) {
 function number(value: unknown) {
   const result = Number(value);
   return Number.isFinite(result) ? result : null;
+}
+
+function engineDisplacement(...values: unknown[]) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const raw = String(value).replace(/,/g, ".").replace(/\s+/g, " ").trim();
+    const parsed = number(raw.replace(/[^0-9.]/g, ""));
+    if (parsed === null || parsed <= 0) continue;
+    // Some Encar payloads expose displacement in litres in fallback fields.
+    return Math.floor(parsed < 20 ? parsed * 1_000 : parsed);
+  }
+  return null;
 }
 
 function manufacturerName(koreanName: string) {
@@ -89,7 +117,20 @@ export function normalizeListing(bundle: EncarBundle): NormalizedVehicle {
   const firstAdvertised = manage.firstAdvertisedDateTime ?? manage.registDateTime;
   const mileage = number(spec.mileage) ?? number(bundle.search.Mileage) ?? 0;
   const price = number(record(bundle.detail.advertisement).price) ?? number(bundle.search.Price) ?? 0;
-  const displacement = number(spec.displacement);
+  const displacement = engineDisplacement(
+    spec.displacement,
+    spec.engineDisplacement,
+    spec.engineCc,
+    spec.engineVolume,
+    spec.cc,
+    category.displacement,
+    category.engineDisplacement,
+    bundle.search.Displacement,
+    bundle.search.EngineDisplacement,
+    bundle.search.EngineCc,
+    bundle.search.EngineCC,
+    bundle.search.EngineVolume,
+  );
 
   return {
     sourceListingId: canonicalSourceId(bundle),

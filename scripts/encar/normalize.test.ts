@@ -46,3 +46,19 @@ test("normalizes canonical identity, registration month, price and ordered photo
   ]);
   assert.equal(vehicle.vinMasked?.endsWith("3456"), true);
 });
+
+test("normalizes European brands and displacement fallback fields", () => {
+  const vehicle = normalizeListing({
+    fetchedAt: "2026-08-09T00:00:00.000Z",
+    search: { Id: "bmw-1", Manufacturer: "BMW", Model: "X5", Year: 202301, Mileage: 20_000, Price: 5000 },
+    detail: {
+      vehicleId: "bmw-1",
+      category: { manufacturerName: "BMW", modelGroupEnglishName: "X5", yearMonth: "202301" },
+      advertisement: { price: 5000 },
+      spec: { engineVolume: "3.0 L", fuelName: "가솔린" },
+      photos: Array.from({ length: 5 }, (_, index) => ({ path: `/photo_${index}.jpg` })),
+    },
+  });
+  assert.equal(vehicle.manufacturer, "BMW");
+  assert.equal(vehicle.engineCc, 3000);
+});
