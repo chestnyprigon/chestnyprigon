@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     query: get("q"),
     brand: get("brand"),
     model: get("model"),
+    trim: get("trim"),
     fuel: get("fuel"),
     yearFrom: integer(get("yearFrom"), catalogYearFrom()),
     yearTo: integer(get("yearTo"), catalogYearTo()),

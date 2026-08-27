@@ -59,10 +59,10 @@ function catalogPrice(car: CatalogCar) {
 export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
   const { cars } = catalog;
   const router = useRouter();
-  const brands = ["Все", ...catalog.brands];
   const [query, setQuery] = useState(initialSearch.query ?? "");
   const [brand, setBrand] = useState(initialSearch.brand ?? "Все");
   const [model, setModel] = useState(initialSearch.model ?? "Все");
+  const [trim, setTrim] = useState(initialSearch.trim ?? "Все");
   const [fuel, setFuel] = useState<(typeof fuels)[number]>((initialSearch.fuel as (typeof fuels)[number]) ?? "Все");
   const [yearFrom, setYearFrom] = useState(String(initialSearch.yearFrom ?? catalogYearFrom()));
   const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? catalogYearTo()));
@@ -80,10 +80,13 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
+  const [brandOptions, setBrandOptions] = useState<string[]>(catalog.brands);
+  const [trimOptions, setTrimOptions] = useState<string[]>([]);
   const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
     q: query.trim(),
     brand: brand === "Все" ? "" : brand,
     model: model === "Все" ? "" : model,
+    trim: trim === "Все" ? "" : trim,
     fuel: fuel === "Все" ? "" : fuel,
     yearFrom, yearTo, minEngine, maxEngine, minPrice, maxPrice, minMileage, maxMileage,
     transmission: transmission === "Все" ? "" : transmission,
@@ -103,21 +106,27 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   useEffect(() => {
     const controller = new AbortController();
     const selectedBrand = brand === "Все" ? "" : brand;
-    fetch(`/api/catalog/models${selectedBrand ? `?brand=${encodeURIComponent(selectedBrand)}` : ""}`, { signal: controller.signal })
+    const selectedModel = model === "Все" ? "" : model;
+    const params = new URLSearchParams();
+    if (selectedBrand) params.set("brand", selectedBrand);
+    if (selectedModel) params.set("model", selectedModel);
+    fetch(`/api/catalog/filter-options${params.size ? `?${params.toString()}` : ""}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : null)
-      .then((payload: { models?: unknown } | null) => {
+      .then((payload: { brands?: unknown; models?: unknown; trims?: unknown } | null) => {
+        if (Array.isArray(payload?.brands)) setBrandOptions(payload.brands.filter((item): item is string => typeof item === "string"));
         if (Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
+        if (Array.isArray(payload?.trims)) setTrimOptions(payload.trims.filter((item): item is string => typeof item === "string"));
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [brand]);
+  }, [brand, model]);
 
   const visible = cars;
 
   const applySearch = (page = 1, override?: { sort?: "newest" | "price-asc" | "price-desc" }) => {
     const params = new URLSearchParams();
     const add = (key: string, value: string, fallback: string) => { if (value && value !== fallback) params.set(key, value); };
-    add("q", query.trim(), ""); add("brand", brand, "Все"); add("model", model, "Все"); add("fuel", fuel, "Все");
+    add("q", query.trim(), ""); add("brand", brand, "Все"); add("model", model, "Все"); add("trim", trim, "Все"); add("fuel", fuel, "Все");
     add("yearFrom", yearFrom, String(catalogYearFrom())); add("yearTo", yearTo, String(catalogYearTo())); add("minEngine", minEngine, "0"); add("maxEngine", maxEngine, "8000"); add("minPrice", minPrice, "0"); add("maxPrice", maxPrice, "100000"); add("minMileage", minMileage, "0"); add("maxMileage", maxMileage, String(CATALOG_MAX_MILEAGE_KM));
     add("transmission", transmission, "Все"); add("drive", drive, "Все"); add("bodyType", bodyType, "Все"); add("sort", override?.sort ?? sort, "newest");
     if (accidentFilter === "Без ДТП") params.set("accidents", "clear");
@@ -131,6 +140,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     setQuery("");
     setBrand("Все");
     setModel("Все");
+    setTrim("Все");
     setFuel("Все");
     setYearFrom(String(catalogYearFrom()));
     setYearTo(String(catalogYearTo()));
@@ -166,8 +176,9 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
         <aside className={filtersOpen ? "catalog-filters is-open" : "catalog-filters"}>
           <div className="filter-title"><span><SlidersHorizontal size={18} />Фильтры</span><button type="button" onClick={reset}>Сбросить</button></div>
           <label className="filter-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Марка или модель" /></label>
-          <fieldset><legend>Марка</legend><div className="filter-pills">{brands.map((item) => <button className={brand === item ? "is-selected" : ""} type="button" key={item} onClick={() => { setBrand(item); setModel("Все"); }}>{item}</button>)}</div></fieldset>
-          <label className="filter-select"><span>Модель</span><select value={model} onChange={(event) => setModel(event.target.value)}>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <fieldset><legend>Марка</legend><div className="filter-pills">{["Все", ...brandOptions].map((item) => <button className={brand === item ? "is-selected" : ""} type="button" key={item} onClick={() => { setBrand(item); setModel("Все"); setTrim("Все"); }}>{item}</button>)}</div></fieldset>
+          <label className="filter-select"><span>Модель</span><select value={model} disabled={brand === "Все"} onChange={(event) => { setModel(event.target.value); setTrim("Все"); }}><option value="Все">{brand === "Все" ? "Сначала выберите марку" : "Все модели"}</option>{models.filter((item) => item !== "Все").map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="filter-select"><span>Комплектация</span><select value={trim} disabled={brand === "Все" || model === "Все"} onChange={(event) => setTrim(event.target.value)}><option value="Все">{brand !== "Все" && model !== "Все" ? "Все комплектации" : "Сначала выберите модель"}</option>{trimOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
           <div className="filter-pair"><label className="filter-select"><span>Год от</span><select value={yearFrom} onChange={(event) => setYearFrom(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="filter-select"><span>до</span><select value={yearTo} onChange={(event) => setYearTo(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
           <div className="filter-pair"><label className="filter-select"><span>Объём от</span><select value={minEngine} onChange={(event) => setMinEngine(event.target.value)}><option value="0">Любой</option>{ENGINE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{(item / 1_000).toFixed(1)} л</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxEngine} onChange={(event) => setMaxEngine(event.target.value)}>{ENGINE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 8_000 ? "Любой" : `${(item / 1_000).toFixed(1)} л`}</option>)}</select></label></div>
           <div className="filter-pair"><label className="filter-select"><span>Цена от</span><select value={minPrice} onChange={(event) => setMinPrice(event.target.value)}><option value="0">Любая</option>{PRICE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{money.format(item)}</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)}>{PRICE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 100_000 ? "Любая" : money.format(item)}</option>)}</select></label></div>

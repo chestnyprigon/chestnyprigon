@@ -42,6 +42,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [query, setQuery] = useState(initialSearch.query ?? "");
   const [brand, setBrand] = useState(initialSearch.brand ?? "");
   const [model, setModel] = useState(initialSearch.model ?? "");
+  const [trim, setTrim] = useState(initialSearch.trim ?? "");
   const [fuel, setFuel] = useState(initialSearch.fuel ?? "");
   const [drive, setDrive] = useState(initialSearch.drive ?? "");
   const [accidents, setAccidents] = useState(initialSearch.accidents ?? "");
@@ -54,8 +55,10 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? ""));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? 100000));
   const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
+  const [brandOptions, setBrandOptions] = useState<string[]>(catalog.brands);
+  const [trimOptions, setTrimOptions] = useState<string[]>([]);
   const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
-    q: query.trim(), brand, model, fuel, drive, accidents,
+    q: query.trim(), brand, model, trim, fuel, drive, accidents,
     yearFrom, yearTo, minEngine, maxEngine, minMileage, maxMileage, minPrice, maxPrice,
   }, catalog.total);
   const models = useMemo(
@@ -65,19 +68,24 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/catalog/models${brand ? `?brand=${encodeURIComponent(brand)}` : ""}`, { signal: controller.signal })
+    const params = new URLSearchParams();
+    if (brand) params.set("brand", brand);
+    if (model) params.set("model", model);
+    fetch(`/api/catalog/filter-options${params.size ? `?${params.toString()}` : ""}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : null)
-      .then((payload: { models?: unknown } | null) => {
+      .then((payload: { brands?: unknown; models?: unknown; trims?: unknown } | null) => {
+        if (Array.isArray(payload?.brands)) setBrandOptions(payload.brands.filter((item): item is string => typeof item === "string"));
         if (Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
+        if (Array.isArray(payload?.trims)) setTrimOptions(payload.trims.filter((item): item is string => typeof item === "string"));
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [brand]);
+  }, [brand, model]);
 
   const navigate = (toCatalog = false) => {
     const params = new URLSearchParams();
     const add = (key: string, value: string) => { if (value) params.set(key, value); };
-    add("q", query.trim()); add("brand", brand); add("model", model); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
+    add("q", query.trim()); add("brand", brand); add("model", model); add("trim", trim); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
     add("yearFrom", yearFrom); add("yearTo", yearTo); add("minEngine", minEngine); add("maxEngine", maxEngine);
     add("minMileage", minMileage); add("maxMileage", maxMileage); add("minPrice", minPrice); add("maxPrice", maxPrice);
     router.push(`${toCatalog ? "/catalog" : "/"}${params.size ? `?${params.toString()}` : ""}${toCatalog ? "" : "#catalog"}`);
@@ -85,7 +93,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   };
 
   const reset = () => {
-    setQuery(""); setBrand(""); setModel(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom(String(catalogYearFrom())); setYearTo(String(catalogYearTo())); setAdvancedOpen(false);
+    setQuery(""); setBrand(""); setModel(""); setTrim(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom(String(catalogYearFrom())); setYearTo(String(catalogYearTo())); setAdvancedOpen(false);
     setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage(String(CATALOG_MAX_MILEAGE_KM)); setMinPrice(""); setMaxPrice("100000");
     router.push("/#catalog"); setOpen(false);
   };
@@ -96,8 +104,9 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-title"><b>Фильтр параметров</b><button type="button" onClick={reset}><X size={15} />Сбросить</button></div>
       <div className="home-filter-grid">
         <label className="home-filter-country"><span>🇰🇷</span> Корея</label>
-        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); }}><option value="">Все марки</option>{catalog.brands.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span>Модель</span><select value={model} onChange={(e) => setModel(e.target.value)}><option value="">Все модели</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setTrim(""); }}><option value="">Все марки</option>{brandOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Модель</span><select value={model} disabled={!brand} onChange={(e) => { setModel(e.target.value); setTrim(""); }}><option value="">{brand ? "Все модели" : "Сначала выберите марку"}</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Комплектация</span><select value={trim} disabled={!brand || !model} onChange={(e) => setTrim(e.target.value)}><option value="">{brand && model ? "Все комплектации" : "Сначала выберите модель"}</option>{trimOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Привод</span><select value={drive} onChange={(e) => setDrive(e.target.value)}>{drives.map((value) => <option key={value} value={value}>{value || "Любой"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
