@@ -194,6 +194,7 @@ async function main() {
   const publishEligible = process.argv.includes("--publish-eligible");
   const onlyMissing = process.argv.includes("--only-missing");
   const sourceIdsArgument = process.argv.find((argument) => argument.startsWith("--source-ids="))?.slice("--source-ids=".length);
+  const createdAfter = process.argv.find((argument) => argument.startsWith("--created-after="))?.slice("--created-after=".length).trim() || undefined;
   const requestedSourceIds = sourceIdsArgument
     ? [...new Set(sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean))]
     : [];
@@ -222,6 +223,7 @@ async function main() {
       .from("vehicles")
       .select("id,source_listing_id,price_usd")
       .eq("status", "active")
+      .gte("created_at", createdAfter ?? "1970-01-01T00:00:00.000Z")
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + take - 1);
