@@ -31,6 +31,16 @@ function badge(car: CatalogCar) {
   return { label: "История Encar", tone: "is-neutral" };
 }
 
+function historyText(car: CatalogCar) {
+  const accidents = car.accidents;
+  if (accidents?.accidentCount) {
+    const payouts = accidents.ownAccidentCostKrw + accidents.otherAccidentCostKrw;
+    return `Страховые случаи: ${accidents.accidentCount} · выплаты ${distance.format(payouts)} ₩`;
+  }
+  if (accidents?.available || car.inspection) return "Без ДТП · страховых выплат нет";
+  return "История ДТП: нет данных";
+}
+
 function price(car: CatalogCar) {
   return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
 }
@@ -122,7 +132,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
     </div>
     <div className="home-results-toolbar"><div><b>{catalog.total} автомобилей</b><span>Показано {catalog.cars.length} актуальных объявлений</span></div><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && navigate()} placeholder="Марка или модель" /></label></div>
-    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); return <article className="home-result-card" key={car.id}><Link href={`/catalog/${car.id}`} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p>{car.location} · Encar</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link href={`/catalog/${car.id}`}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
+    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); return <article className="home-result-card" key={car.id}><Link href={`/catalog/${car.id}`} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p className={`card-history-meta ${tag.tone}`}>{historyText(car)}</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link href={`/catalog/${car.id}`}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
     <div className="premium-catalog-footer"><button className="premium-button primary" type="button" onClick={() => navigate(true)}>Смотреть весь каталог <ArrowRight size={17} /></button></div>
   </section>;
 }

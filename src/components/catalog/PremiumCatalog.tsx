@@ -52,6 +52,16 @@ function historyBadge(car: CatalogCar) {
   return { label: "История Encar", tone: "is-neutral" };
 }
 
+function historyText(car: CatalogCar) {
+  const accidents = car.accidents;
+  if (accidents?.accidentCount) {
+    const payouts = accidents.ownAccidentCostKrw + accidents.otherAccidentCostKrw;
+    return `Страховые случаи: ${accidents.accidentCount} · выплаты ${distance.format(payouts)} ₩`;
+  }
+  if (accidents?.available || car.inspection) return "Без ДТП · страховых выплат нет";
+  return "История ДТП: нет данных";
+}
+
 function catalogPrice(car: CatalogCar) {
   return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
 }
@@ -195,7 +205,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); return <article className="result-car" key={car.id}>
             <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
-            <div className="result-car-body"><p><span>{car.location} · Encar</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
+            <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
           </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
           {visible.length > 0 && (catalog.page > 1 || catalog.hasMore) ? <div className="catalog-pagination">{catalog.page > 1 ? <button type="button" onClick={() => applySearch(catalog.page - 1)}><ArrowLeft size={16} />Предыдущие</button> : null}<span>Страница {catalog.page}</span>{catalog.hasMore ? <button type="button" onClick={() => applySearch(catalog.page + 1)}>Следующие {catalog.perPage} авто <ArrowRight size={16} /></button> : null}</div> : null}
         </div>
