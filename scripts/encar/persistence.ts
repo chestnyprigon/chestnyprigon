@@ -107,7 +107,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
                 engineCc: vehicle.engineCc,
                 firstRegistrationDate: vehicle.firstRegistrationDate,
                 fuelType: vehicle.fuelType,
-                preferential: false,
+                preferential: true,
                 exchangeRates,
               });
               return {
