@@ -74,9 +74,12 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
     fetch(`/api/catalog/filter-options${params.size ? `?${params.toString()}` : ""}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : null)
       .then((payload: { brands?: unknown; models?: unknown; trims?: unknown } | null) => {
-        if (Array.isArray(payload?.brands)) setBrandOptions(payload.brands.filter((item): item is string => typeof item === "string"));
-        if (Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
-        if (Array.isArray(payload?.trims)) setTrimOptions(payload.trims.filter((item): item is string => typeof item === "string"));
+        // Each API response fills only one level of the dependent chain.
+        // Never replace the make list with the empty `brands` array returned
+        // for a selected make — otherwise the selected option disappears.
+        if (!brand && Array.isArray(payload?.brands)) setBrandOptions(payload.brands.filter((item): item is string => typeof item === "string"));
+        if (brand && !model && Array.isArray(payload?.models)) setModelOptions(payload.models.filter((item): item is string => typeof item === "string"));
+        if (brand && model && Array.isArray(payload?.trims)) setTrimOptions(payload.trims.filter((item): item is string => typeof item === "string"));
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -104,8 +107,8 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-title"><b>Фильтр параметров</b><button type="button" onClick={reset}><X size={15} />Сбросить</button></div>
       <div className="home-filter-grid">
         <label className="home-filter-country"><span>🇰🇷</span> Корея</label>
-        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setTrim(""); }}><option value="">Все марки</option>{brandOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span>Модель</span><select value={model} disabled={!brand} onChange={(e) => { setModel(e.target.value); setTrim(""); }}><option value="">{brand ? "Все модели" : "Сначала выберите марку"}</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Марка</span><select value={brand} onChange={(e) => { setBrand(e.target.value); setModel(""); setTrim(""); setModelOptions([]); setTrimOptions([]); }}><option value="">Все марки</option>{brandOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>Модель</span><select value={model} disabled={!brand} onChange={(e) => { setModel(e.target.value); setTrim(""); setTrimOptions([]); }}><option value="">{brand ? "Все модели" : "Сначала выберите марку"}</option>{models.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>Комплектация</span><select value={trim} disabled={!brand || !model} onChange={(e) => setTrim(e.target.value)}><option value="">{brand && model ? "Все комплектации" : "Сначала выберите модель"}</option>{trimOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label><span>Топливо</span><select value={fuel} onChange={(e) => setFuel(e.target.value)}>{fuels.map((value) => <option key={value} value={value}>{value || "Любое"}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Привод</span><select value={drive} onChange={(e) => setDrive(e.target.value)}>{drives.map((value) => <option key={value} value={value}>{value || "Любой"}</option>)}</select></label>
