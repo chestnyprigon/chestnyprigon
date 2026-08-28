@@ -46,6 +46,9 @@ const publish = args.has("--publish");
 const imported = args.has("--imported");
 const manufacturerArgument = process.argv.find((argument) => argument.startsWith("--manufacturer="))?.slice("--manufacturer=".length).trim() || undefined;
 const manufacturerAliases: Record<string, string> = {
+  Hyundai: "현대",
+  Kia: "기아",
+  Genesis: "제네시스",
   "Mercedes-Benz": "벤츠",
   Audi: "아우디",
   Volkswagen: "폭스바겐",

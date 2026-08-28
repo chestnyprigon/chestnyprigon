@@ -57,3 +57,39 @@ export function totalWaveQuota(group?: WaveGroup) {
     .filter((wave) => !group || wave.group === group)
     .reduce((total, wave) => total + wave.quota, 0);
 }
+
+export function selectWaveBatches(target: number, groups: readonly WaveGroup[] = ["european", "korean"]) {
+  if (!Number.isInteger(target) || target < 1 || target > 5_000) {
+    throw new Error("target must be an integer from 1 to 5000");
+  }
+  const allowed = new Set(groups);
+  const waves: BrandWave[] = [];
+  const grouped = [...allowed].map((group) => CATALOG_WAVES.filter((wave) => wave.group === group));
+  const maxGroupWaves = Math.max(...grouped.map((items) => items.length));
+  for (let index = 0; index < maxGroupWaves; index += 1) {
+    for (const groupWaves of grouped) {
+      const wave = groupWaves[index];
+      if (wave) waves.push(wave);
+    }
+  }
+  if (!waves.length) throw new Error("at least one supported wave group is required");
+
+  const cursors = new Map(waves.map((wave) => [wave.id, 0]));
+  const batches: Array<{ wave: BrandWave; offset: number; limit: number }> = [];
+  let remaining = target;
+  while (remaining > 0) {
+    let added = false;
+    for (const wave of waves) {
+      const offset = cursors.get(wave.id) ?? 0;
+      if (offset >= wave.quota) continue;
+      const limit = Math.min(SAFE_BRAND_BATCH_SIZE, wave.quota - offset, remaining);
+      batches.push({ wave, offset, limit });
+      cursors.set(wave.id, offset + limit);
+      remaining -= limit;
+      added = true;
+      if (remaining === 0) break;
+    }
+    if (!added) throw new Error(`requested target exceeds selected wave quotas (${target - remaining}/${target})`);
+  }
+  return batches;
+}
