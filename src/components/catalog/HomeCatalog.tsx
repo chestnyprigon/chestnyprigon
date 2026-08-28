@@ -18,6 +18,7 @@ import {
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
+import { formatUsdWithByn } from "@/lib/pricing/display";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -42,7 +43,7 @@ function historyText(car: CatalogCar) {
 }
 
 function price(car: CatalogCar) {
-  return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
+  return car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется";
 }
 
 export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {

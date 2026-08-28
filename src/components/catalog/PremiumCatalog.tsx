@@ -29,6 +29,7 @@ import {
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
+import { formatUsdWithByn } from "@/lib/pricing/display";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
@@ -63,7 +64,7 @@ function historyText(car: CatalogCar) {
 }
 
 function catalogPrice(car: CatalogCar) {
-  return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
+  return car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется";
 }
 
 export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
