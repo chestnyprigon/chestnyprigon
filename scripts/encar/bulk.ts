@@ -17,6 +17,9 @@ const manufacturerAliases: Record<string, string> = {
   "Mercedes-Benz": "벤츠",
   Audi: "아우디",
   Volkswagen: "폭스바겐",
+  Porsche: "포르쉐",
+  Volvo: "볼보",
+  "Land Rover": "랜드로버",
 };
 
 function integerArgument(name: string, fallback: number, minimum: number, maximum: number) {

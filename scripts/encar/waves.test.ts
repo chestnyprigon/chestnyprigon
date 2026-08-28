@@ -3,9 +3,9 @@ import test from "node:test";
 import { CATALOG_WAVES, MAX_ENRICH_CONCURRENCY, SAFE_BRAND_BATCH_SIZE, SAFE_ENRICH_CONCURRENCY, selectWaveBatches, totalWaveQuota, waveBatches } from "./waves";
 
 test("keeps Korean and European quotas separate", () => {
-  assert.equal(totalWaveQuota("european"), 7_000);
+  assert.equal(totalWaveQuota("european"), 10_000);
   assert.equal(totalWaveQuota("korean"), 7_500);
-  assert.equal(totalWaveQuota(), 17_000);
+  assert.equal(totalWaveQuota(), 20_000);
 });
 
 test("splits a brand quota into bounded resumable batches", () => {
