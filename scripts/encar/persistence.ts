@@ -29,7 +29,11 @@ async function checked<T>(promise: PromiseLike<{ data: T; error: { message: stri
   return result.data;
 }
 
-export async function persistPilot(items: PilotItem[], publish: boolean) {
+export async function persistPilot(
+  items: PilotItem[],
+  publish: boolean,
+  runCursor: Record<string, unknown> = { pilot: true, publish },
+) {
   const supabase = adminClient();
   const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
   const uniqueItems = [
@@ -38,7 +42,7 @@ export async function persistPilot(items: PilotItem[], publish: boolean) {
   const run = await checked(
     supabase
       .from("import_runs")
-      .insert({ mode: "initial", status: "running", cursor: { pilot: true, publish } })
+      .insert({ mode: "initial", status: "running", cursor: runCursor })
       .select("id")
       .single(),
   );

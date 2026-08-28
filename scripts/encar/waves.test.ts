@@ -28,6 +28,14 @@ test("keeps enrichment concurrency bounded", () => {
   assert.equal(MAX_ENRICH_CONCURRENCY, 4);
 });
 
+test("resumes a brand wave from an explicit offset", () => {
+  const wave = CATALOG_WAVES.find((item) => item.id === "eu-03-audi");
+  assert.ok(wave);
+  const batches = waveBatches(wave).filter((batch) => batch.offset >= 500);
+  assert.equal(batches[0]?.offset, 500);
+  assert.equal(batches.at(-1)?.offset, 1_000);
+});
+
 test("balances the first bulk target across selected brand groups", () => {
   const batches = selectWaveBatches(2_000, ["european", "korean"]);
   assert.deepEqual(batches.map((batch) => batch.wave.id), ["eu-01-bmw", "kr-01-hyundai", "eu-02-mercedes", "kr-02-kia"]);
