@@ -91,7 +91,7 @@ function ClientPriceTable({ calculation }: { calculation: BelarusPriceCalculatio
       <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
       <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
       <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>
-      <small className="dossier-rate-note">Курс НБРБ: {calculation.rates.rateDate}{calculation.rates.source === "fallback" ? " · резервное значение" : ""}. Возраст для предварительного расчёта определяется по первой регистрации; льгота применяется только после подтверждения права на неё.</small>
+      <small className="dossier-rate-note">BYN рассчитан по официальным курсам НБРБ на дату расчёта. Возраст для предварительного расчёта определяется по первой регистрации; льгота применяется только после подтверждения права на неё.</small>
     </div>
   </details>;
 }

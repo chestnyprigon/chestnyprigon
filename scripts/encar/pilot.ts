@@ -8,6 +8,7 @@ import { screenListing } from "./screening";
 import type { PilotItem } from "./types";
 import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
+import { SAFE_BRAND_BATCH_SIZE, SAFE_DETAIL_DELAY_MS } from "./waves";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -33,11 +34,11 @@ function nonNegativeNumericArgument(name: string, fallback: number, maximum: num
   return parsed;
 }
 
-const limit = numericArgument("limit", Number(process.env.ENCAR_PILOT_LIMIT ?? 20), 100);
+const limit = numericArgument("limit", Number(process.env.ENCAR_PILOT_LIMIT ?? 20), SAFE_BRAND_BATCH_SIZE);
 const offset = nonNegativeNumericArgument("offset", Number(process.env.ENCAR_PILOT_OFFSET ?? 0), 100_000);
 const detailDelayMs = numericArgument(
   "detail-delay-ms",
-  Number(process.env.ENCAR_DETAIL_DELAY_MS ?? 350),
+  Number(process.env.ENCAR_DETAIL_DELAY_MS ?? SAFE_DETAIL_DELAY_MS),
   10_000,
 );
 const write = args.has("--write");
