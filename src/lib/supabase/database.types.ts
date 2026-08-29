@@ -30,6 +30,8 @@ export type Database = {
           published_at: string | null;
           source_updated_at: string | null;
           last_seen_at: string;
+          last_checked_at: string | null;
+          revalidation_miss_count: number;
         };
         Insert: Record<string, never>;
         Update: Record<string, never>;
@@ -95,6 +97,8 @@ export type Database = {
           source_updated_at: string | null;
           published_at: string | null;
           last_seen_at: string | null;
+          last_checked_at: string | null;
+          revalidation_miss_count: number;
           image_urls: string[] | null;
           report_options: Json | null;
           inspection_summary: Json | null;

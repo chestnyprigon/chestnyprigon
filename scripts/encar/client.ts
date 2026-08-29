@@ -9,17 +9,19 @@ type SearchResponse = {
   SearchResults?: EncarSearchListing[];
 };
 
-async function fetchJson<T>(url: URL | string): Promise<T> {
+async function fetchJson<T>(url: URL | string, options: { attempts?: number; timeoutMs?: number } = {}): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  const timeoutMs = options.timeoutMs ?? 20_000;
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       await ensureEncarVerified();
-      const response = await fetch(url, { headers: encarHeaders(), signal: AbortSignal.timeout(20_000) });
+      const response = await fetch(url, { headers: encarHeaders(), signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
       return (await response.json()) as T;
     } catch (error) {
       lastError = error;
-      if (attempt < 3) await delay(500 * 2 ** (attempt - 1));
+      if (attempt < attempts) await delay(500 * 2 ** (attempt - 1));
     }
   }
   throw lastError instanceof Error ? lastError : new Error(`Encar request failed for ${url}`);
@@ -34,11 +36,13 @@ export function createDomesticQuery(
   maxMileage: number,
   carType: "Y" | "N" = "Y",
   manufacturer?: string,
+  priceMin = 300,
+  priceMax = 15000,
 ) {
   const prefix = manufacturer
     ? `(And.Hidden.N._.(C.CarType.A._.Manufacturer.${manufacturer}.)_.Year`
     : `(And.Hidden.N._.CarType.${carType}._.Year`;
-  return `${prefix}.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})._.Price.range(300..15000).)`;
+  return `${prefix}.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})._.Price.range(${priceMin}..${priceMax}).)`;
 }
 
 export async function fetchSearchPage({
@@ -66,8 +70,8 @@ export async function fetchSearchPage({
   };
 }
 
-export async function fetchDetail(listingId: string): Promise<EncarDetail> {
-  const detail = await fetchJson<EncarDetail>(`${DETAIL_ENDPOINT}/${listingId}`);
+export async function fetchDetail(listingId: string, options?: { attempts?: number; timeoutMs?: number }): Promise<EncarDetail> {
+  const detail = await fetchJson<EncarDetail>(`${DETAIL_ENDPOINT}/${listingId}`, options);
   if (!detail || typeof detail !== "object") {
     throw new Error(`Encar detail response is invalid for ${listingId}`);
   }

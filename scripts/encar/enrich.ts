@@ -194,6 +194,7 @@ async function main() {
   const applyScreening = process.argv.includes("--apply-screening");
   const publishEligible = process.argv.includes("--publish-eligible");
   const onlyMissing = process.argv.includes("--only-missing");
+  const onlyNotPublic = process.argv.includes("--only-not-public");
   const sourceIdsArgument = process.argv.find((argument) => argument.startsWith("--source-ids="))?.slice("--source-ids=".length);
   const createdAfter = process.argv.find((argument) => argument.startsWith("--created-after="))?.slice("--created-after=".length).trim() || undefined;
   const requestedSourceIds = sourceIdsArgument
@@ -201,6 +202,7 @@ async function main() {
     : [];
   const limit = integerArgument("limit", 2_000, 1, 10_000);
   const batchSize = integerArgument("batch-size", limit, 1, 10_000);
+  const requestedOffset = integerArgument("offset", 0, 0, 100_000);
   const detailConcurrency = integerArgument(
     "detail-concurrency",
     Number(process.env.ENCAR_ENRICH_CONCURRENCY ?? SAFE_ENRICH_CONCURRENCY),
@@ -216,24 +218,28 @@ async function main() {
   const selectedVehicles: Array<{ id: string; source_listing_id: string; price_usd: number | null }> = [];
   const pageSize = 1_000;
   if (requestedSourceIds.length) {
-    const { data, error: vehicleError } = await client
+    let requestedQuery = client
       .from("vehicles")
       .select("id,source_listing_id,price_usd")
       .eq("status", "active")
       .in("source_listing_id", requestedSourceIds);
+    if (onlyNotPublic) requestedQuery = requestedQuery.eq("is_public", false);
+    const { data, error: vehicleError } = await requestedQuery;
     if (vehicleError) throw new Error(vehicleError.message);
     selectedVehicles.push(...(data ?? []));
   }
   for (let offset = 0; !requestedSourceIds.length && selectedVehicles.length < limit; offset += pageSize) {
     const take = Math.min(pageSize, limit - selectedVehicles.length);
-    const { data, error: vehicleError } = await client
+    let vehicleQuery = client
       .from("vehicles")
       .select("id,source_listing_id,price_usd")
-      .eq("status", "active")
+      .eq("status", "active");
+    if (onlyNotPublic) vehicleQuery = vehicleQuery.eq("is_public", false);
+    const { data, error: vehicleError } = await vehicleQuery
       .gte("created_at", createdAfter ?? "1970-01-01T00:00:00.000Z")
-      .order("created_at", { ascending: true })
+      .order(onlyNotPublic ? "last_seen_at" : "created_at", { ascending: onlyNotPublic ? false : true, nullsFirst: !onlyNotPublic })
       .order("id", { ascending: true })
-      .range(offset, offset + take - 1);
+      .range(requestedOffset + offset, requestedOffset + offset + take - 1);
     if (vehicleError) throw new Error(vehicleError.message);
     selectedVehicles.push(...(data ?? []));
     if ((data?.length ?? 0) < take) break;
@@ -363,7 +369,11 @@ async function main() {
       const index = nextVehicle++;
       const vehicle = vehicles[index];
       if (!vehicle) return;
-      await processVehicle(vehicle);
+      try {
+        await processVehicle(vehicle);
+      } catch (error) {
+        console.error(`enrichment_error ${vehicle.source_listing_id}:`, error instanceof Error ? error.message : error);
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(detailConcurrency, vehicles.length) }, () => worker()));
