@@ -178,7 +178,7 @@ async function main() {
     missingOnFirstPass: missing.length,
     updatedLastSeenAt: found.size,
     revalidationResult,
-    note: "Missing listings are reported only; no vehicles were unpublished or deleted.",
+    note: "A second consecutive miss removes a vehicle from publication; a third archives it. Rows and photos are never deleted.",
   });
 }
 

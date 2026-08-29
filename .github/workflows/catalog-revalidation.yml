@@ -1,0 +1,35 @@
+name: Catalog revalidation
+
+on:
+  schedule:
+    # Run during a low-traffic window in Korea/Belarus overlap.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: catalog-revalidation
+  cancel-in-progress: false
+
+jobs:
+  revalidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Revalidate active catalogue
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ENCAR_USER_AGENT: ${{ secrets.ENCAR_USER_AGENT }}
+        run: npm run encar:revalidate
