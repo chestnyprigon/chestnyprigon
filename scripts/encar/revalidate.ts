@@ -115,7 +115,13 @@ async function main() {
     console.log(summary.at(-1));
   }
 
-  const missing = vehicles.filter((vehicle) => !found.has(vehicle.source_listing_id));
+  // A scoped run (for example --manufacturers=BMW) must only mutate the
+  // selected manufacturers. Other vehicles were not checked and must not
+  // receive a revalidation miss.
+  const checkedVehicles = manufacturers.flatMap(([manufacturer]) =>
+    vehicles.filter((vehicle) => vehicle.manufacturer === manufacturer),
+  );
+  const missing = checkedVehicles.filter((vehicle) => !found.has(vehicle.source_listing_id));
   const run = await client
     .from("import_runs")
     .insert({
@@ -133,7 +139,7 @@ async function main() {
   if (run.error) throw new Error(run.error.message);
 
   const checkedAt = now.toISOString();
-  const foundIds = vehicles.filter((vehicle) => found.has(vehicle.source_listing_id)).map((vehicle) => vehicle.source_listing_id);
+  const foundIds = checkedVehicles.filter((vehicle) => found.has(vehicle.source_listing_id)).map((vehicle) => vehicle.source_listing_id);
   const missingIds = missing.map((vehicle) => vehicle.source_listing_id);
   const { data: revalidationResult, error: revalidationError } = await client.rpc("apply_catalog_revalidation", {
     p_found_source_listing_ids: foundIds,
