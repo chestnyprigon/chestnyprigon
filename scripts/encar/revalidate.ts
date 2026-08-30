@@ -59,12 +59,34 @@ async function main() {
     if ((data?.length ?? 0) < 1_000) break;
   }
 
+  const idsByVehicle = new Map<string, Map<string, string>>();
+  for (const vehicle of vehicles) {
+    idsByVehicle.set(vehicle.id, new Map([[vehicle.source_listing_id, vehicle.source_listing_id]]));
+  }
+
+  for (let offset = 0; offset < vehicles.length; offset += 200) {
+    const vehicleIds = vehicles.slice(offset, offset + 200).map((vehicle) => vehicle.id);
+    const { data: identifiers, error: identifiersError } = await client
+      .from("vehicle_source_identifiers")
+      .select("vehicle_id,source_identifier")
+      .in("vehicle_id", vehicleIds);
+    if (identifiersError) throw new Error(identifiersError.message);
+    for (const identifier of identifiers ?? []) {
+      const ids = idsByVehicle.get(identifier.vehicle_id);
+      const vehicle = vehicles.find((item) => item.id === identifier.vehicle_id);
+      if (ids && vehicle) ids.set(identifier.source_identifier, vehicle.source_listing_id);
+    }
+  }
+
+  for (const vehicle of vehicles) {
+    const advertisedId = vehicle.source_url?.match(/[?&]carid=(\d+)/)?.[1];
+    if (advertisedId) idsByVehicle.get(vehicle.id)?.set(advertisedId, vehicle.source_listing_id);
+  }
+
   const byManufacturer = new Map<string, Map<string, string>>();
   for (const vehicle of vehicles) {
     const ids = byManufacturer.get(vehicle.manufacturer) ?? new Map<string, string>();
-    ids.set(vehicle.source_listing_id, vehicle.source_listing_id);
-    const advertisedId = vehicle.source_url?.match(/[?&]carid=(\d+)/)?.[1];
-    if (advertisedId) ids.set(advertisedId, vehicle.source_listing_id);
+    for (const [identifier, canonicalId] of idsByVehicle.get(vehicle.id) ?? []) ids.set(identifier, canonicalId);
     byManufacturer.set(vehicle.manufacturer, ids);
   }
 
@@ -184,7 +206,7 @@ async function main() {
     missingOnFirstPass: missing.length,
     updatedLastSeenAt: found.size,
     revalidationResult,
-    note: "A second consecutive miss removes a vehicle from publication; a third archives it. Rows and photos are never deleted.",
+    note: "A second consecutive miss removes a vehicle from publication; a third moves it to the removed/archive state. Rows and photos are never deleted.",
   });
 }
 

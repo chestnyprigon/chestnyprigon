@@ -3,6 +3,18 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      vehicle_source_identifiers: {
+        Row: {
+          source_identifier: string;
+          vehicle_id: string;
+          identifier_type: string;
+          first_seen_at: string;
+          last_seen_at: string;
+        };
+        Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       vehicles: {
         Row: {
           id: string;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { canonicalSourceId } from "./identity";
+import { canonicalSourceId, sourceIdentifiers } from "./identity";
 import type { PilotItem } from "./types";
 import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
@@ -147,10 +147,28 @@ export async function persistPilot(
       )) as Array<{ id: string; source_listing_id: string }>;
 
       const vehicleIds = storedVehicles.map((vehicle) => vehicle.id);
-      await checked(supabase.from("vehicle_images").delete().in("vehicle_id", vehicleIds));
       const idBySource = new Map(
         storedVehicles.map((vehicle) => [vehicle.source_listing_id, vehicle.id]),
       );
+      const identifierRows = approvedItems.flatMap((item) => {
+        const vehicle = item.normalized!;
+        const vehicleId = idBySource.get(vehicle.sourceListingId);
+        if (!vehicleId) return [];
+        return sourceIdentifiers(item.bundle).map((identifier) => ({
+          source_identifier: identifier.value,
+          vehicle_id: vehicleId,
+          identifier_type: identifier.type,
+          last_seen_at: item.bundle.fetchedAt,
+        }));
+      });
+      if (identifierRows.length) {
+        await checked(
+          supabase
+            .from("vehicle_source_identifiers")
+            .upsert(identifierRows, { onConflict: "source_identifier" }),
+        );
+      }
+      await checked(supabase.from("vehicle_images").delete().in("vehicle_id", vehicleIds));
       const imageRows = approvedItems.flatMap((item) => {
         const vehicle = item.normalized!;
         const vehicleId = idBySource.get(vehicle.sourceListingId);
