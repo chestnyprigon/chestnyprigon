@@ -12,6 +12,7 @@ type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
 
 export type CatalogSearch = {
+  homepageMix?: boolean;
   page?: number;
   perPage?: number;
   query?: string;
@@ -391,6 +392,7 @@ function mapVehicleRows(
 
 function normalizedSearch(search: CatalogSearch) {
   return {
+    homepageMix: search.homepageMix ?? false,
     page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
     query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", generation: search.generation ?? "", trim: search.trim ?? "", fuel: search.fuel ?? "",
     yearFrom: search.yearFrom ?? catalogYearFrom(), yearTo: search.yearTo ?? catalogYearTo(), minPrice: search.minPrice ?? 0,
@@ -399,6 +401,31 @@ function normalizedSearch(search: CatalogSearch) {
     transmission: search.transmission ?? "", drive: search.drive ?? "", bodyType: search.bodyType ?? "",
     accidents: search.accidents, sort: search.sort ?? "newest" as const,
   };
+}
+
+function diversifyHomepageRows(rows: VehicleRow[], limit: number) {
+  const buckets = new Map<string, VehicleRow[]>();
+  for (const row of rows) {
+    const brand = row.manufacturer || "Другие";
+    buckets.set(brand, [...(buckets.get(brand) ?? []), row]);
+  }
+
+  const mixed: VehicleRow[] = [];
+  const brands = [...buckets.keys()];
+  let round = 0;
+  while (mixed.length < limit && brands.length) {
+    let added = false;
+    for (const brand of brands) {
+      const row = buckets.get(brand)?.[round];
+      if (!row) continue;
+      mixed.push(row);
+      added = true;
+      if (mixed.length === limit) break;
+    }
+    if (!added) break;
+    round += 1;
+  }
+  return mixed;
 }
 
 async function loadAccidentVehicleIds(
@@ -489,9 +516,14 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
       count = 0;
     }
   } else {
-    const result = await query.range(from, from + input.perPage - 1);
+    const result = input.homepageMix && input.page === 1
+      ? await query.limit(Math.max(120, input.perPage * 10))
+      : await query.range(from, from + input.perPage - 1);
     if (result.error) throw new Error(`Catalog request failed: ${result.error.message}`);
-    vehicles = result.data as VehicleRow[] | null;
+    const rows = result.data as VehicleRow[] | null;
+    vehicles = input.homepageMix && input.page === 1
+      ? diversifyHomepageRows(rows ?? [], input.perPage)
+      : rows;
     count = result.count;
   }
   const ids = (vehicles ?? []).map((vehicle) => vehicle.id);
