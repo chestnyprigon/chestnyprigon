@@ -1,0 +1,10 @@
+[Unit]
+Description=Clean old catalog technical data
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chestny-prigon
+EnvironmentFile=/etc/chestny-prigon/catalog-cleanup.env
+ExecStart=/usr/bin/npm run catalog:cleanup -- --apply

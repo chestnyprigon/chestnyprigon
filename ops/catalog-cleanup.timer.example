@@ -1,0 +1,10 @@
+[Unit]
+Description=Run catalog technical cleanup monthly
+
+[Timer]
+OnCalendar=*-*-01 04:20:00 UTC
+Persistent=true
+Unit=chestny-prigon-catalog-cleanup.service
+
+[Install]
+WantedBy=timers.target
