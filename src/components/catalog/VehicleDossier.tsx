@@ -111,9 +111,9 @@ export function VehicleDossier({ car, pricingContext }: { car: CatalogCar; prici
   const accident = Boolean(car.accidents?.accidentCount || car.inspection?.reportedAccident);
   const historyBadge = car.accidents?.accidentCount
     ? { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" }
-    : car.accidents?.available || car.inspection
-      ? { label: "Без ДТП по отчёту Encar", tone: "is-clear" }
-      : { label: "История Encar", tone: "is-neutral" };
+    : car.accidents?.available
+      ? { label: "Без ДТП", tone: "is-clear" }
+      : { label: "Нет данных Encar", tone: "is-neutral" };
   const imageGroups = useMemo(() => car.imageGroups.length ? car.imageGroups : car.images.map((url) => ({ url, group: "Другие фото" as const })), [car.imageGroups, car.images]);
   const availableGroups = useMemo(() => galleryGroupOrder.filter((group) => group === "Все фото" || imageGroups.some((image) => image.group === group)), [imageGroups]);
   const visiblePhotoIndexes = useMemo(() => imageGroups.flatMap((image, index) => photoGroup === "Все фото" || image.group === photoGroup ? [index] : []), [imageGroups, photoGroup]);

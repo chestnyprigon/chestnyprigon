@@ -35,8 +35,8 @@ const distance = new Intl.NumberFormat("ru-RU");
 
 function historyBadge(car: CatalogCar) {
   if (car.accidents?.accidentCount) return { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" };
-  if (car.accidents?.available || car.inspection) return { label: "Без ДТП", tone: "is-clear" };
-  return { label: "История Encar", tone: "is-neutral" };
+  if (car.accidents?.available) return { label: "Без ДТП", tone: "is-clear" };
+  return { label: "Нет данных Encar", tone: "is-neutral" };
 }
 
 function catalogPrice(car: CatalogCar) {

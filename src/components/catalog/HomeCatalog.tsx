@@ -28,8 +28,8 @@ const accidentOptions = ["", "clear", "with"] as const;
 
 function badge(car: CatalogCar) {
   if (car.accidents?.accidentCount) return { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" };
-  if (car.accidents?.available || car.inspection) return { label: "Без ДТП", tone: "is-clear" };
-  return { label: "История Encar", tone: "is-neutral" };
+  if (car.accidents?.available) return { label: "Без ДТП", tone: "is-clear" };
+  return { label: "Нет данных Encar", tone: "is-neutral" };
 }
 
 function historyText(car: CatalogCar) {
@@ -38,8 +38,8 @@ function historyText(car: CatalogCar) {
     const payouts = accidents.ownAccidentCostKrw + accidents.otherAccidentCostKrw;
     return `Страховые случаи: ${accidents.accidentCount} · выплаты ${distance.format(payouts)} ₩`;
   }
-  if (accidents?.available || car.inspection) return "Без ДТП · страховых выплат нет";
-  return "История ДТП: нет данных";
+  if (accidents?.available) return "Без ДТП по отчёту Encar · страховых выплат нет";
+  return "Нет данных по страховым случаям";
 }
 
 function price(car: CatalogCar) {

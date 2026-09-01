@@ -183,7 +183,7 @@ a { color: inherit; text-decoration: none; }
 .premium-car-image>span.premium-history-badge.is-alert { background: rgba(153,70,58,.94); border-color: rgba(255,174,164,.28); }
 .result-car-media>span.result-history-badge.is-neutral,
 .home-result-photo>span.result-history-badge.is-neutral,
-.premium-car-image>span.premium-history-badge.is-neutral { background: rgba(58,87,116,.94); border-color: rgba(174,208,235,.2); }
+.premium-car-image>span.premium-history-badge.is-neutral { background: rgba(126,94,24,.96); border-color: rgba(255,213,91,.5); color: #fff0ae; }
 .home-result-photo>span.result-history-badge { border-radius: 3px; color: #fff; font-size: 8px; font-weight: 900; left: 10px; padding: 6px 8px; position: absolute; top: 10px; z-index: 2; }
 .premium-car-image { display: block; }
 .premium-car-body a { align-items: center; color: #fff; display: inline-flex; font-size: 10px; font-weight: 850; gap: 7px; }
@@ -225,7 +225,7 @@ a { color: inherit; text-decoration: none; }
 .dossier-insurance { background: #07111b; border: 1px solid rgba(160,184,204,.14); border-radius: 6px; margin-top: 14px; overflow: hidden; }.dossier-insurance summary { align-items: center; cursor: pointer; display: grid; font-size: 10px; font-weight: 850; gap: 12px; grid-template-columns: minmax(0,1fr) auto auto; list-style: none; min-height: 48px; padding: 0 13px; }.dossier-insurance summary::-webkit-details-marker { display: none; }.dossier-insurance summary>b { color: #b7c4cf; }.dossier-insurance[open] summary { border-bottom: 1px solid var(--line); }.dossier-insurance[open] summary svg { transform: rotate(180deg); }.dossier-insurance>div { display: grid; gap: 10px; padding: 11px; }.dossier-insurance article { background: #0a1621; border: 1px solid rgba(160,184,204,.13); border-radius: 5px; padding: 12px; }.dossier-insurance article header { align-items: start; display: flex; justify-content: space-between; gap: 12px; }.dossier-insurance article header b { display: block; font-size: 11px; }.dossier-insurance article header span { color: #82939f; display: block; font-size: 9px; margin-top: 4px; }.dossier-insurance article header strong { font-size: 11px; white-space: nowrap; }.dossier-insurance article p { border-bottom: 1px dashed rgba(160,184,204,.16); display: flex; font-size: 9px; justify-content: space-between; margin: 8px 0 0; padding-bottom: 7px; }.dossier-insurance article p span { color: #82939f; }.dossier-insurance article p b { color: #bfccd5; }.dossier-insurance article p:last-child { border-bottom: 0; padding-bottom: 0; }
 
 /* Vehicle-history status and a single-column price source line. */
-.dossier-main-photo>span.dossier-history-badge { background: rgba(24,47,60,.94); border: 1px solid rgba(139,172,191,.38); color: #d7e5ed; text-transform: none; }.dossier-main-photo>span.dossier-history-badge.is-clear { background: rgba(22,104,78,.94); border-color: rgba(128,223,181,.46); color: #d4f3e4; }.dossier-main-photo>span.dossier-history-badge.is-alert { background: rgba(145,69,51,.95); border-color: rgba(255,176,145,.46); color: #fff0e9; }
+.dossier-main-photo>span.dossier-history-badge { background: rgba(24,47,60,.94); border: 1px solid rgba(139,172,191,.38); color: #d7e5ed; text-transform: none; }.dossier-main-photo>span.dossier-history-badge.is-clear { background: rgba(22,104,78,.94); border-color: rgba(128,223,181,.46); color: #d4f3e4; }.dossier-main-photo>span.dossier-history-badge.is-alert { background: rgba(145,69,51,.95); border-color: rgba(255,176,145,.46); color: #fff0e9; }.dossier-main-photo>span.dossier-history-badge.is-neutral { background: rgba(126,94,24,.96); border-color: rgba(255,213,91,.5); color: #fff0ae; }
 .dossier-price-lines>div { grid-column: 1/-1; gap: 14px; }.dossier-price-lines>div b { white-space: nowrap; }
 
 /* Full-screen Encar photo viewer */
@@ -257,7 +257,7 @@ a { color: inherit; text-decoration: none; }
 .home-result-card>div>p.card-history-meta.is-alert,
 .result-car-body>p>span.card-history-meta.is-alert { color: #ffaaa4; }
 .home-result-card>div>p.card-history-meta.is-neutral,
-.result-car-body>p>span.card-history-meta.is-neutral { color: #a9c1d4; }
+.result-car-body>p>span.card-history-meta.is-neutral { color: #f0ca55; }
 @media (max-width: 700px) {
   .home-result-photo>span.result-history-badge,
   .result-car-media>span.result-history-badge { display: none; }
