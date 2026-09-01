@@ -6,7 +6,7 @@ import { normalizeListing } from "./normalize";
 import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
 import type { PilotItem } from "./types";
-import { CATALOG_WAVES, MAX_ENRICH_CONCURRENCY, SAFE_DETAIL_DELAY_MS, selectWaveBatches, type WaveGroup } from "./waves";
+import { CATALOG_WAVES, MAX_ENRICH_CONCURRENCY, SAFE_DETAIL_DELAY_MS, TARGETED_2016_WAVES, selectWaveBatches, type WaveGroup } from "./waves";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -54,7 +54,9 @@ async function main() {
   const requestedOffset = nonNegativeIntegerArgument("offset", 0, 100_000);
   const now = new Date();
   const requestedWaveId = process.argv.find((argument) => argument.startsWith("--wave="))?.slice("--wave=".length).trim();
-  const requestedWave = requestedWaveId ? CATALOG_WAVES.find((wave) => wave.id === requestedWaveId) : undefined;
+  const requestedWave = requestedWaveId
+    ? [...CATALOG_WAVES, ...TARGETED_2016_WAVES].find((wave) => wave.id === requestedWaveId)
+    : undefined;
   if (requestedWaveId && !requestedWave) throw new Error(`unknown wave: ${requestedWaveId}`);
   const batches = requestedWave
     ? [{ wave: requestedWave, offset: requestedOffset, limit: Math.min(target, requestedWave.quota - requestedOffset) }]
@@ -71,7 +73,7 @@ async function main() {
 
   for (const { wave, offset, limit } of batches) {
     const manufacturer = wave.manufacturer === "*" ? undefined : manufacturerAliases[wave.manufacturer] ?? wave.manufacturer;
-    const query = createDomesticQuery(encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, "Y", manufacturer);
+    const query = createDomesticQuery(wave.yearFrom ?? encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, "Y", manufacturer);
     const page = await fetchSearchPage({ offset, limit: Math.min(pageSize, limit), query });
     const listings = page.listings.filter((listing) => {
       const id = String(listing.Id ?? "");

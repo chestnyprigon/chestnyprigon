@@ -13,6 +13,7 @@ export type BrandWave = {
   group: WaveGroup;
   manufacturer: string;
   quota: number;
+  yearFrom?: number;
 };
 
 export const SAFE_BRAND_BATCH_SIZE = 500;
@@ -37,6 +38,13 @@ export const CATALOG_WAVES: readonly BrandWave[] = [
   { id: "kr-02-kia", group: "korean", manufacturer: "Kia", quota: 3_000 },
   { id: "kr-03-genesis", group: "korean", manufacturer: "Genesis", quota: 1_500 },
   { id: "other-01", group: "other", manufacturer: "*", quota: 2_500 },
+];
+
+/** Explicit customer-requested 2016+ pilot waves. */
+export const TARGETED_2016_WAVES: readonly BrandWave[] = [
+  { id: "eu-2016-bmw-pilot", group: "european", manufacturer: "BMW", quota: 100, yearFrom: 2016 },
+  { id: "eu-2016-mercedes-pilot", group: "european", manufacturer: "Mercedes-Benz", quota: 100, yearFrom: 2016 },
+  { id: "eu-2016-audi-pilot", group: "european", manufacturer: "Audi", quota: 100, yearFrom: 2016 },
 ];
 
 export function waveBatches(wave: BrandWave, batchSize = SAFE_BRAND_BATCH_SIZE) {
