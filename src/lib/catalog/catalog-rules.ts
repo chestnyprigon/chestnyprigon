@@ -1,9 +1,8 @@
 /**
  * Customer-confirmed catalog intake limits.
  *
- * The seven-year rule is inclusive of the current model year, so the default
- * range in 2026 remains 2019–2026. The UI may search older imported vehicles
- * down to 2016 when the customer explicitly selects those years.
+ * The catalogue UI intentionally defaults to 2016–the current model year so
+ * the customer-requested 2016+ vehicles are visible immediately.
  */
 export const CATALOG_VEHICLE_AGE_YEARS = 7;
 export const CATALOG_MAX_MILEAGE_KM = 190_000;
@@ -14,7 +13,7 @@ export function catalogYearTo(now = new Date()) {
 }
 
 export function catalogYearFrom(now = new Date()) {
-  return catalogYearTo(now) - CATALOG_VEHICLE_AGE_YEARS;
+  return Math.min(catalogYearTo(now) - CATALOG_VEHICLE_AGE_YEARS, CATALOG_FILTER_MIN_YEAR);
 }
 
 export function catalogYearOptions(now = new Date()) {
