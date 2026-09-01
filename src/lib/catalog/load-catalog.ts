@@ -6,7 +6,7 @@ import { loadPricingContext, type PricingContext } from "@/lib/pricing/pricing-c
 import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
-import { CATALOG_MAX_MILEAGE_KM, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
+import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -396,7 +396,7 @@ function normalizedSearch(search: CatalogSearch) {
     page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
     query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", generation: search.generation ?? "", trim: search.trim ?? "", fuel: search.fuel ?? "",
     yearFrom: search.yearFrom ?? catalogYearFrom(), yearTo: search.yearTo ?? catalogYearTo(), minPrice: search.minPrice ?? 0,
-    maxPrice: search.maxPrice ?? 100_000, minMileage: search.minMileage ?? 0, maxMileage: search.maxMileage ?? CATALOG_MAX_MILEAGE_KM,
+    maxPrice: search.maxPrice ?? CATALOG_MAX_PRICE_USD, minMileage: search.minMileage ?? 0, maxMileage: search.maxMileage ?? CATALOG_MAX_MILEAGE_KM,
     minEngine: search.minEngine ?? 0, maxEngine: search.maxEngine ?? 8_000,
     transmission: search.transmission ?? "", drive: search.drive ?? "", bodyType: search.bodyType ?? "",
     accidents: search.accidents, sort: search.sort ?? "newest" as const,

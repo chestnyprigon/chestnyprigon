@@ -6,6 +6,7 @@
  */
 export const CATALOG_VEHICLE_AGE_YEARS = 7;
 export const CATALOG_MAX_MILEAGE_KM = 190_000;
+export const CATALOG_MAX_PRICE_USD = 250_000;
 export const CATALOG_FILTER_MIN_YEAR = 2016;
 
 export function catalogYearTo(now = new Date()) {
