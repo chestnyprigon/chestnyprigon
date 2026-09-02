@@ -47,15 +47,42 @@ function integerArgument(name: string, fallback: number, minimum: number, maximu
   return parsed;
 }
 
-async function fetchJson(url: string, requestHeaders = encarHeaders()) {
-  try {
-    await ensureEncarVerified();
-    const response = await fetch(url, { headers: requestHeaders, signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) return null;
-    return response.json() as Promise<unknown>;
-  } catch {
-    return null;
+type FetchJsonResult =
+  | { ok: true; payload: unknown }
+  | { ok: false; reason: string };
+
+const publicReportHeaders = encarHeaders({
+  Accept: "application/json, text/plain, */*",
+  Origin: "https://fem.encar.com",
+  Referer: "https://fem.encar.com/",
+});
+
+function retryableStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+async function fetchJson(
+  url: string,
+  requestHeaders = publicReportHeaders,
+  { verifyAccess = false, attempts = 3 }: { verifyAccess?: boolean; attempts?: number } = {},
+): Promise<FetchJsonResult> {
+  let reason = "request failed";
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      // Inspection and insurance record endpoints are public read-side APIs.
+      // Verifying the parser IP first can fail independently and previously made
+      // us store a false "unavailable" report even when Encar returned data.
+      if (verifyAccess) await ensureEncarVerified();
+      const response = await fetch(url, { headers: requestHeaders, signal: AbortSignal.timeout(20_000) });
+      if (response.ok) return { ok: true, payload: await response.json() as unknown };
+      reason = `HTTP ${response.status}`;
+      if (!retryableStatus(response.status)) break;
+    } catch (error) {
+      reason = error instanceof Error ? error.message : String(error);
+    }
+    if (attempt < attempts) await delay(attempt * 750);
   }
+  return { ok: false, reason };
 }
 
 function flattenInspection(nodes: unknown, output: Array<{ title: string; status: string }>) {
@@ -278,7 +305,17 @@ async function main() {
   const screeningRows: RecordValue[] = [];
   const unpublishIds: string[] = [];
   const publishIds: string[] = [];
+  const previousReportStatus = new Map<string, string>();
+  for (let offset = 0; offset < vehicles.length; offset += 200) {
+    const { data, error } = await client
+      .from("vehicle_reports")
+      .select("vehicle_id,report_status")
+      .in("vehicle_id", vehicles.slice(offset, offset + 200).map((vehicle) => vehicle.id));
+    if (error) throw new Error(error.message);
+    for (const report of data ?? []) previousReportStatus.set(report.vehicle_id, report.report_status);
+  }
   let unavailable = 0;
+  let preservedReadyReports = 0;
 
   async function processVehicle(vehicle: (typeof vehicles)[number]) {
     const payload = record(rawBySource.get(vehicle.source_listing_id));
@@ -286,6 +323,11 @@ async function main() {
     const canonicalId = string(detail.vehicleId);
     const vehicleNo = string(detail.vehicleNo);
     if (!canonicalId || !vehicleNo) {
+      if (previousReportStatus.get(vehicle.id) === "ready") {
+        preservedReadyReports += 1;
+        console.warn(`${vehicle.source_listing_id}: preserving previous ready report; source payload has no vehicle ID or registration number`);
+        return;
+      }
       unavailable += 1;
       if (applyScreening) {
         screeningRows.push({
@@ -307,14 +349,22 @@ async function main() {
     const resolvedCanonicalId = canonicalId;
     const resolvedVehicleNo = vehicleNo;
 
-    const [optionsPayload, inspectionPayload, accidentPayload, historyPayload] = await Promise.all([
+    const [optionsResult, inspectionResult, accidentResult, historyResult] = await Promise.all([
       fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${resolvedCanonicalId}/options/choice`),
       fetchJson(`https://api.encar.com/v1/readside/inspection/vehicle/${resolvedCanonicalId}`),
       fetchJson(
         `https://api.encar.com/v1/readside/record/vehicle/${resolvedCanonicalId}/open?vehicleNo=${encodeURIComponent(resolvedVehicleNo)}`,
       ),
-      fetchJson(`https://api.encar.com/v1/vehicle/resume?vehicleNo=${encodeURIComponent(resolvedVehicleNo)}`, historyHeaders),
+      fetchJson(
+        `https://api.encar.com/v1/vehicle/resume?vehicleNo=${encodeURIComponent(resolvedVehicleNo)}`,
+        historyHeaders,
+        { verifyAccess: true, attempts: 1 },
+      ),
     ]);
+    const optionsPayload = optionsResult.ok ? optionsResult.payload : null;
+    const inspectionPayload = inspectionResult.ok ? inspectionResult.payload : null;
+    const accidentPayload = accidentResult.ok ? accidentResult.payload : null;
+    const historyPayload = historyResult.ok ? historyResult.payload : null;
     const options = Array.isArray(optionsPayload)
       ? optionsPayload.slice(0, 80).flatMap((option) => {
           const value = record(option);
@@ -328,9 +378,20 @@ async function main() {
     const accidents = accidentSummary(accidentPayload, historyPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
-    const reportReady = Boolean(inspectionPayload && accidentPayload);
+    const reportReady =
+      number(record(inspectionPayload).vehicleId) === number(resolvedCanonicalId) &&
+      typeof record(accidentPayload).openData === "boolean";
     const screening = reportScreening(flags, hasAccident, reportReady);
-    if (!reportReady) unavailable += 1;
+    if (!reportReady) {
+      unavailable += 1;
+      if (previousReportStatus.get(vehicle.id) === "ready") {
+        preservedReadyReports += 1;
+        console.warn(
+          `${vehicle.source_listing_id}: preserving previous ready report; inspection=${inspectionResult.ok ? "invalid" : inspectionResult.reason}, insurance=${accidentResult.ok ? "invalid" : accidentResult.reason}`,
+        );
+        return;
+      }
+    }
 
     reportRows.push({
       vehicle_id: vehicle.id,
@@ -406,6 +467,7 @@ async function main() {
   console.log({
     enriched: reportRows.length,
     unavailable,
+    preservedReadyReports,
     screeningApplied: applyScreening,
     unpublished: unpublishIds.length,
     published: publishIds.length,
