@@ -14,8 +14,13 @@ const retentionDays = Number(process.env.CATALOG_TECHNICAL_RETENTION_DAYS ?? 60)
 if (!Number.isInteger(retentionDays) || retentionDays < 30) {
   throw new Error("CATALOG_TECHNICAL_RETENTION_DAYS must be an integer >= 30");
 }
+const archivedImageRetentionDays = Number(process.env.CATALOG_ARCHIVED_IMAGE_RETENTION_DAYS ?? 120);
+if (!Number.isInteger(archivedImageRetentionDays) || archivedImageRetentionDays < 90) {
+  throw new Error("CATALOG_ARCHIVED_IMAGE_RETENTION_DAYS must be an integer >= 90");
+}
 
 const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1_000).toISOString();
+const archivedImageCutoff = new Date(Date.now() - archivedImageRetentionDays * 24 * 60 * 60 * 1_000).toISOString();
 const apply = process.argv.includes("--apply");
 
 async function count(client: any, table: string, column: string, filters: string[] = []) {
@@ -41,13 +46,22 @@ async function main() {
       count(client, "listing_screening", "screened_at", [`lt=${cutoff}`]),
       count(client, "import_runs", "created_at", [`lt=${cutoff}`]),
     ]);
-    console.log(JSON.stringify({ status: "dry-run", cutoff, retentionDays, raw, reports, screening, runs }));
+    const { count: archivedImages, error: imageError } = await client
+      .from("vehicle_images")
+      .select("id,vehicles!inner(id)", { count: "exact", head: true })
+      .eq("vehicles.status", "removed")
+      .lt("vehicles.last_checked_at", archivedImageCutoff);
+    if (imageError) throw new Error(`vehicle_images: ${imageError.message}`);
+    console.log(JSON.stringify({ status: "dry-run", cutoff, retentionDays, archivedImageCutoff, archivedImageRetentionDays, raw, reports, screening, runs, archivedImages: archivedImages ?? 0 }));
     return;
   }
 
-  const { data, error } = await client.rpc("cleanup_catalog_technical_data", { p_cutoff: cutoff });
+  const { data, error } = await client.rpc("cleanup_catalog_technical_data", {
+    p_cutoff: cutoff,
+    p_archived_image_cutoff: archivedImageCutoff,
+  });
   if (error) throw new Error(error.message);
-  console.log(JSON.stringify({ status: "completed", cutoff, retentionDays, result: data?.[0] ?? null }));
+  console.log(JSON.stringify({ status: "completed", cutoff, retentionDays, archivedImageCutoff, archivedImageRetentionDays, result: data?.[0] ?? null }));
 }
 
 main().catch((error) => {

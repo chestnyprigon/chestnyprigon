@@ -1,5 +1,14 @@
-create or replace function public.cleanup_catalog_technical_data(p_cutoff timestamptz)
-returns table (deleted_orphan_raw integer, deleted_reports integer, deleted_screening integer, deleted_import_runs integer)
+create or replace function public.cleanup_catalog_technical_data(
+  p_cutoff timestamptz,
+  p_archived_image_cutoff timestamptz default null
+)
+returns table (
+  deleted_orphan_raw integer,
+  deleted_reports integer,
+  deleted_screening integer,
+  deleted_import_runs integer,
+  deleted_archived_images integer
+)
 language plpgsql
 security definer
 set search_path = public
@@ -9,9 +18,13 @@ declare
   reports integer := 0;
   screening integer := 0;
   runs integer := 0;
+  archived_images integer := 0;
 begin
   if p_cutoff is null or p_cutoff > now() then
     raise exception 'cleanup cutoff must be in the past';
+  end if;
+  if p_archived_image_cutoff is not null and p_archived_image_cutoff > now() then
+    raise exception 'archived image cutoff must be in the past';
   end if;
 
   -- Raw rows without a vehicle are rejected/import-only data. They are safe
@@ -51,8 +64,21 @@ begin
     and run.status in ('completed', 'failed', 'cancelled');
   get diagnostics runs = row_count;
 
-  return query select orphan_raw, reports, screening, runs;
+  -- Keep the vehicle row and Encar identifier for deduplication and history,
+  -- but remove heavy photos from old archived vehicles. The extra cutoff is
+  -- intentionally longer than technical retention to preserve recent history.
+  if p_archived_image_cutoff is not null then
+    delete from public.vehicle_images image_row
+    using public.vehicles vehicle
+    where vehicle.id = image_row.vehicle_id
+      and vehicle.status = 'removed'
+      and coalesce(vehicle.last_checked_at, vehicle.created_at) < p_archived_image_cutoff;
+    get diagnostics archived_images = row_count;
+  end if;
+
+  return query select orphan_raw, reports, screening, runs, archived_images;
 end;
 $$;
 
 revoke all on function public.cleanup_catalog_technical_data(timestamptz) from public;
+revoke all on function public.cleanup_catalog_technical_data(timestamptz, timestamptz) from public;
