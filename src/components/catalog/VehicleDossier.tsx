@@ -79,6 +79,14 @@ function time(value: string | null) {
   return Number.isNaN(parsed.valueOf()) ? null : new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(parsed);
 }
 
+function rateNote(rate: KrwUsdRate) {
+  const updatedAt = time(rate.fetchedAt);
+  if (!updatedAt) {
+    return "Итоговая стоимость является предварительной и может измениться в зависимости от курса валют, параметров автомобиля и условий оформления.";
+  }
+  return `Расчёт обновлён ${updatedAt}. Итоговая стоимость является предварительной и может измениться в зависимости от курса валют, параметров автомобиля и условий оформления.`;
+}
+
 function ClientPriceTable({
   calculation,
   krwUsdRate,
@@ -115,11 +123,7 @@ function ClientPriceTable({
       <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
       <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
       <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>
-      <small className="dossier-rate-note">
-        {krwUsdRate.rawKrwPerUsdt !== null
-          ? <>USDT/KRW Bithumb: ₩{number.format(krwUsdRate.rawKrwPerUsdt)} {krwUsdRate.adjustmentKrw ? `(${krwUsdRate.adjustmentKrw} ₩)` : ""}; обновлён {time(krwUsdRate.fetchedAt) ?? "недавно"}{krwUsdRate.stale ? ". Используется последний сохранённый курс." : "."}</>
-          : "Используется резервный коммерческий курс KRW/USD."} НБРБ используется для перевода USD и EUR в BYN. Таможенные платежи зависят от параметров автомобиля; льготный режим применяется только после подтверждения права на него.
-      </small>
+      <small className="dossier-rate-note">{rateNote(krwUsdRate)}</small>
     </div>
   </details>;
 }
