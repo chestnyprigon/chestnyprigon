@@ -1,11 +1,13 @@
 import "server-only";
 
 import { CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES, type ExchangeRates, type PricingProfile } from "@/lib/pricing/chestny-prigon-profile";
+import { fetchNaverUsdtKrw, manualKrwUsdRate, storedKrwUsdRate, type KrwUsdRate } from "@/lib/pricing/krw-usdt-rate";
 import { fetchNbrbRates, NBRB_DAILY_URL } from "@/lib/pricing/nbrb-rates";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 
-export type PricingContext = { profile: PricingProfile; exchangeRates: ExchangeRates };
+export type PricingContext = { profile: PricingProfile; exchangeRates: ExchangeRates; krwUsdRate: KrwUsdRate };
 const CACHE_ID = "nbrb-daily";
+const KRW_USDT_RATE_ID = "naver-bithumb-usdt";
 
 function isoDate(date = new Date()) { return date.toISOString().slice(0, 10); }
 function decimal(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
@@ -13,9 +15,10 @@ function decimal(value: unknown) { const parsed = Number(value); return Number.i
 export async function loadPricingContext(): Promise<PricingContext> {
   try {
     const client = createSupabaseAdminClient();
-    const [profileResult, cacheResult] = await Promise.all([
+    const [profileResult, cacheResult, krwRateResult] = await Promise.all([
       client.from("pricing_profiles").select("version,krw_per_usd,delivery_usd,commission_rate,svh_declarant_eur,customs_clearance_eur,company_service_usd").eq("id", "belarus-default").maybeSingle(),
       client.from("pricing_exchange_rates").select("rate_date,usd_byn,eur_byn").eq("id", CACHE_ID).maybeSingle(),
+      client.from("pricing_krw_usdt_rates").select("raw_krw_per_usdt,adjustment_krw,effective_krw_per_usd,source_as_of,fetched_at").eq("id", KRW_USDT_RATE_ID).maybeSingle(),
     ]);
     const profileRow = profileResult.data;
     const cacheRow = cacheResult.data;
@@ -25,20 +28,47 @@ export async function loadPricingContext(): Promise<PricingContext> {
       svhDeclarantEur: Number(profileRow.svh_declarant_eur), customsClearanceEur: Number(profileRow.customs_clearance_eur),
       companyServiceUsd: Number(profileRow.company_service_usd),
     } : CHESTNY_PRIGON_PRICING_PROFILE;
+    const krwUsdRate = krwRateResult.error
+      ? manualKrwUsdRate(profile.krwPerUsd)
+      : storedKrwUsdRate(krwRateResult.data ?? {}) ?? manualKrwUsdRate(profile.krwPerUsd);
+    const effectiveProfile = { ...profile, krwPerUsd: krwUsdRate.effectiveKrwPerUsd };
     const cached: ExchangeRates | null = cacheRow && decimal(cacheRow.usd_byn) && decimal(cacheRow.eur_byn)
       ? { usdByn: Number(cacheRow.usd_byn), eurByn: Number(cacheRow.eur_byn), rateDate: cacheRow.rate_date, source: "nbrb" }
       : null;
-    if (cached?.rateDate === isoDate()) return { profile, exchangeRates: cached };
+    if (cached?.rateDate === isoDate()) return { profile: effectiveProfile, exchangeRates: cached, krwUsdRate };
     try {
       const fresh = await fetchNbrbRates();
       if (!profileResult.error && !cacheResult.error) {
         await client.from("pricing_exchange_rates").upsert({ id: CACHE_ID, rate_date: fresh.rateDate, usd_byn: fresh.usdByn, eur_byn: fresh.eurByn, source_url: NBRB_DAILY_URL, fetched_at: new Date().toISOString() });
       }
-      return { profile, exchangeRates: fresh };
+      return { profile: effectiveProfile, exchangeRates: fresh, krwUsdRate };
     } catch {
-      return { profile, exchangeRates: cached ?? FALLBACK_EXCHANGE_RATES };
+      return { profile: effectiveProfile, exchangeRates: cached ?? FALLBACK_EXCHANGE_RATES, krwUsdRate };
     }
   } catch {
-    return { profile: CHESTNY_PRIGON_PRICING_PROFILE, exchangeRates: FALLBACK_EXCHANGE_RATES };
+    return {
+      profile: CHESTNY_PRIGON_PRICING_PROFILE,
+      exchangeRates: FALLBACK_EXCHANGE_RATES,
+      krwUsdRate: manualKrwUsdRate(CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd),
+    };
+  }
+}
+
+/**
+ * Used only by the explicit "update price" button. It never writes to the
+ * catalogue: a visitor sees a fresh calculation, while filters keep using the
+ * hourly stored snapshot until the catalogue-wide recalculation runs.
+ */
+export async function loadLivePricingContext(): Promise<PricingContext> {
+  const stored = await loadPricingContext();
+  try {
+    const krwUsdRate = await fetchNaverUsdtKrw();
+    return {
+      ...stored,
+      profile: { ...stored.profile, krwPerUsd: krwUsdRate.effectiveKrwPerUsd },
+      krwUsdRate,
+    };
+  } catch {
+    return stored;
   }
 }

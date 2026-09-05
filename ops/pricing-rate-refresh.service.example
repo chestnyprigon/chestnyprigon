@@ -1,0 +1,18 @@
+[Unit]
+Description=Chestny Prigon KRW/USD rate refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chestny-prigon
+EnvironmentFile=/etc/chestny-prigon/pricing-rate-refresh.env
+ExecStart=/usr/bin/npm run pricing:refresh-krw-usdt
+# Keep stored catalogue prices in sync with the new snapshot, so catalogue
+# filters and sorting never lag behind the values shown on vehicle pages.
+ExecStartPost=/usr/bin/npm run pricing:recalculate
+TimeoutStartSec=1800
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Chestny Prigon KRW/USD rate hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=chestny-prigon-pricing-rate-refresh.service
+
+[Install]
+WantedBy=timers.target

@@ -15,6 +15,7 @@
     "encar:monitor": "tsx scripts/encar/monitor.ts",
     "catalog:publish-ready": "tsx scripts/catalog/publish-ready.ts",
     "catalog:cleanup": "tsx scripts/catalog/cleanup-technical-data.ts",
+    "pricing:refresh-krw-usdt": "tsx scripts/pricing/refresh-krw-usdt-rate.ts",
     "encar:enrich": "tsx scripts/encar/enrich.ts",
     "encar:upgrade-images": "tsx scripts/encar/upgrade-image-urls.ts",
     "encar:backfill-specs": "tsx scripts/encar/backfill-vehicle-specs.ts",

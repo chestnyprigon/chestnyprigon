@@ -82,6 +82,12 @@ export type Database = {
         Update: Partial<{ rate_date: string; usd_byn: number; eur_byn: number; source_url: string; fetched_at: string; updated_at: string }>;
         Relationships: [];
       };
+      pricing_krw_usdt_rates: {
+        Row: { id: string; raw_krw_per_usdt: number; adjustment_krw: number; effective_krw_per_usd: number; source_url: string; source_as_of: string | null; fetched_at: string; updated_at: string };
+        Insert: { id: string; raw_krw_per_usdt: number; adjustment_krw: number; effective_krw_per_usd: number; source_url: string; source_as_of?: string | null; fetched_at: string; updated_at?: string };
+        Update: Partial<{ raw_krw_per_usdt: number; adjustment_krw: number; effective_krw_per_usd: number; source_url: string; source_as_of: string | null; fetched_at: string; updated_at: string }>;
+        Relationships: [];
+      };
     };
     Views: {
       catalog_vehicles: {

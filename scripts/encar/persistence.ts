@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { canonicalSourceId, sourceIdentifiers } from "./identity";
 import type { PilotItem } from "./types";
-import { calculateBelarusPrice, CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
+import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
+import { loadPersistedPricingProfile } from "../pricing/load-profile";
 
 function requireEnvironment(name: string) {
   const value = process.env[name]?.trim();
@@ -35,6 +36,7 @@ export async function persistPilot(
   runCursor: Record<string, unknown> = { pilot: true, publish },
 ) {
   const supabase = adminClient();
+  const profile = await loadPersistedPricingProfile(supabase);
   const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
   const uniqueItems = [
     ...new Map(items.map((item) => [canonicalSourceId(item.bundle), item])).values(),
@@ -112,6 +114,7 @@ export async function persistPilot(
                 firstRegistrationDate: vehicle.firstRegistrationDate,
                 fuelType: vehicle.fuelType,
                 preferential: true,
+                profile,
                 exchangeRates,
               });
               return {
@@ -125,7 +128,7 @@ export async function persistPilot(
                 mileage_km: vehicle.mileageKm,
                 price_krw: vehicle.priceKrw,
                 price_usd: calculation.totalUsd,
-                krw_per_usd: CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd,
+                krw_per_usd: profile.krwPerUsd,
                 engine_cc: vehicle.engineCc,
                 fuel_type: vehicle.fuelType,
                 transmission: vehicle.transmission,
