@@ -15,6 +15,12 @@ const baseHeaders: Record<string, string> = {
   Origin: "https://car.encar.com",
 };
 
+const browserVerificationHeaders: Record<string, string> = {
+  ...baseHeaders,
+  Referer: "https://fem.encar.com/",
+  Origin: "https://fem.encar.com",
+};
+
 type RequestIpResponse = {
   ipAddress?: unknown;
   ip?: unknown;
@@ -59,7 +65,7 @@ async function verifyRequestIp() {
 
   const verifyResponse = await fetch(VERIFY_ENDPOINT, {
     method: "POST",
-    headers: encarHeaders({ "Content-Type": "application/json" }),
+    headers: { ...browserVerificationHeaders, "Content-Type": "application/json" },
     body: JSON.stringify({
       userIdentifier: {
         ipAddress,
