@@ -1,7 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createDomesticQuery, delay, fetchBundle, fetchSearchPage } from "./client";
-import { encarYearFrom, ENCAR_MAX_MILEAGE_KM } from "./config";
+import { encarYearFrom, ENCAR_MAX_LISTING_AGE_DAYS, ENCAR_MAX_MILEAGE_KM } from "./config";
 import { normalizeListing } from "./normalize";
 import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
@@ -20,6 +20,9 @@ const manufacturerAliases: Record<string, string> = {
   Porsche: "포르쉐",
   Volvo: "볼보",
   "Land Rover": "랜드로버",
+  Lexus: "렉서스",
+  Jaguar: "재규어",
+  MINI: "미니",
 };
 
 function integerArgument(name: string, fallback: number, minimum: number, maximum: number) {
@@ -68,6 +71,8 @@ async function main() {
   let fetched = 0;
   let accepted = 0;
   let rejected = 0;
+  let stale = 0;
+  const freshnessCutoff = Date.now() - ENCAR_MAX_LISTING_AGE_DAYS * 24 * 60 * 60 * 1_000;
 
   console.log({ target, batches: batches.map(({ wave, offset, limit }) => ({ id: wave.id, manufacturer: wave.manufacturer, offset, limit })), write, detailConcurrency });
 
@@ -90,6 +95,13 @@ async function main() {
         if (!listing) return;
         try {
           const bundle = await fetchBundle(listing);
+          const modifyDateTime = bundle.detail.manage?.modifyDateTime;
+          const modifiedAt = modifyDateTime ? Date.parse(String(modifyDateTime)) : Number.NaN;
+          if (!Number.isFinite(modifiedAt) || modifiedAt < freshnessCutoff) {
+            stale += 1;
+            await delay(detailDelayMs);
+            continue;
+          }
           const screening = screenListing(bundle);
           items.push({ bundle, screening, normalized: screening.decision === "approved" ? normalizeListing(bundle) : null });
         } catch (error) {
@@ -114,9 +126,9 @@ async function main() {
         publish: false,
       });
     }
-    console.log({ wave: wave.id, requested: limit, unique: listings.length, processed: items.length, approved, rejected: items.length - approved, totalFetched: fetched, totalAccepted: accepted });
+    console.log({ wave: wave.id, requested: limit, unique: listings.length, processed: items.length, approved, rejected: items.length - approved, stale, totalFetched: fetched, totalAccepted: accepted });
   }
-  console.log({ target, fetched, accepted, rejected, status: "completed", write });
+  console.log({ target, fetched, accepted, rejected, stale, freshnessDays: ENCAR_MAX_LISTING_AGE_DAYS, status: "completed", write });
 }
 
 main().catch((error) => {

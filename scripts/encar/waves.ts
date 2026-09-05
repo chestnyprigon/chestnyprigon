@@ -27,13 +27,16 @@ export const MAX_ENRICH_CONCURRENCY = 4;
  * previous wave has been checked for errors, duplicates and publish rate.
  */
 export const CATALOG_WAVES: readonly BrandWave[] = [
-  { id: "eu-01-bmw", group: "european", manufacturer: "BMW", quota: 2_000 },
-  { id: "eu-02-mercedes", group: "european", manufacturer: "Mercedes-Benz", quota: 2_000 },
-  { id: "eu-03-audi", group: "european", manufacturer: "Audi", quota: 1_500 },
+  { id: "eu-01-bmw", group: "european", manufacturer: "BMW", quota: 3_000, yearFrom: 2016 },
+  { id: "eu-02-mercedes", group: "european", manufacturer: "Mercedes-Benz", quota: 3_000, yearFrom: 2016 },
+  { id: "eu-03-audi", group: "european", manufacturer: "Audi", quota: 3_000, yearFrom: 2016 },
   { id: "eu-04-volkswagen", group: "european", manufacturer: "Volkswagen", quota: 1_500 },
   { id: "eu-05-porsche", group: "european", manufacturer: "Porsche", quota: 1_000 },
   { id: "eu-06-volvo", group: "european", manufacturer: "Volvo", quota: 1_000 },
   { id: "eu-07-land-rover", group: "european", manufacturer: "Land Rover", quota: 1_000 },
+  { id: "eu-08-lexus", group: "european", manufacturer: "Lexus", quota: 1_000, yearFrom: 2018 },
+  { id: "eu-09-jaguar", group: "european", manufacturer: "Jaguar", quota: 1_000, yearFrom: 2018 },
+  { id: "eu-10-mini", group: "european", manufacturer: "MINI", quota: 1_000, yearFrom: 2018 },
   { id: "kr-01-hyundai", group: "korean", manufacturer: "Hyundai", quota: 3_000 },
   { id: "kr-02-kia", group: "korean", manufacturer: "Kia", quota: 3_000 },
   { id: "kr-03-genesis", group: "korean", manufacturer: "Genesis", quota: 1_500 },
