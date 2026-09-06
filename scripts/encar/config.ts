@@ -6,6 +6,7 @@ import {
 
 export const ENCAR_MIN_VEHICLE_AGE_YEARS = CATALOG_VEHICLE_AGE_YEARS;
 export const ENCAR_MAX_MILEAGE_KM = CATALOG_MAX_MILEAGE_KM;
+export const ENCAR_MAX_LISTING_AGE_DAYS = 90;
 
 export function encarYearFrom(yearTo: number) {
   return yearTo - ENCAR_MIN_VEHICLE_AGE_YEARS;
