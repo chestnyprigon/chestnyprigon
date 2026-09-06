@@ -127,7 +127,12 @@ export type Database = {
         Relationships: [];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      get_catalog_filter_options: {
+        Args: { p_brand?: string | null; p_model?: string | null };
+        Returns: Json;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

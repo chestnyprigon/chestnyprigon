@@ -1,5 +1,6 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { CHESTNY_PRIGON_PRICING_PROFILE, FALLBACK_EXCHANGE_RATES, type ExchangeRates, type PricingProfile } from "@/lib/pricing/chestny-prigon-profile";
 import { fetchNaverUsdtKrw, manualKrwUsdRate, storedKrwUsdRate, type KrwUsdRate } from "@/lib/pricing/krw-usdt-rate";
 import { fetchNbrbRates, NBRB_DAILY_URL } from "@/lib/pricing/nbrb-rates";
@@ -12,7 +13,7 @@ const KRW_USDT_RATE_ID = "naver-bithumb-usdt";
 function isoDate(date = new Date()) { return date.toISOString().slice(0, 10); }
 function decimal(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
 
-export async function loadPricingContext(): Promise<PricingContext> {
+async function loadPricingContextUncached(): Promise<PricingContext> {
   try {
     const client = createSupabaseAdminClient();
     const [profileResult, cacheResult, krwRateResult] = await Promise.all([
@@ -53,6 +54,15 @@ export async function loadPricingContext(): Promise<PricingContext> {
     };
   }
 }
+
+// Prices are refreshed by the hourly service. Keeping the read model warm for
+// one minute removes three database reads from every catalogue request while
+// still making a new hourly rate visible almost immediately.
+export const loadPricingContext = unstable_cache(
+  loadPricingContextUncached,
+  ["catalog-pricing-context-v1"],
+  { revalidate: 60 },
+);
 
 /**
  * Used only by the explicit "update price" button. It never writes to the

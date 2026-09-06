@@ -7,6 +7,7 @@ import { encarPhotoUrl } from "@/lib/encar/images";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
+import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -456,33 +457,12 @@ async function loadAccidentVehicleIds(
   return ids;
 }
 
-async function loadPublicBrands(client: ReturnType<typeof createSupabasePublicServerClient>) {
-  const brands = new Set<string>();
-  const pageSize = 1_000;
-  for (let from = 0; from < 50_000; from += pageSize) {
-    const { data, error } = await client
-      .from("vehicles")
-      .select("manufacturer")
-      .eq("is_public", true)
-      .eq("status", "active")
-      .neq("fuel_type", "전기")
-      .neq("fuel_type", "수소")
-      .not("price_usd", "is", null)
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`Catalog brand query failed: ${error.message}`);
-    for (const row of data ?? []) {
-      if (row.manufacturer?.trim()) brands.add(row.manufacturer.trim());
-    }
-    if (!data || data.length < pageSize) break;
-  }
-  return [...brands].sort((left, right) => left.localeCompare(right, "ru"));
-}
-
 export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
   const client = createSupabasePublicServerClient();
-  const pricingContext = await loadPricingContext();
-  const publicBrandsPromise = loadPublicBrands(client);
+  // Begin independent reads together. In particular, pricing must never block
+  // the catalogue query while it waits for the daily currency cache.
+  const pricingContextPromise = loadPricingContext();
+  const publicBrandsPromise = loadCatalogFilterOptions();
   const input = normalizedSearch(search);
   const from = (input.page - 1) * input.perPage;
   let query = client
@@ -559,7 +539,7 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   const imagesByVehicle = new Map<string, string[]>();
   for (const image of imagesResult.data ?? []) imagesByVehicle.set(image.vehicle_id, [...(imagesByVehicle.get(image.vehicle_id) ?? []), image.source_url]);
   const reportsByVehicle = new Map((reportsResult.data ?? []).map((report) => [report.vehicle_id, report]));
-  const publicBrands = await publicBrandsPromise;
+  const [pricingContext, publicBrandOptions] = await Promise.all([pricingContextPromise, publicBrandsPromise]);
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   return {
     cars: pageCars,
@@ -567,11 +547,61 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
     page: input.page,
     perPage: input.perPage,
     hasMore: from + input.perPage < (count ?? 0),
-    brands: publicBrands,
+    brands: publicBrandOptions.brands,
     models: [...new Set(pageCars.map((car) => car.model))],
     generations: [...new Set((vehicles ?? []).flatMap((car) => car.generation ? [car.generation] : []))],
     trims: [...new Set((vehicles ?? []).flatMap((car) => car.trim ? [car.trim] : []))],
   };
+}
+
+/**
+ * The filter counter runs while a visitor changes parameters. It must not load
+ * photos, reports, pricing or the first page of cars merely to learn a number.
+ */
+export async function loadCatalogCount(search: CatalogSearch = {}) {
+  const input = normalizedSearch(search);
+  if (input.accidents) {
+    // The accident summary still needs report-aware filtering. This is an
+    // uncommon explicit filter; keep its existing, exact behaviour.
+    return (await loadCatalogPage({ ...search, homepageMix: false })).total;
+  }
+
+  const client = createSupabasePublicServerClient();
+  let query = client
+    .from("vehicles")
+    .select("id", { count: "exact", head: true })
+    .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
+    .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
+    .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
+    .gte("mileage_km", Math.min(input.minMileage, input.maxMileage)).lte("mileage_km", Math.max(input.minMileage, input.maxMileage))
+    .gte("engine_cc", Math.min(input.minEngine, input.maxEngine)).lte("engine_cc", Math.max(input.minEngine, input.maxEngine));
+  if (input.brand) query = query.eq("manufacturer", input.brand);
+  if (input.model) query = query.eq("model", input.model);
+  if (input.generation) query = query.eq("generation", input.generation);
+  if (input.trim) query = query.eq("trim", input.trim);
+  if (input.fuel === "Бензин") query = query.ilike("fuel_type", "%가솔린%").not("fuel_type", "ilike", "%전기%");
+  if (input.fuel === "Дизель") query = query.ilike("fuel_type", "%디젤%").not("fuel_type", "ilike", "%전기%");
+  if (input.fuel === "Гибрид") query = query.or("fuel_type.ilike.%하이브리드%,fuel_type.ilike.%전기%,fuel_type.ilike.%hev%,fuel_type.ilike.%phev%").neq("fuel_type", "전기");
+  if (input.fuel === "Газ") query = query.or("fuel_type.ilike.%LPG%,fuel_type.ilike.%가스%");
+  if (input.transmission === "Автомат") query = query.or("transmission.ilike.%자동%,transmission.ilike.%오토%");
+  if (input.transmission === "Механика") query = query.ilike("transmission", "%수동%");
+  if (input.transmission === "Вариатор") query = query.ilike("transmission", "%무단%");
+  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%");
+  if (input.drive === "Передний") query = query.or("drive_type.ilike.%전륜%,drive_type.ilike.%FWD%,trim.ilike.%FWD%");
+  if (input.drive === "Задний") query = query.or("drive_type.ilike.%후륜%,drive_type.ilike.%RWD%,trim.ilike.%RWD%");
+  if (input.drive === "2WD") query = query.or("drive_type.ilike.%2WD%,drive_type.ilike.%2륜%");
+  if (input.bodyType) {
+    const rawTypes = ENCAR_BODY_TYPES[input.bodyType];
+    if (rawTypes?.length) query = query.in("body_type", rawTypes);
+    else query = query.ilike("body_type", `%${input.bodyType}%`);
+  }
+  if (input.query) {
+    const term = input.query.replace(/[,%()]/g, " ").trim();
+    if (term) query = query.or(`manufacturer.ilike.%${term}%,model.ilike.%${term}%,generation.ilike.%${term}%,trim.ilike.%${term}%`);
+  }
+  const { count, error } = await query;
+  if (error) throw new Error(`Catalog count request failed: ${error.message}`);
+  return count ?? 0;
 }
 
 export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
@@ -599,24 +629,39 @@ export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
   return mapCatalogRows(rows, pricingContext);
 }
 
-export async function loadCatalogCar(id: string): Promise<CatalogCar | null> {
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export async function loadCatalogCar(
+  id: string,
+  pricingContextInput?: PricingContext | Promise<PricingContext>,
+): Promise<CatalogCar | null> {
   const client = createSupabasePublicServerClient();
-  const pricingContext = await loadPricingContext();
-  const byId = await client
-    .from("catalog_vehicles")
-    .select("*")
-    .eq("id", id)
+  const pricingContextPromise = pricingContextInput
+    ? Promise.resolve(pricingContextInput)
+    : loadPricingContext();
+  let vehicleQuery = client
+    .from("vehicles")
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public")
+    .eq("is_public", true)
+    .eq("status", "active");
+  vehicleQuery = uuidPattern.test(id)
+    ? vehicleQuery.eq("id", id)
+    : vehicleQuery.eq("source_listing_id", id);
+  const { data, error } = await vehicleQuery
     .limit(1);
+  if (error) throw new Error(`Vehicle request failed: ${error.message}`);
+  const vehicle = data?.[0] as VehicleRow | undefined;
+  if (!vehicle) return null;
 
-  if (byId.error) throw new Error(`Vehicle request failed: ${byId.error.message}`);
-  if (byId.data?.length) return mapCatalogRows(byId.data, pricingContext)[0] ?? null;
-
-  const byListingId = await client
-    .from("catalog_vehicles")
-    .select("*")
-    .eq("source_listing_id", id)
-    .limit(1);
-
-  if (byListingId.error) throw new Error(`Vehicle request failed: ${byListingId.error.message}`);
-  return mapCatalogRows(byListingId.data ?? [], pricingContext)[0] ?? null;
+  const [pricingContext, imagesResult, reportsResult] = await Promise.all([
+    pricingContextPromise,
+    client.from("vehicle_images").select("vehicle_id,source_url,position").eq("vehicle_id", vehicle.id).order("position", { ascending: true }),
+    client.from("vehicle_reports").select("vehicle_id,inspection_summary,accident_summary,report_status,fetched_at").eq("vehicle_id", vehicle.id).maybeSingle(),
+  ]);
+  if (imagesResult.error || reportsResult.error) {
+    throw new Error(`Vehicle related data failed: ${imagesResult.error?.message ?? reportsResult.error?.message}`);
+  }
+  const imagesByVehicle = new Map([[vehicle.id, (imagesResult.data ?? []).map((image) => image.source_url)]]);
+  const reportsByVehicle = new Map(reportsResult.data ? [[vehicle.id, reportsResult.data]] : []);
+  return mapVehicleRows([vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
 }

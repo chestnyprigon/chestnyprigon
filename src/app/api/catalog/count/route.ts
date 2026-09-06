@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadCatalogPage, type CatalogSearch } from "@/lib/catalog/load-catalog";
+import { loadCatalogCount, type CatalogSearch } from "@/lib/catalog/load-catalog";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +13,6 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const get = (name: string) => searchParams.get(name) ?? undefined;
   const search: CatalogSearch = {
-    // The loader always fetches a small page to preserve exactly the same
-    // public/status and report rules as the catalogue itself.
     page: 1,
     perPage: 12,
     query: get("q"),
@@ -35,9 +33,9 @@ export async function GET(request: Request) {
     bodyType: get("bodyType"),
     accidents: get("accidents") === "clear" ? "clear" : get("accidents") === "with" ? "with" : undefined,
   };
-  const catalog = await loadCatalogPage(search);
+  const total = await loadCatalogCount(search);
   return NextResponse.json(
-    { total: catalog.total },
-    { headers: { "Cache-Control": "no-store, max-age=0" } },
+    { total },
+    { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } },
   );
 }
