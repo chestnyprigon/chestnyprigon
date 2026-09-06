@@ -4,7 +4,7 @@ import { ArrowRight, Search, SlidersHorizontal, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CatalogCar } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
 import {
@@ -48,6 +48,8 @@ function price(car: CatalogCar) {
 
 export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [open, setOpen] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [query, setQuery] = useState(initialSearch.query ?? "");
@@ -76,6 +78,11 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
     () => [...new Set([...modelOptions, ...catalog.cars.filter((car) => !brand || car.brand === brand).map((car) => car.model)])].sort((left, right) => left.localeCompare(right, "ru")),
     [brand, catalog.cars, modelOptions],
   );
+  const detailHref = (id: string) => {
+    const queryString = searchParams.toString();
+    const returnTo = `${pathname}${queryString ? `?${queryString}` : ""}#catalog`;
+    return `/catalog/${id}?returnTo=${encodeURIComponent(returnTo)}`;
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -133,7 +140,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
     </div>
     <div className="home-results-toolbar"><div><b>{catalog.total} автомобилей</b><span>Показано {catalog.cars.length} актуальных объявлений</span></div><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && navigate()} placeholder="Марка или модель" /></label></div>
-    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); return <article className="home-result-card" key={car.id}><Link href={`/catalog/${car.id}`} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p className={`card-history-meta ${tag.tone}`}>{historyText(car)}</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link href={`/catalog/${car.id}`}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
+    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); const href = detailHref(car.id); return <article className="home-result-card" key={car.id}><Link href={href} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p className={`card-history-meta ${tag.tone}`}>{historyText(car)}</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link href={href}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
     <div className="premium-catalog-footer"><button className="premium-button primary" type="button" onClick={() => navigate(true)}>Смотреть весь каталог <ArrowRight size={17} /></button></div>
   </section>;
 }

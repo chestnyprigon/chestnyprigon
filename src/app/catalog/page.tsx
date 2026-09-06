@@ -28,5 +28,5 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
     sort: get("sort") === "price-asc" ? "price-asc" : get("sort") === "price-desc" ? "price-desc" : "newest",
   };
   const catalog = await loadCatalogPage(search);
-  return <PremiumCatalog catalog={catalog} initialSearch={search} />;
+  return <PremiumCatalog key={JSON.stringify(search)} catalog={catalog} initialSearch={search} />;
 }

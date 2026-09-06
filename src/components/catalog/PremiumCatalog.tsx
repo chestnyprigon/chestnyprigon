@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CatalogCar, CarFuel } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
@@ -70,6 +70,8 @@ function catalogPrice(car: CatalogCar) {
 export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
   const { cars } = catalog;
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState(initialSearch.query ?? "");
   const [brand, setBrand] = useState(initialSearch.brand ?? "Все");
   const [model, setModel] = useState(initialSearch.model ?? "Все");
@@ -106,6 +108,11 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     accidents: accidentFilter === "Без ДТП" ? "clear" : accidentFilter === "Есть страховые случаи" ? "with" : "",
   }, catalog.total);
   const models = useMemo(() => ["Все", ...new Set([...modelOptions, ...cars.filter((car) => brand === "Все" || car.brand === brand).map((car) => car.model)])], [brand, cars, modelOptions]);
+  const detailHref = (id: string) => {
+    const queryString = searchParams.toString();
+    const returnTo = `${pathname}${queryString ? `?${queryString}` : ""}`;
+    return `/catalog/${id}?returnTo=${encodeURIComponent(returnTo)}`;
+  };
 
   useEffect(() => {
     document.body.style.overflow = menuOpen ? "hidden" : "";
@@ -204,8 +211,8 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
 
         <div className="catalog-results">
           <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
-          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); return <article className="result-car" key={car.id}>
-            <Link className="result-car-media" href={`/catalog/${car.id}`}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
+          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); return <article className="result-car" key={car.id}>
+            <Link className="result-car-media" href={href}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
             <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
           </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
           {visible.length > 0 && (catalog.page > 1 || catalog.hasMore) ? <div className="catalog-pagination">{catalog.page > 1 ? <button type="button" onClick={() => applySearch(catalog.page - 1)}><ArrowLeft size={16} />Предыдущие</button> : null}<span>Страница {catalog.page}</span>{catalog.hasMore ? <button type="button" onClick={() => applySearch(catalog.page + 1)}>Следующие {catalog.perPage} авто <ArrowRight size={16} /></button> : null}</div> : null}

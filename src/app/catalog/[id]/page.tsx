@@ -5,10 +5,17 @@ import { loadPricingContext } from "@/lib/pricing/pricing-context";
 
 export const dynamic = "force-dynamic";
 
-export default async function VehiclePage({ params }: { params: Promise<{ id: string }> }) {
+function safeReturnTo(value: string | undefined) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/catalog";
+  return value;
+}
+
+export default async function VehiclePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
+  const query = await searchParams;
   const car = await loadCatalogCar(id);
   if (!car) notFound();
   const pricingContext = await loadPricingContext();
-  return <VehicleDossier car={car} pricingContext={pricingContext} />;
+  const returnTo = typeof query.returnTo === "string" ? query.returnTo : undefined;
+  return <VehicleDossier car={car} pricingContext={pricingContext} catalogHref={safeReturnTo(returnTo)} />;
 }

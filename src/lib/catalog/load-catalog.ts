@@ -456,9 +456,33 @@ async function loadAccidentVehicleIds(
   return ids;
 }
 
+async function loadPublicBrands(client: ReturnType<typeof createSupabasePublicServerClient>) {
+  const brands = new Set<string>();
+  const pageSize = 1_000;
+  for (let from = 0; from < 50_000; from += pageSize) {
+    const { data, error } = await client
+      .from("vehicles")
+      .select("manufacturer")
+      .eq("is_public", true)
+      .eq("status", "active")
+      .neq("fuel_type", "전기")
+      .neq("fuel_type", "수소")
+      .not("price_usd", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Catalog brand query failed: ${error.message}`);
+    for (const row of data ?? []) {
+      if (row.manufacturer?.trim()) brands.add(row.manufacturer.trim());
+    }
+    if (!data || data.length < pageSize) break;
+  }
+  return [...brands].sort((left, right) => left.localeCompare(right, "ru"));
+}
+
 export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
   const client = createSupabasePublicServerClient();
   const pricingContext = await loadPricingContext();
+  const publicBrandsPromise = loadPublicBrands(client);
   const input = normalizedSearch(search);
   const from = (input.page - 1) * input.perPage;
   let query = client
@@ -535,7 +559,7 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   const imagesByVehicle = new Map<string, string[]>();
   for (const image of imagesResult.data ?? []) imagesByVehicle.set(image.vehicle_id, [...(imagesByVehicle.get(image.vehicle_id) ?? []), image.source_url]);
   const reportsByVehicle = new Map((reportsResult.data ?? []).map((report) => [report.vehicle_id, report]));
-  const publicBrands = ["Chevrolet", "Genesis", "Hyundai", "KGM", "Kia", "Renault Korea"];
+  const publicBrands = await publicBrandsPromise;
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   return {
     cars: pageCars,

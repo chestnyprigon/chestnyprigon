@@ -104,7 +104,7 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
       <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="korea-flag"><Image src="/assets/flags/flag-korea.png" alt="Флаг Южной Кореи" width={280} height={200} /></span><b>Корея → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
-    <HomeCatalog catalog={catalog} initialSearch={initialSearch} />
+    <HomeCatalog key={JSON.stringify(initialSearch)} catalog={catalog} initialSearch={initialSearch} />
 
     <section className="premium-process premium-section" id="services"><div className="premium-section-copy"><p className="premium-kicker"><span />Как мы работаем</p><h2>Маршрут сделки<br />от заявки до ключей</h2><p>Вы сразу видите последовательность работы, документы и действия на каждом этапе.</p></div><div className="process-list">{processSteps.map((step, index) => { const Icon = step.icon; const open = processOpen === index; return <article className={open ? "process-item is-open" : "process-item"} key={step.title}><button type="button" onClick={() => setProcessOpen(open ? -1 : index)}><span className="process-number">{String(index + 1).padStart(2, "0")}</span><Icon size={18} /><b>{step.title}</b><em>{step.short}</em><span className="process-toggle">{open ? "×" : "+"}</span></button>{open && <div className="process-details"><p>{step.text}</p><ul>{step.points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul></div>}</article>; })}</div></section>
 
