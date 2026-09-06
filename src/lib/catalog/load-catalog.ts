@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import type { AccidentSummary, CatalogCar, CarFuel, InspectionSummary, VehicleOption } from "@/data/cars";
 import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
 import { calculateBelarusPrice } from "@/lib/pricing/chestny-prigon-profile";
@@ -11,6 +12,7 @@ import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
+type VehicleReportRow = Database["public"]["Tables"]["vehicle_reports"]["Row"];
 
 export type CatalogSearch = {
   homepageMix?: boolean;
@@ -631,14 +633,14 @@ export async function loadCatalogCars(limit = 100): Promise<CatalogCar[]> {
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export async function loadCatalogCar(
-  id: string,
-  pricingContextInput?: PricingContext | Promise<PricingContext>,
-): Promise<CatalogCar | null> {
+type CatalogCarData = {
+  vehicle: VehicleRow;
+  imageUrls: string[];
+  report: VehicleReportRow | null;
+};
+
+async function loadCatalogCarData(id: string): Promise<CatalogCarData | null> {
   const client = createSupabasePublicServerClient();
-  const pricingContextPromise = pricingContextInput
-    ? Promise.resolve(pricingContextInput)
-    : loadPricingContext();
   let vehicleQuery = client
     .from("vehicles")
     .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public")
@@ -653,15 +655,42 @@ export async function loadCatalogCar(
   const vehicle = data?.[0] as VehicleRow | undefined;
   if (!vehicle) return null;
 
-  const [pricingContext, imagesResult, reportsResult] = await Promise.all([
-    pricingContextPromise,
+  const [imagesResult, reportsResult] = await Promise.all([
     client.from("vehicle_images").select("vehicle_id,source_url,position").eq("vehicle_id", vehicle.id).order("position", { ascending: true }),
     client.from("vehicle_reports").select("vehicle_id,inspection_summary,accident_summary,report_status,fetched_at").eq("vehicle_id", vehicle.id).maybeSingle(),
   ]);
   if (imagesResult.error || reportsResult.error) {
     throw new Error(`Vehicle related data failed: ${imagesResult.error?.message ?? reportsResult.error?.message}`);
   }
-  const imagesByVehicle = new Map([[vehicle.id, (imagesResult.data ?? []).map((image) => image.source_url)]]);
-  const reportsByVehicle = new Map(reportsResult.data ? [[vehicle.id, reportsResult.data]] : []);
-  return mapVehicleRows([vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
+  return {
+    vehicle,
+    imageUrls: (imagesResult.data ?? []).map((image) => image.source_url),
+    report: reportsResult.data as VehicleReportRow | null,
+  };
+}
+
+// Detail pages are opened repeatedly from search results. Cache the immutable
+// catalog payload briefly, while pricing remains refreshed independently.
+const loadCachedCatalogCarData = unstable_cache(
+  loadCatalogCarData,
+  ["catalog-car-data"],
+  { revalidate: 60 },
+);
+
+export async function loadCatalogCar(
+  id: string,
+  pricingContextInput?: PricingContext | Promise<PricingContext>,
+): Promise<CatalogCar | null> {
+  const pricingContextPromise = pricingContextInput
+    ? Promise.resolve(pricingContextInput)
+    : loadPricingContext();
+  const [data, pricingContext] = await Promise.all([
+    loadCachedCatalogCarData(id),
+    pricingContextPromise,
+  ]);
+  if (!data) return null;
+
+  const imagesByVehicle = new Map([[data.vehicle.id, data.imageUrls]]);
+  const reportsByVehicle = new Map(data.report ? [[data.vehicle.id, data.report]] : []);
+  return mapVehicleRows([data.vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
 }
