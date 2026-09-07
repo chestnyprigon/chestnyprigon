@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Chestny Prigon Encar availability monitor every 12 hours
+
+[Timer]
+OnCalendar=*-*-* 03,15:17:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=chestny-prigon-catalog-monitor.service
+
+[Install]
+WantedBy=timers.target

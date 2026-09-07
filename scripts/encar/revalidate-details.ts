@@ -31,6 +31,7 @@ async function main() {
   const limit = integerArgument("limit", 500, 1, 500);
   const offset = integerArgument("offset", 0, 0, 100_000);
   const retryFailed = hasFlag("retry-failed");
+  const archivedOnly = hasFlag("archived-only");
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -48,6 +49,21 @@ async function main() {
   if (!sourceRun) throw new Error("Full search revalidation run was not found");
 
   let missingIds = [...new Set(((sourceRun.cursor as Record<string, unknown>).missingSourceListingIds as string[] | undefined) ?? [])];
+  if (archivedOnly) {
+    const archivedIds: string[] = [];
+    for (let page = 0; ; page += 1) {
+      const { data: archived, error: archivedError } = await client
+        .from("vehicles")
+        .select("source_listing_id")
+        .eq("status", "removed")
+        .order("source_listing_id", { ascending: true })
+        .range(page * 1_000, page * 1_000 + 999);
+      if (archivedError) throw new Error(archivedError.message);
+      archivedIds.push(...(archived ?? []).map((vehicle) => vehicle.source_listing_id));
+      if ((archived?.length ?? 0) < 1_000) break;
+    }
+    missingIds = [...new Set(archivedIds)];
+  }
   if (retryFailed) {
     const { data: detailRuns, error: detailRunsError } = await client
       .from("import_runs")
@@ -76,6 +92,7 @@ async function main() {
         offset,
         requested: batchIds.length,
         retryFailed,
+        archivedOnly,
       },
     })
     .select("id")
@@ -130,6 +147,7 @@ async function main() {
         offset,
         requested: batchIds.length,
         retryFailed,
+        archivedOnly,
         foundSourceListingIds: found,
         failedSourceListingIds: failed.map((item) => item.sourceListingId),
         checkedAt,

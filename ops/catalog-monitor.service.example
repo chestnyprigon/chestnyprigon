@@ -1,0 +1,15 @@
+[Unit]
+Description=Chestny Prigon Encar availability monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/chestny-prigon
+EnvironmentFile=/etc/chestny-prigon/catalog-monitor.env
+ExecStart=/usr/bin/npm run encar:monitor -- --batch-size=500 --concurrency=1 --delay-ms=1500
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
