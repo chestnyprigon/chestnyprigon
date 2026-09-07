@@ -164,11 +164,19 @@ export async function persistPilot(
           last_seen_at: item.bundle.fetchedAt,
         }));
       });
-      if (identifierRows.length) {
+      // A source listing can expose the same canonical Encar identifier more
+      // than once (for example, as both the advertised and canonical ID).
+      // PostgreSQL cannot upsert the same conflict key twice in one statement.
+      // Keep one row per identifier; the corresponding vehicle upsert above
+      // already resolves the listing itself deterministically.
+      const uniqueIdentifierRows = [
+        ...new Map(identifierRows.map((row) => [row.source_identifier, row])).values(),
+      ];
+      if (uniqueIdentifierRows.length) {
         await checked(
           supabase
             .from("vehicle_source_identifiers")
-            .upsert(identifierRows, { onConflict: "source_identifier" }),
+            .upsert(uniqueIdentifierRows, { onConflict: "source_identifier" }),
         );
       }
       await checked(supabase.from("vehicle_images").delete().in("vehicle_id", vehicleIds));

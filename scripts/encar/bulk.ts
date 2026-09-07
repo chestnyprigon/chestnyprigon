@@ -23,6 +23,13 @@ const manufacturerAliases: Record<string, string> = {
   Lexus: "렉서스",
   Jaguar: "재규어",
   MINI: "미니",
+  Toyota: "도요타",
+  Nissan: "닛산",
+  Mazda: "마쯔다",
+  Honda: "혼다",
+  Subaru: "스바루",
+  Chevrolet: "쉐보레",
+  Mitsubishi: "미쓰비시",
 };
 
 function integerArgument(name: string, fallback: number, minimum: number, maximum: number) {

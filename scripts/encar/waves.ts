@@ -40,6 +40,13 @@ export const CATALOG_WAVES: readonly BrandWave[] = [
   { id: "kr-01-hyundai", group: "korean", manufacturer: "Hyundai", quota: 3_000 },
   { id: "kr-02-kia", group: "korean", manufacturer: "Kia", quota: 3_000 },
   { id: "kr-03-genesis", group: "korean", manufacturer: "Genesis", quota: 1_500 },
+  { id: "jp-01-toyota", group: "other", manufacturer: "Toyota", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-02-nissan", group: "other", manufacturer: "Nissan", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-03-mazda", group: "other", manufacturer: "Mazda", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-04-honda", group: "other", manufacturer: "Honda", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-05-subaru", group: "other", manufacturer: "Subaru", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-06-chevrolet", group: "other", manufacturer: "Chevrolet", quota: 1_000, yearFrom: 2019 },
+  { id: "jp-07-mitsubishi", group: "other", manufacturer: "Mitsubishi", quota: 1_000, yearFrom: 2019 },
   { id: "other-01", group: "other", manufacturer: "*", quota: 2_500 },
 ];
 

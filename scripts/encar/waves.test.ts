@@ -3,18 +3,18 @@ import test from "node:test";
 import { CATALOG_WAVES, MAX_ENRICH_CONCURRENCY, SAFE_BRAND_BATCH_SIZE, SAFE_ENRICH_CONCURRENCY, selectWaveBatches, totalWaveQuota, waveBatches } from "./waves";
 
 test("keeps Korean and European quotas separate", () => {
-  assert.equal(totalWaveQuota("european"), 10_000);
+  assert.equal(totalWaveQuota("european"), 16_500);
   assert.equal(totalWaveQuota("korean"), 7_500);
-  assert.equal(totalWaveQuota(), 20_000);
+  assert.equal(totalWaveQuota(), 33_500);
 });
 
 test("splits a brand quota into bounded resumable batches", () => {
   const wave = CATALOG_WAVES.find((item) => item.id === "eu-01-bmw");
   assert.ok(wave);
   const batches = waveBatches(wave);
-  assert.equal(batches.length, 4);
+  assert.equal(batches.length, 6);
   assert.deepEqual(batches[0], { waveId: "eu-01-bmw", manufacturer: "BMW", offset: 0, limit: SAFE_BRAND_BATCH_SIZE });
-  assert.deepEqual(batches.at(-1), { waveId: "eu-01-bmw", manufacturer: "BMW", offset: 1_500, limit: 500 });
+  assert.deepEqual(batches.at(-1), { waveId: "eu-01-bmw", manufacturer: "BMW", offset: 2_500, limit: 500 });
 });
 
 test("rejects unsafe batch sizes", () => {
@@ -33,7 +33,7 @@ test("resumes a brand wave from an explicit offset", () => {
   assert.ok(wave);
   const batches = waveBatches(wave).filter((batch) => batch.offset >= 500);
   assert.equal(batches[0]?.offset, 500);
-  assert.equal(batches.at(-1)?.offset, 1_000);
+  assert.equal(batches.at(-1)?.offset, 2_500);
 });
 
 test("balances the first bulk target across selected brand groups", () => {
