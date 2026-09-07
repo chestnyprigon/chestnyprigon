@@ -15,7 +15,9 @@ export function reportScreening(flags: ReportUsageFlags, hasAccident: boolean, r
   ];
 
   return {
-    decision: hardExclusion ? ("rejected" as const) : !reportReady ? ("manual_review" as const) : ("approved" as const),
+    // A missing Encar report is disclosed in the card and is not a publication
+    // blocker. Only usage restrictions remain hard exclusions.
+    decision: hardExclusion ? ("rejected" as const) : ("approved" as const),
     hardExclusion,
     // An accident is disclosed in the public report. It is not a publication blocker.
     isProblematic: false,
