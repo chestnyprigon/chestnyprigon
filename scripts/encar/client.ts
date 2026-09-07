@@ -27,6 +27,30 @@ async function fetchJson<T>(url: URL | string, options: { attempts?: number; tim
   throw lastError instanceof Error ? lastError : new Error(`Encar request failed for ${url}`);
 }
 
+async function fetchPublicJson<T>(url: URL | string, options: { attempts?: number; timeoutMs?: number } = {}): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: encarHeaders({
+          Accept: "application/json, text/plain, */*",
+          Origin: "https://fem.encar.com",
+          Referer: "https://fem.encar.com/",
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
+      return (await response.json()) as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await delay(500 * 2 ** (attempt - 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Encar public request failed for ${url}`);
+}
+
 export const delay = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -74,6 +98,18 @@ export async function fetchDetail(listingId: string, options?: { attempts?: numb
   const detail = await fetchJson<EncarDetail>(`${DETAIL_ENDPOINT}/${listingId}`, options);
   if (!detail || typeof detail !== "object") {
     throw new Error(`Encar detail response is invalid for ${listingId}`);
+  }
+  return detail;
+}
+
+/** Fetches the current detail without the parser-IP verification gate.
+ * Encar's read-side detail endpoint is public and is also what the listing
+ * page uses; the verification gate is only needed for search/import calls.
+ */
+export async function fetchPublicDetail(listingId: string, options?: { attempts?: number; timeoutMs?: number }): Promise<EncarDetail> {
+  const detail = await fetchPublicJson<EncarDetail>(`${DETAIL_ENDPOINT}/${listingId}`, options);
+  if (!detail || typeof detail !== "object") {
+    throw new Error(`Encar public detail response is invalid for ${listingId}`);
   }
   return detail;
 }
