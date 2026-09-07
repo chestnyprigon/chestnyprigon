@@ -9,6 +9,7 @@ import type { PilotItem } from "./types";
 import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
 import { SAFE_BRAND_BATCH_SIZE, SAFE_DETAIL_DELAY_MS } from "./waves";
+import { primaryManufacturerAlias } from "./manufacturer-aliases";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -45,15 +46,7 @@ const write = args.has("--write");
 const publish = args.has("--publish");
 const imported = args.has("--imported");
 const manufacturerArgument = process.argv.find((argument) => argument.startsWith("--manufacturer="))?.slice("--manufacturer=".length).trim() || undefined;
-const manufacturerAliases: Record<string, string> = {
-  Hyundai: "현대",
-  Kia: "기아",
-  Genesis: "제네시스",
-  "Mercedes-Benz": "벤츠",
-  Audi: "아우디",
-  Volkswagen: "폭스바겐",
-};
-const manufacturer = manufacturerArgument ? manufacturerAliases[manufacturerArgument] ?? manufacturerArgument : undefined;
+const manufacturer = manufacturerArgument ? primaryManufacturerAlias(manufacturerArgument) : undefined;
 
 if (publish && !write) throw new Error("--publish requires --write");
 

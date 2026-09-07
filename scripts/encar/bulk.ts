@@ -7,30 +7,9 @@ import { persistPilot } from "./persistence";
 import { screenListing } from "./screening";
 import type { PilotItem } from "./types";
 import { CATALOG_WAVES, MAX_ENRICH_CONCURRENCY, SAFE_DETAIL_DELAY_MS, TARGETED_2016_WAVES, selectWaveBatches, type WaveGroup } from "./waves";
+import { primaryManufacturerAlias } from "./manufacturer-aliases";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
-
-const manufacturerAliases: Record<string, string> = {
-  Hyundai: "현대",
-  Kia: "기아",
-  Genesis: "제네시스",
-  "Mercedes-Benz": "벤츠",
-  Audi: "아우디",
-  Volkswagen: "폭스바겐",
-  Porsche: "포르쉐",
-  Volvo: "볼보",
-  "Land Rover": "랜드로버",
-  Lexus: "렉서스",
-  Jaguar: "재규어",
-  MINI: "미니",
-  Toyota: "도요타",
-  Nissan: "닛산",
-  Mazda: "마쯔다",
-  Honda: "혼다",
-  Subaru: "스바루",
-  Chevrolet: "쉐보레",
-  Mitsubishi: "미쓰비시",
-};
 
 function integerArgument(name: string, fallback: number, minimum: number, maximum: number) {
   const prefix = `--${name}=`;
@@ -84,7 +63,7 @@ async function main() {
   console.log({ target, batches: batches.map(({ wave, offset, limit }) => ({ id: wave.id, manufacturer: wave.manufacturer, offset, limit })), write, detailConcurrency });
 
   for (const { wave, offset, limit } of batches) {
-    const manufacturer = wave.manufacturer === "*" ? undefined : manufacturerAliases[wave.manufacturer] ?? wave.manufacturer;
+    const manufacturer = wave.manufacturer === "*" ? undefined : primaryManufacturerAlias(wave.manufacturer);
     const query = createDomesticQuery(wave.yearFrom ?? encarYearFrom(now.getFullYear()), now.getFullYear(), ENCAR_MAX_MILEAGE_KM, "Y", manufacturer);
     const page = await fetchSearchPage({ offset, limit: Math.min(pageSize, limit), query });
     const listings = page.listings.filter((listing) => {
