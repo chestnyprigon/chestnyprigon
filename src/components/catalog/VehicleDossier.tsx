@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, ExternalLink, FileSearch, KeyRound, Maximize2, Menu, Minus, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
 import { calculateBelarusPrice, type BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
@@ -139,12 +139,34 @@ export function VehicleDossier({ car, pricingContext, catalogHref = "/catalog" }
   const [isPriceRefreshing, setPriceRefreshing] = useState(false);
   const [priceRefreshError, setPriceRefreshError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [leadSent, setLeadSent] = useState(false);
+  const [leadError, setLeadError] = useState("");
+  const [leadSending, setLeadSending] = useState(false);
   const thumbsRef = useRef<HTMLDivElement>(null);
   const photoSwipeStart = useRef<{ x: number; y: number } | null>(null);
   const suppressPhotoClick = useRef(false);
   const storedCalculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates }), [car, preferential, pricingContext]);
   const calculation = liveCalculation ?? storedCalculation;
   const krwUsdRate = liveKrwUsdRate ?? pricingContext.krwUsdRate;
+  const submitLead = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setLeadSending(true);
+    setLeadError("");
+    try {
+      const response = await fetch("/api/leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        name: data.get("name"), phone: data.get("phone"), message: data.get("message"), source: "vehicle", vehicleId: car.id,
+        vehicleSnapshot: { brand: car.brand, model: car.model, trim: car.trim, year: car.year, mileage: car.mileage, sourceUrl: car.sourceUrl },
+        calculationSnapshot: { totalUsd: calculation.totalUsd, preferential }, pageUrl: window.location.href,
+      }) });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error);
+      setLeadSent(true);
+    } catch (error) { setLeadError(error instanceof Error ? error.message : "Попробуйте ещё раз"); }
+    finally { setLeadSending(false); }
+  };
   const standardCodes = useMemo(() => new Set(car.inspection?.standardOptionCodes ?? []), [car.inspection?.standardOptionCodes]);
   const accident = Boolean(car.accidents?.accidentCount || car.inspection?.reportedAccident);
   const historyBadge = car.accidents?.accidentCount
@@ -267,7 +289,8 @@ export function VehicleDossier({ car, pricingContext, catalogHref = "/catalog" }
         <section className="dossier-card"><h2><KeyRound />Комплектация</h2><div className="dossier-options">{equipmentCatalog.map((group) => { const installed = group.items.filter(([code]) => standardCodes.has(code)).length; return <details key={group.name}><summary><span><b>{group.name}</b><small>{installed} установлено · не установлено: {group.items.length - installed}</small></span><ChevronDown size={18} /></summary><div>{group.items.map(([code, name]) => { const isInstalled = standardCodes.has(code); return <article className={isInstalled ? "" : "is-missing"} key={`${group.name}-${code}`}><span className="equipment-mark">{isInstalled ? <Check size={13} /> : <X size={13} />}</span><span>{name}<small>{isInstalled ? "Установлено" : "Не установлено"}</small></span></article>; })}</div></details>; })}</div></section>
       </div>
 
-      <aside className="dossier-price"><div className="dossier-source"><span><ShieldCheck size={14} />Источник Encar</span><a href={car.sourceUrl} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div><div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div><div className="dossier-total"><span>Предварительная цена под ключ</span><strong>{formatUsdWithByn(calculation.totalUsd, calculation.rates)}</strong><small>{calculation.calculationAvailable ? "с доставкой и оформлением в Беларуси" : calculation.unavailableReason}</small></div><div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div><div className="dossier-preferential-block"><label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation.calculationAvailable} onChange={(event) => changePreferential(event.target.checked)} /><span>Льготная растаможка {preferential ? <b>Включена</b> : <b className="is-off">Выключена</b>}</span></label><small>{preferential ? "Показана предварительная стоимость по льготному режиму. Для расчёта без льготы снимите галочку." : "Показан расчёт без льготы. Льготный режим доступен после подтверждения права на него."}</small></div><ClientPriceTable calculation={calculation} krwUsdRate={krwUsdRate} isRefreshing={isPriceRefreshing} refreshError={priceRefreshError} onRefresh={() => void refreshPrice()} /><Link className="dossier-lead" href={`/?vehicleId=${encodeURIComponent(car.id)}#contacts`}>Оставить заявку <ArrowRight size={17} /></Link></aside>
+      <aside className="dossier-price"><div className="dossier-source"><span><ShieldCheck size={14} />Источник Encar</span><a href={car.sourceUrl} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div><div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div><div className="dossier-total"><span>Предварительная цена под ключ</span><strong>{formatUsdWithByn(calculation.totalUsd, calculation.rates)}</strong><small>{calculation.calculationAvailable ? "с доставкой и оформлением в Беларуси" : calculation.unavailableReason}</small></div><div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div><div className="dossier-preferential-block"><label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation.calculationAvailable} onChange={(event) => changePreferential(event.target.checked)} /><span>Льготная растаможка {preferential ? <b>Включена</b> : <b className="is-off">Выключена</b>}</span></label><small>{preferential ? "Показана предварительная стоимость по льготному режиму. Для расчёта без льготы снимите галочку." : "Показан расчёт без льготы. Льготный режим доступен после подтверждения права на него."}</small></div><ClientPriceTable calculation={calculation} krwUsdRate={krwUsdRate} isRefreshing={isPriceRefreshing} refreshError={priceRefreshError} onRefresh={() => void refreshPrice()} /><button className="dossier-lead" type="button" onClick={() => { setLeadOpen(true); setLeadSent(false); }}>Оставить заявку <ArrowRight size={17} /></button></aside>
     </section>{lightboxOpen ? <div className="dossier-lightbox" role="dialog" aria-modal="true" aria-label="Просмотр фотографий" onClick={() => setLightboxOpen(false)}><div className="dossier-lightbox-panel" onClick={(event) => event.stopPropagation()}><header><div className="dossier-lightbox-title"><b>{car.brand} {car.model}</b><span>Фото {visiblePhotoIndexes.indexOf(photo) + 1} из {visiblePhotoIndexes.length}</span></div><div className="dossier-lightbox-tools"><button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom === 1} aria-label="Уменьшить"><Minus size={18} /></button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(2.5, value + .25))} aria-label="Увеличить"><Plus size={18} /></button><button className="dossier-lightbox-close" type="button" onClick={() => setLightboxOpen(false)} aria-label="Закрыть"><X size={20} /></button></div></header><div className={`dossier-lightbox-image ${zoom > 1 ? "is-zoomed" : ""}`} onTouchStart={beginPhotoSwipe} onTouchEnd={endPhotoSwipe} onClick={() => { if (!suppressPhotoClick.current) setZoom((value) => value === 1 ? 1.75 : 1); }}><Image src={car.images[photo] ?? car.images[0]} alt={`${car.brand} ${car.model}, фото ${photo + 1}`} fill unoptimized priority sizes="100vw" style={{ transform: `scale(${zoom})` }} /></div>{visiblePhotoIndexes.length > 1 ? <><button className="dossier-lightbox-nav is-prev" type="button" onClick={() => changePhoto(-1)} aria-label="Предыдущее фото"><ArrowLeft size={23} /></button><button className="dossier-lightbox-nav is-next" type="button" onClick={() => changePhoto(1)} aria-label="Следующее фото"><ArrowRight size={23} /></button></> : null}<footer><div className="dossier-lightbox-groups">{availableGroups.map((group) => <button type="button" key={group} className={photoGroup === group ? "is-active" : ""} onClick={() => chooseGroup(group)}>{group}</button>)}</div><div className="dossier-lightbox-thumbs">{visiblePhotoIndexes.map((index) => <button type="button" key={car.images[index]} className={index === photo ? "is-active" : ""} onClick={() => { setPhoto(index); setZoom(1); }}><Image src={car.images[index]} alt={`Фото ${index + 1}`} fill unoptimized sizes="72px" /></button>)}</div></footer></div></div> : null}
+    {leadOpen ? <div className="consult-modal-backdrop" onMouseDown={() => setLeadOpen(false)}><div className="consult-modal" role="dialog" aria-modal="true" aria-label="Заявка на автомобиль" onMouseDown={(event) => event.stopPropagation()}><button className="consult-close" type="button" onClick={() => setLeadOpen(false)} aria-label="Закрыть"><X /></button>{leadSent ? <div className="lead-success"><Check /><b>Заявка принята</b><span>Менеджер свяжется с вами по этому автомобилю.</span></div> : <><p className="premium-kicker"><span />Заявка на автомобиль</p><h2>{car.brand} {car.model}</h2><p>{car.year} · {car.trim} · предварительно {formatUsdWithByn(calculation.totalUsd, calculation.rates)}</p><form className="lead-fields" onSubmit={submitLead}><input name="name" placeholder="Ваше имя" required /><input name="phone" placeholder="Телефон" required /><textarea name="message" placeholder="Комментарий" rows={3} /><button type="submit" disabled={leadSending}>{leadSending ? "Отправляем…" : "Отправить заявку"} <ArrowRight /></button>{leadError ? <small role="alert">{leadError}</small> : null}</form></>}</div></div> : null}
   </main>;
 }
