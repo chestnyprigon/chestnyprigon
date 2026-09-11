@@ -79,15 +79,36 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
   const [modalOpen, setModalOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
     document.body.style.overflow = modalOpen || menuOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [modalOpen, menuOpen]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSubmitted(true);
+    setSubmitting(true);
+    setSubmitError("");
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      const response = await fetch("/api/leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        name: data.get("name"), phone: data.get("phone"), message: data.get("car"), source: "homepage",
+        pageUrl: window.location.href, referrer: document.referrer,
+        utmSource: new URLSearchParams(window.location.search).get("utm_source"),
+        utmMedium: new URLSearchParams(window.location.search).get("utm_medium"),
+        utmCampaign: new URLSearchParams(window.location.search).get("utm_campaign"),
+      }) });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error);
+      setSubmitted(true);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Попробуйте ещё раз");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return <main>
@@ -113,7 +134,7 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
     <section className="premium-faq premium-section"><div className="premium-section-copy centered"><p className="premium-kicker"><span />FAQ</p><h2>Часто задаваемые вопросы</h2><p>Коротко объясняем процесс покупки и доставки автомобиля из Кореи.</p></div><div className="faq-grid">{faqs.map(([question, answer], index) => { const open = faqOpen === index; return <article className={open ? "faq-item is-open" : "faq-item"} key={question}><button type="button" onClick={() => setFaqOpen(open ? -1 : index)}><b>{question}</b><span>{open ? "×" : "+"}</span></button>{open && <p>{answer}</p>}</article>; })}</div><div className="faq-support"><Headphones /><span><b>Не нашли ответ?</b><small>Расскажите о задаче — разберём ваш сценарий покупки.</small></span><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Связаться с нами <ArrowRight size={16} /></button></div></section>
 
     <section className="premium-contacts premium-section" id="contacts"><div className="contacts-card"><div className="contacts-copy"><p className="premium-kicker"><span />Контакты</p><h2>Свяжитесь с нами<br />и запустим подбор</h2><p>Офис компании в Минске. Работаем с автомобилями из Южной Кореи.</p><div className="contacts-map"><iframe title="Офис на карте" src="https://yandex.ru/map-widget/v1/?text=%D0%9C%D0%B8%D0%BD%D1%81%D0%BA%2C%20%D1%83%D0%BB.%20%D0%9C%D0%B5%D0%BB%D0%B5%D0%B6%D0%B0%2C%20%D0%B4.%203&z=16" loading="lazy" /></div></div><div className="contacts-links"><a href="tel:+375447543987"><Phone />+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com"><Mail />Chestnyjprigon@gmail.com</a><a href="https://maps.google.com/?q=Минск+Мележа+3" target="_blank" rel="noreferrer"><MapPin />г. Минск, ул. Мележа, д. 3, оф. 603</a><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer"><Send />@IvanPrigon <ArrowRight /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer"><Camera />Instagram <ArrowRight /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer"><Video />YouTube <ArrowRight /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer"><Music2 />TikTok <ArrowRight /></a><a className="contacts-main" href="https://wa.me/375447543987" target="_blank" rel="noreferrer"><MessageCircle />Написать в WhatsApp <ArrowRight /></a></div></div>
-      <form className="lead-banner" onSubmit={submit}><div><p className="premium-kicker"><span />Бесплатная консультация</p><h2>Подберём ваш<br />идеальный автомобиль</h2><p>Оставьте заявку — подготовим подборку и предварительный расчёт.</p><ul><li><Check />Прозрачная цена</li><li><Check />Проверка истории</li><li><Check />Без скрытых платежей</li></ul></div><div className="lead-fields">{submitted ? <div className="lead-success"><BadgeCheck /><b>Заявка принята</b><span>На следующем этапе подключим реальную отправку менеджеру.</span></div> : <><input name="name" placeholder="Ваше имя" required /><input name="phone" placeholder="Телефон" required /><input name="car" placeholder="Интересующий автомобиль" /><button type="submit">Отправить заявку <ArrowRight /></button><small>Нажимая кнопку, вы соглашаетесь с политикой конфиденциальности</small></>}</div></form>
+      <form className="lead-banner" onSubmit={submit}><div><p className="premium-kicker"><span />Бесплатная консультация</p><h2>Подберём ваш<br />идеальный автомобиль</h2><p>Оставьте заявку — подготовим подборку и предварительный расчёт.</p><ul><li><Check />Прозрачная цена</li><li><Check />Проверка истории</li><li><Check />Без скрытых платежей</li></ul></div><div className="lead-fields">{submitted ? <div className="lead-success"><BadgeCheck /><b>Заявка принята</b><span>Менеджер скоро свяжется с вами.</span></div> : <><input name="name" placeholder="Ваше имя" required /><input name="phone" placeholder="Телефон" required /><input name="car" placeholder="Интересующий автомобиль" /><button type="submit" disabled={submitting}>{submitting ? "Отправляем…" : "Отправить заявку"} <ArrowRight /></button>{submitError ? <small role="alert">{submitError}</small> : null}<small>Нажимая кнопку, вы соглашаетесь с политикой конфиденциальности</small></>}</div></form>
     </section>
 
     <footer className="premium-footer"><div className="footer-brand"><b>ЧЕСТНЫЙ<br /><em>ПРИГОН</em></b><p>Автомобили из Кореи<br />с доставкой в Беларусь</p></div><div><b>Услуги</b><Link href="/catalog">Подбор автомобиля</Link><a href="#services">Проверка и покупка</a><a href="#services">Доставка</a><a href="#services">Таможенное оформление</a></div><div><b>Контакты</b><a href="tel:+375447543987">+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com">Chestnyjprigon@gmail.com</a><span>Минск, ул. Мележа, 3</span></div><div><b>Мы в соцсетях</b><div className="footer-social"><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer" aria-label="Telegram"><Send /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer" aria-label="Instagram"><Camera /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer" aria-label="YouTube"><Video /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer" aria-label="TikTok"><Music2 /></a></div></div></footer>

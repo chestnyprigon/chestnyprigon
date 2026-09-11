@@ -3,6 +3,45 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      leads: {
+        Row: {
+          id: string;
+          public_number: number;
+          name: string;
+          phone: string;
+          email: string | null;
+          telegram_username: string | null;
+          message: string | null;
+          source: string;
+          page_url: string | null;
+          referrer: string | null;
+          utm_source: string | null;
+          utm_medium: string | null;
+          utm_campaign: string | null;
+          status: string;
+          assigned_to: string | null;
+          assigned_telegram_id: string | null;
+          assigned_telegram_name: string | null;
+          notification_status: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { name: string; phone: string; email?: string | null; telegram_username?: string | null; message?: string | null; source?: string; page_url?: string | null; referrer?: string | null; utm_source?: string | null; utm_medium?: string | null; utm_campaign?: string | null; status?: string; assigned_telegram_id?: string | null; assigned_telegram_name?: string | null; notification_status?: string };
+        Update: Partial<Database["public"]["Tables"]["leads"]["Insert"]>;
+        Relationships: [];
+      };
+      lead_vehicle_context: {
+        Row: { lead_id: string; vehicle_id: string | null; vehicle_snapshot: Json | null; calculation_snapshot: Json | null; created_at: string };
+        Insert: { lead_id: string; vehicle_id?: string | null; vehicle_snapshot?: Json | null; calculation_snapshot?: Json | null };
+        Update: Partial<Database["public"]["Tables"]["lead_vehicle_context"]["Insert"]>;
+        Relationships: [];
+      };
+      lead_status_history: {
+        Row: { id: number; lead_id: string; from_status: string | null; to_status: string; changed_by: string | null; comment: string | null; created_at: string };
+        Insert: { lead_id: string; from_status?: string | null; to_status: string; changed_by?: string | null; comment?: string | null };
+        Update: Partial<Database["public"]["Tables"]["lead_status_history"]["Insert"]>;
+        Relationships: [];
+      };
       vehicle_source_identifiers: {
         Row: {
           source_identifier: string;
