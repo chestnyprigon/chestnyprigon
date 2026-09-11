@@ -37,11 +37,16 @@ export async function POST(request: NextRequest) {
     if (error || !lead) throw error ?? new Error("Lead was not created");
 
     const vehicleId = text(body.vehicleId, 100);
-    if (vehicleId || body.vehicleSnapshot || body.calculationSnapshot) {
+    let vehicleSnapshot = body.vehicleSnapshot;
+    if (vehicleId && !vehicleSnapshot) {
+      const { data: vehicle } = await supabase.from("catalog_vehicles").select("id, manufacturer, model, generation, trim, model_year, mileage_km, price_usd, source_url, image_urls").eq("id", vehicleId).maybeSingle();
+      vehicleSnapshot = vehicle;
+    }
+    if (vehicleId || vehicleSnapshot || body.calculationSnapshot) {
       await supabase.from("lead_vehicle_context").insert({
         lead_id: lead.id,
         vehicle_id: vehicleId || null,
-        vehicle_snapshot: (body.vehicleSnapshot as never) ?? null,
+        vehicle_snapshot: (vehicleSnapshot as never) ?? null,
         calculation_snapshot: (body.calculationSnapshot as never) ?? null,
       });
     }

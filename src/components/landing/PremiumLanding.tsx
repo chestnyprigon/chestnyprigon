@@ -96,6 +96,7 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
     try {
       const response = await fetch("/api/leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
         name: data.get("name"), phone: data.get("phone"), message: data.get("car"), source: "homepage",
+        vehicleId: new URLSearchParams(window.location.search).get("vehicleId"),
         pageUrl: window.location.href, referrer: document.referrer,
         utmSource: new URLSearchParams(window.location.search).get("utm_source"),
         utmMedium: new URLSearchParams(window.location.search).get("utm_medium"),
