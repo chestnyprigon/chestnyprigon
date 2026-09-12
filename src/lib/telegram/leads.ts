@@ -22,13 +22,34 @@ function sourceLabel(source: string) {
   return ({ homepage: "Главная страница", vehicle: "Карточка автомобиля", calculator: "Калькулятор", callback: "Обратный звонок" } as Record<string, string>)[source] ?? source;
 }
 
+function vehicleLines(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const item = snapshot as Record<string, unknown>;
+  return [
+    `Автомобиль: ${[item.brand, item.model].filter(Boolean).join(" ") || "—"}`,
+    item.trim ? `Комплектация: ${value(item.trim)}` : "",
+    item.year ? `Год: ${value(item.year)}` : "",
+    item.mileage ? `Пробег: ${value(item.mileage)} км` : "",
+    item.sourceUrl ? `Объявление: ${value(item.sourceUrl)}` : "",
+  ].filter(Boolean);
+}
+
+function calculationLines(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const item = snapshot as Record<string, unknown>;
+  return [
+    item.totalUsd ? `Предварительно под ключ: $${value(item.totalUsd)}` : "",
+    item.preferential !== undefined ? `Льготная растаможка: ${item.preferential ? "включена" : "не включена"}` : "",
+  ].filter(Boolean);
+}
+
 export async function sendLeadNotification(lead: LeadNotification) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) throw new Error("Telegram lead notification is not configured");
 
-  const vehicle = lead.vehicleSnapshot ? `\nАвтомобиль: ${value(lead.vehicleSnapshot)}` : "";
-  const calculation = lead.calculationSnapshot ? `\nРасчёт: ${value(lead.calculationSnapshot)}` : "";
+  const vehicle = vehicleLines(lead.vehicleSnapshot);
+  const calculation = calculationLines(lead.calculationSnapshot);
   const text = [
     `🔥 Новая заявка #CP-${lead.publicNumber}`,
     "",
@@ -36,8 +57,8 @@ export async function sendLeadNotification(lead: LeadNotification) {
     `Имя: ${lead.name}`,
     `Телефон: ${lead.phone}`,
     `Комментарий: ${value(lead.message)}`,
-    vehicle,
-    calculation,
+    vehicle.length ? ["", ...vehicle].join("\n") : "",
+    calculation.length ? ["", "Расчёт", ...calculation].join("\n") : "",
     lead.pageUrl ? `Страница: ${lead.pageUrl}` : "",
     "",
     "Статус: Новая",
