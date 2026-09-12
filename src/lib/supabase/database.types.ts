@@ -42,6 +42,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["lead_status_history"]["Insert"]>;
         Relationships: [];
       };
+      lead_comments: {
+        Row: { id: number; lead_id: string; author_name: string; body: string; created_at: string };
+        Insert: { lead_id: string; author_name?: string; body: string };
+        Update: Partial<Database["public"]["Tables"]["lead_comments"]["Insert"]>;
+        Relationships: [];
+      };
       vehicle_source_identifiers: {
         Row: {
           source_identifier: string;
