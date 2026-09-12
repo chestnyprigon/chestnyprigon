@@ -302,9 +302,13 @@ a { color: inherit; text-decoration: none; }
   .dossier-lightbox-nav { display: none; }
 }
 @media (max-width: 700px) {
-  .home-result-card .card-history-meta,
+.home-result-card .card-history-meta,
   .result-car-body .card-history-meta { display: block; }
 }
+
+.lead-fields textarea { background: rgba(3,11,18,.83); border: 1px solid var(--line); border-radius: 7px; box-sizing: border-box; color: #fff; font: inherit; font-size: 14px; min-height: 92px; outline: 0; padding: 14px; resize: vertical; width: 100%; }
+.lead-fields textarea::placeholder { color: #84949f; }
+.lead-fields textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(228,59,52,.12); }
 
 /* Primary CTA in the vehicle price card */
 .dossier-price .dossier-lead {
