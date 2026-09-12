@@ -305,3 +305,29 @@ a { color: inherit; text-decoration: none; }
   .home-result-card .card-history-meta,
   .result-car-body .card-history-meta { display: block; }
 }
+
+/* Primary CTA in the vehicle price card */
+.dossier-price .dossier-lead {
+  align-items: center;
+  appearance: none;
+  border: 0;
+  box-sizing: border-box;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 850;
+  gap: 12px;
+  justify-content: center;
+  letter-spacing: -.01em;
+  margin-top: 16px;
+  min-height: 54px;
+  padding: 0 20px;
+  text-align: center;
+  transition: background .2s ease, box-shadow .2s ease, transform .2s ease;
+  width: 100%;
+}
+.dossier-price .dossier-lead svg { flex: 0 0 auto; }
+.dossier-price .dossier-lead:hover { background: #f04a43; box-shadow: 0 10px 24px rgba(228,59,52,.24); transform: translateY(-1px); }
+.dossier-price .dossier-lead:active { transform: translateY(0); }
