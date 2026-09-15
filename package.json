@@ -21,6 +21,7 @@
     "radar:pilot": "tsx scripts/radar/pilot.ts",
     "radar:local-reserve": "tsx scripts/radar/select-local-reserve.ts",
     "radar:prepare-vps-enrichment": "tsx scripts/radar/prepare-vps-enrichment-queue.ts",
+    "radar:vps-enrichment-dry-run": "tsx scripts/radar/vps-enrichment-dry-run.ts",
     "radar:enrich-local-reserve": "tsx scripts/radar/enrich-local-reserve.ts",
     "catalog:publish-ready": "tsx scripts/catalog/publish-ready.ts",
     "catalog:cleanup": "tsx scripts/catalog/cleanup-technical-data.ts",
