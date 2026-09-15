@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/chestny-prigon
+# Reuse the existing, verified Encar proxy route.  The Chestny-specific file
+# intentionally contains only its own Supabase credentials.
+EnvironmentFile=/home/ubuntu/tl-auto/.env
 EnvironmentFile=/home/ubuntu/chestny-prigon/.env.enrichment
 Environment=CHESTNY_ENRICHMENT_RUN_ID=ebe8fa15-1732-4a0d-876f-b1a9a05556f7
 Environment=CHESTNY_ENRICHMENT_BATCH_SIZE=50
