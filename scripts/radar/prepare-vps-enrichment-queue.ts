@@ -26,7 +26,9 @@ async function main() {
   const ids = candidates.map((candidate) => String(candidate.sourceListingId ?? ""));
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw new Error("Candidate IDs must be non-empty and unique");
 
-  const supabase = createClient(required("RADAR_SUPABASE_URL"), required("RADAR_SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
+  // The candidate file is sourced from Radar, but the enrichment queue belongs
+  // to the Chestny Prigon/catalog Supabase project.
+  const supabase = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: run, error: runError } = await supabase.from("chestny_enrichment_runs").insert({
     project,
     status: "awaiting_approval",
