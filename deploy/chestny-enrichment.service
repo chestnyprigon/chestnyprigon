@@ -1,0 +1,19 @@
+[Unit]
+Description=Chestny Prigon Encar enrichment batch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chestny-prigon
+EnvironmentFile=/home/ubuntu/chestny-prigon/.env.enrichment
+Environment=CHESTNY_ENRICHMENT_RUN_ID=ebe8fa15-1732-4a0d-876f-b1a9a05556f7
+Environment=CHESTNY_ENRICHMENT_BATCH_SIZE=50
+Environment=CHESTNY_ENRICHMENT_DELAY_MS=3000
+ExecStart=/usr/bin/flock -n /tmp/chestny-prigon-encar.lock /usr/bin/npm run radar:vps-enrichment
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=false

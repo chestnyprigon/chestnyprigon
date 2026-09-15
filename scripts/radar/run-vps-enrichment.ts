@@ -1,17 +1,25 @@
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 config({ path: ".env", quiet: true });
 const runId = process.env.CHESTNY_ENRICHMENT_RUN_ID ?? "ebe8fa15-1732-4a0d-876f-b1a9a05556f7";
 const batchSize = Math.min(50, Math.max(1, Number(process.env.CHESTNY_ENRICHMENT_BATCH_SIZE ?? 50)));
 const delayMs = Math.max(1_000, Number(process.env.CHESTNY_ENRICHMENT_DELAY_MS ?? 3_000));
 const proxyUrl = process.env.ENCAR_PROXY_URL?.trim();
+const coordinationDirectory = process.env.ENCAR_COORDINATION_DIR ?? "/tmp/encar-coordination";
+const activePath = `${coordinationDirectory}/chestny-enrichment-active.json`;
+const radarPath = `${coordinationDirectory}/radar-priority.json`;
 const required = (name: string) => { const value = process.env[name]?.trim(); if (!value) throw new Error(`Missing ${name}`); return value; };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type Row = { id: string; source_listing_id: string; source_url: string; candidate_snapshot: Record<string, unknown> };
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 const obj = (value: unknown) => value && typeof value === "object" ? value as Record<string, unknown> : {};
+
+async function radarHasPriority() {
+  try { const owner = JSON.parse(await readFile(radarPath, "utf8")) as { pid?: number }; if (!Number.isInteger(owner.pid)) return false; try { process.kill(owner.pid!, 0); return true; } catch { return false; } } catch { return false; }
+}
 
 async function main() {
   if (!proxyUrl) throw new Error("ENCAR_PROXY_URL is required; direct requests are disabled");
@@ -20,11 +28,18 @@ async function main() {
   if (runError) throw new Error(runError.message);
   if (!['approved','running'].includes(run.status)) throw new Error(`Run status is ${run.status}`);
   if (run.status === 'approved') await db.from("chestny_enrichment_runs").update({ status: 'running', started_at: new Date().toISOString() }).eq('id',runId);
+  await mkdir(coordinationDirectory, { recursive: true });
+  await writeFile(activePath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
   const { data: rows, error } = await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 30 });
   if (error) throw new Error(error.message);
   const agent = new ProxyAgent(proxyUrl); const results: Array<Record<string, unknown>> = [];
   try {
-    for (const row of (rows ?? []) as Row[]) {
+    for (const [index, row] of (rows ?? []).entries() as Iterable<[number, Row]>) {
+      if (await radarHasPriority()) {
+        const remaining = (rows as Row[]).slice(index).map((item) => item.id);
+        if (remaining.length) await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", remaining);
+        break;
+      }
       const id = text(row.candidate_snapshot.encarId) ?? row.source_listing_id;
       try {
         const get = async (url: string) => { const response = await undiciFetch(url, { headers: { Accept:'application/json', Origin:'https://fem.encar.com', Referer:'https://fem.encar.com/' }, dispatcher: agent, signal: AbortSignal.timeout(20_000) }); if (response.status === 404 || response.status === 410) throw new Error(`HTTP ${response.status}`); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); };
@@ -41,7 +56,7 @@ async function main() {
       } catch (error) { const message=error instanceof Error?error.message:String(error); const unavailable=/HTTP (404|410)/.test(message); const done=await db.rpc('complete_chestny_enrichment_queue_item',{p_queue_id:row.id,p_status:unavailable?'unavailable':'failed',p_result:{encarId:id,reason:message},p_error:unavailable?null:message}); if(done.error) throw new Error(done.error.message); results.push({sourceListingId:row.source_listing_id,status:unavailable?'unavailable':'failed',error:message}); }
       await sleep(delayMs);
     }
-  } finally { await agent.close(); }
+  } finally { await agent.close(); await rm(activePath, { force: true }); }
   console.log(JSON.stringify({runId,batchSize,claimed:rows?.length??0,succeeded:results.filter(r=>r.status==='succeeded').length,unavailable:results.filter(r=>r.status==='unavailable').length,failed:results.filter(r=>r.status==='failed').length,results},null,2));
 }
 main().catch((error)=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;});
