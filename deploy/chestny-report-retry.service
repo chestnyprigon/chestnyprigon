@@ -14,7 +14,10 @@ Environment=CHESTNY_REPORT_RETRY_RUN_ID=f9f33471-fbf9-4fd3-b5b7-747255cc449c
 Environment=CHESTNY_REPORT_RETRY_BATCH_SIZE=50
 Environment=CHESTNY_REPORT_RETRY_DELAY_MS=3000
 Environment=CHESTNY_REPORT_RETRY_DRY_RUN=false
-ExecStart=/usr/bin/flock -n /tmp/chestny-prigon-encar.lock /usr/bin/npm run radar:report-retry
+# Exit 75 means another Encar-priority process owns the shared lock.  Treat
+# that as a deferred, successful timer tick; real worker failures remain 1.
+ExecStart=/usr/bin/flock -n -E 75 /tmp/chestny-prigon-encar.lock /usr/bin/npm run radar:report-retry
+SuccessExitStatus=75
 TimeoutStartSec=1800
 Nice=10
 IOSchedulingClass=idle
