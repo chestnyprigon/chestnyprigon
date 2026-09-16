@@ -15,6 +15,7 @@ const radarPath = `${coordinationDirectory}/radar-priority.json`;
 const required = (name: string) => { const value = process.env[name]?.trim(); if (!value) throw new Error(`Missing ${name}`); return value; };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type Row = { id: string; source_listing_id: string; source_url: string; candidate_snapshot: Record<string, unknown> };
+type Db = ReturnType<typeof createClient<any>>;
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 const obj = (value: unknown) => value && typeof value === "object" ? value as Record<string, unknown> : {};
 
@@ -26,14 +27,14 @@ function isRetryableFailure(error: string | null) {
   return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy/i.test(error));
 }
 
-async function requeueRetryableFailures(db: ReturnType<typeof createClient>) {
+async function requeueRetryableFailures(db: Db) {
   const { data, error } = await db.from("chestny_enrichment_queue")
     .select("id,last_error,attempt_count")
     .eq("run_id", runId)
     .eq("status", "failed")
     .lt("attempt_count", maxAttempts);
   if (error) throw new Error(error.message);
-  const ids = (data ?? []).filter((row) => isRetryableFailure(row.last_error)).map((row) => row.id);
+  const ids = ((data ?? []) as Array<{ id: string; last_error: string | null }>).filter((row) => isRetryableFailure(row.last_error)).map((row) => row.id);
   if (!ids.length) return 0;
   const { error: updateError } = await db.from("chestny_enrichment_queue")
     .update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() })
@@ -44,7 +45,7 @@ async function requeueRetryableFailures(db: ReturnType<typeof createClient>) {
 
 async function main() {
   if (!proxyUrl) throw new Error("ENCAR_PROXY_URL is required; direct requests are disabled");
-  const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
+  const db: Db = createClient<any>(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status,candidate_count").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
   if (!['approved','running'].includes(run.status)) throw new Error(`Run status is ${run.status}`);
