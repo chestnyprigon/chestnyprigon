@@ -7,6 +7,7 @@ config({ path: ".env", quiet: true });
 const runId = process.env.CHESTNY_ENRICHMENT_RUN_ID ?? "ebe8fa15-1732-4a0d-876f-b1a9a05556f7";
 const batchSize = Math.min(50, Math.max(1, Number(process.env.CHESTNY_ENRICHMENT_BATCH_SIZE ?? 50)));
 const delayMs = Math.max(1_000, Number(process.env.CHESTNY_ENRICHMENT_DELAY_MS ?? 3_000));
+const maxAttempts = Math.min(5, Math.max(1, Number(process.env.CHESTNY_ENRICHMENT_MAX_ATTEMPTS ?? 3)));
 const proxyUrl = process.env.ENCAR_PROXY_URL?.trim();
 const coordinationDirectory = process.env.ENCAR_COORDINATION_DIR ?? "/tmp/encar-coordination";
 const activePath = `${coordinationDirectory}/chestny-enrichment-active.json`;
@@ -21,6 +22,26 @@ async function radarHasPriority() {
   try { const owner = JSON.parse(await readFile(radarPath, "utf8")) as { pid?: number }; if (!Number.isInteger(owner.pid)) return false; try { process.kill(owner.pid!, 0); return true; } catch { return false; } } catch { return false; }
 }
 
+function isRetryableFailure(error: string | null) {
+  return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy/i.test(error));
+}
+
+async function requeueRetryableFailures(db: ReturnType<typeof createClient>) {
+  const { data, error } = await db.from("chestny_enrichment_queue")
+    .select("id,last_error,attempt_count")
+    .eq("run_id", runId)
+    .eq("status", "failed")
+    .lt("attempt_count", maxAttempts);
+  if (error) throw new Error(error.message);
+  const ids = (data ?? []).filter((row) => isRetryableFailure(row.last_error)).map((row) => row.id);
+  if (!ids.length) return 0;
+  const { error: updateError } = await db.from("chestny_enrichment_queue")
+    .update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() })
+    .in("id", ids);
+  if (updateError) throw new Error(updateError.message);
+  return ids.length;
+}
+
 async function main() {
   if (!proxyUrl) throw new Error("ENCAR_PROXY_URL is required; direct requests are disabled");
   const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
@@ -30,6 +51,7 @@ async function main() {
   if (run.status === 'approved') await db.from("chestny_enrichment_runs").update({ status: 'running', started_at: new Date().toISOString() }).eq('id',runId);
   await mkdir(coordinationDirectory, { recursive: true });
   await writeFile(activePath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
+  const retriesScheduled = await requeueRetryableFailures(db);
   const { data: rows, error } = await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 30 });
   if (error) throw new Error(error.message);
   const agent = new ProxyAgent(proxyUrl); const results: Array<Record<string, unknown>> = [];
@@ -57,6 +79,6 @@ async function main() {
       await sleep(delayMs);
     }
   } finally { await agent.close(); await rm(activePath, { force: true }); }
-  console.log(JSON.stringify({runId,batchSize,claimed:rows?.length??0,succeeded:results.filter(r=>r.status==='succeeded').length,unavailable:results.filter(r=>r.status==='unavailable').length,failed:results.filter(r=>r.status==='failed').length,results},null,2));
+  console.log(JSON.stringify({runId,batchSize,retriesScheduled,claimed:rows?.length??0,succeeded:results.filter(r=>r.status==='succeeded').length,unavailable:results.filter(r=>r.status==='unavailable').length,failed:results.filter(r=>r.status==='failed').length,results},null,2));
 }
 main().catch((error)=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;});
