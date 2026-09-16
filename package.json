@@ -22,6 +22,7 @@
     "radar:local-reserve": "tsx scripts/radar/select-local-reserve.ts",
     "radar:prepare-vps-enrichment": "tsx scripts/radar/prepare-vps-enrichment-queue.ts",
     "radar:prepare-report-retry": "tsx scripts/radar/prepare-report-retry-queue.ts",
+    "radar:report-retry": "tsx scripts/radar/run-report-retry.ts",
     "radar:vps-enrichment-dry-run": "tsx scripts/radar/vps-enrichment-dry-run.ts",
     "radar:vps-enrichment": "tsx scripts/radar/run-vps-enrichment.ts",
     "radar:enrich-local-reserve": "tsx scripts/radar/enrich-local-reserve.ts",
