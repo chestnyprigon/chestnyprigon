@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
         pageUrl: text(body.pageUrl, 500) || null,
         vehicleSnapshot: body.vehicleSnapshot,
         calculationSnapshot: body.calculationSnapshot,
+        topic: "new",
       });
       await supabase.from("leads").update({ notification_status: "sent" }).eq("id", lead.id);
     } catch (notificationError) {

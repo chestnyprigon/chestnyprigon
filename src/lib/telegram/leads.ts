@@ -10,6 +10,7 @@ type LeadNotification = {
   pageUrl: string | null;
   vehicleSnapshot?: unknown;
   calculationSnapshot?: unknown;
+  topic?: "new" | "work" | "contacted";
 };
 
 function value(value: unknown) {
@@ -67,12 +68,14 @@ export async function sendLeadNotification(lead: LeadNotification) {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
   const buttons = [{ text: "✅ Взять в работу", callback_data: `lead:take:${lead.id}` }];
   if (siteUrl?.startsWith("https://")) buttons.push({ text: "📂 Открыть заявку", url: `${siteUrl}/admin/leads/${lead.id}` } as never);
+  const topicId = lead.topic === "work" ? process.env.TELEGRAM_TOPIC_WORK : lead.topic === "contacted" ? process.env.TELEGRAM_TOPIC_CONTACTED : process.env.TELEGRAM_TOPIC_NEW;
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
       text,
+      ...(topicId ? { message_thread_id: Number(topicId) } : {}),
       disable_web_page_preview: true,
       reply_markup: { inline_keyboard: [buttons] },
     }),
