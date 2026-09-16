@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   const { error } = await supabase.from("leads").update({ status: "in_progress", assigned_telegram_id: String(actor.id), assigned_telegram_name: actorName }).eq("id", leadId).eq("status", "new");
   if (error) return NextResponse.json({ error: "Could not update lead" }, { status: 500 });
   await supabase.from("lead_status_history").insert({ lead_id: leadId, from_status: "new", to_status: "in_progress", comment: `Взял в работу: ${actorName}` });
-  await telegram(token, "sendMessage", { chat_id: process.env.TELEGRAM_CHAT_ID, message_thread_id: Number(process.env.TELEGRAM_TOPIC_WORK ?? "3"), text: `🟡 Заявка #CP-${lead.public_number}\n\nИмя: ${lead.name}\nТелефон: ${lead.phone}\nКомментарий: ${lead.message ?? "—"}\n\nОтветственный: ${actorName}\nСтатус: В работе`, disable_web_page_preview: true });
+  await telegram(token, "sendMessage", { chat_id: process.env.TELEGRAM_GROUP_ID ?? process.env.TELEGRAM_CHAT_ID, message_thread_id: Number(process.env.TELEGRAM_TOPIC_WORK ?? "3"), text: `🟡 Заявка #CP-${lead.public_number}\n\nИмя: ${lead.name}\nТелефон: ${lead.phone}\nКомментарий: ${lead.message ?? "—"}\n\nОтветственный: ${actorName}\nСтатус: В работе`, disable_web_page_preview: true });
   if (callback.message?.chat?.id && callback.message.message_id) await telegram(token, "deleteMessage", { chat_id: callback.message.chat.id, message_id: callback.message.message_id });
   await telegram(token, "answerCallbackQuery", { callback_query_id: callback.id, text: "Заявка закреплена за вами" });
   if (callback.message?.chat?.id && callback.message.message_id) {

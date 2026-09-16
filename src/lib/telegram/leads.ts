@@ -46,7 +46,7 @@ function calculationLines(snapshot: unknown) {
 
 export async function sendLeadNotification(lead: LeadNotification) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const chatId = process.env.TELEGRAM_GROUP_ID ?? process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) throw new Error("Telegram lead notification is not configured");
 
   const vehicle = vehicleLines(lead.vehicleSnapshot);
