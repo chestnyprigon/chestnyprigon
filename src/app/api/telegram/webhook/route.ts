@@ -7,6 +7,27 @@ async function telegram(token: string, method: string, body: Record<string, unkn
   return fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
+function snapshotLines(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const item = snapshot as Record<string, unknown>;
+  return [
+    `Автомобиль: ${[item.brand, item.model].filter(Boolean).join(" ") || "—"}`,
+    item.trim ? `Комплектация: ${String(item.trim)}` : "",
+    item.year ? `Год: ${String(item.year)}` : "",
+    item.mileage ? `Пробег: ${String(item.mileage)} км` : "",
+    item.sourceUrl ? `Объявление: ${String(item.sourceUrl)}` : "",
+  ].filter(Boolean);
+}
+
+function calculationLines(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const item = snapshot as Record<string, unknown>;
+  return [
+    item.totalUsd ? `Предварительно под ключ: $${String(item.totalUsd)}` : "",
+    item.preferential !== undefined ? `Льготная растаможка: ${item.preferential ? "включена" : "не включена"}` : "",
+  ].filter(Boolean);
+}
+
 export async function POST(request: NextRequest) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (secret && request.headers.get("x-telegram-bot-api-secret-token") !== secret) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,6 +61,7 @@ export async function POST(request: NextRequest) {
     await telegram(token, "answerCallbackQuery", { callback_query_id: callback.id, text: "Заявка уже не находится в работе" });
     return NextResponse.json({ ok: true });
   }
+  const { data: context } = await supabase.from("lead_vehicle_context").select("vehicle_snapshot, calculation_snapshot").eq("lead_id", leadId).maybeSingle();
   const nextStatus = action === "take" ? "in_progress" : "contacted";
   const expectedStatus = action === "take" ? "new" : "in_progress";
   const leadUpdate = action === "take" ? { status: nextStatus, assigned_telegram_id: String(actor.id), assigned_telegram_name: actorName } : { status: nextStatus };
@@ -49,7 +71,10 @@ export async function POST(request: NextRequest) {
   const destination = action === "take" ? process.env.TELEGRAM_TOPIC_WORK : process.env.TELEGRAM_TOPIC_CONTACTED;
   const statusLabel = action === "take" ? "В работе" : "Связались";
   const nextButton = action === "take" ? { text: "🔵 Связались", callback_data: `lead:contact:${leadId}` } : null;
-  await telegram(token, "sendMessage", { chat_id: process.env.TELEGRAM_GROUP_ID ?? process.env.TELEGRAM_CHAT_ID, message_thread_id: Number(destination), text: `${action === "take" ? "🟡" : "🔵"} Заявка #CP-${lead.public_number}\n\nИмя: ${lead.name}\nТелефон: ${lead.phone}\nКомментарий: ${lead.message ?? "—"}\n\nОтветственный: ${action === "take" ? actorName : (lead.assigned_telegram_name ?? actorName)}\nСтатус: ${statusLabel}`, disable_web_page_preview: true, reply_markup: { inline_keyboard: nextButton ? [[nextButton]] : [] } });
+  const vehicle = snapshotLines(context?.vehicle_snapshot);
+  const calculation = calculationLines(context?.calculation_snapshot);
+  const details = [...vehicle, ...(calculation.length ? ["", "Расчёт", ...calculation] : [])].join("\n");
+  await telegram(token, "sendMessage", { chat_id: process.env.TELEGRAM_GROUP_ID ?? process.env.TELEGRAM_CHAT_ID, message_thread_id: Number(destination), text: `${action === "take" ? "🟡" : "🔵"} Заявка #CP-${lead.public_number}\n\nИмя: ${lead.name}\nТелефон: ${lead.phone}\nКомментарий: ${lead.message ?? "—"}${details ? `\n\n${details}` : ""}\n\nОтветственный: ${action === "take" ? actorName : (lead.assigned_telegram_name ?? actorName)}\nСтатус: ${statusLabel}`, disable_web_page_preview: true, reply_markup: { inline_keyboard: nextButton ? [[nextButton]] : [] } });
   if (callback.message?.chat?.id && callback.message.message_id) await telegram(token, "deleteMessage", { chat_id: callback.message.chat.id, message_id: callback.message.message_id });
   await telegram(token, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "take" ? "Заявка закреплена за вами" : "Статус изменён: связались" });
   if (callback.message?.chat?.id && callback.message.message_id) {
