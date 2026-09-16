@@ -8,12 +8,19 @@ const required = (name: string) => { const value = process.env[name]?.trim(); if
 
 async function main() {
   const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: staging, error: stagingError } = await db.from("chestny_catalog_staging")
-    .select("source_listing_id")
-    .eq("report_status", "unavailable")
-    .eq("enrichment_status", "succeeded");
-  if (stagingError) throw new Error(stagingError.message);
-  const ids = [...new Set((staging ?? []).map((row) => row.source_listing_id).filter(Boolean))];
+  const stagingRows: Array<{ source_listing_id: string }> = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await db.from("chestny_catalog_staging")
+      .select("source_listing_id")
+      .eq("report_status", "unavailable")
+      .eq("enrichment_status", "succeeded")
+      .order("source_listing_id")
+      .range(offset, offset + 999);
+    if (error) throw new Error(error.message);
+    stagingRows.push(...((data ?? []) as Array<{ source_listing_id: string }>));
+    if (!data || data.length < 1000) break;
+  }
+  const ids = [...new Set(stagingRows.map((row) => row.source_listing_id).filter(Boolean))];
   if (!ids.length) throw new Error("No eligible unavailable reports found in staging");
   const sourceRows: Array<Record<string, unknown>> = [];
   for (let offset = 0; offset < ids.length; offset += 500) {
