@@ -1,0 +1,22 @@
+[Unit]
+Description=Chestny Prigon Encar report retry batch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chestny-prigon
+EnvironmentFile=/home/ubuntu/tl-auto/.env
+EnvironmentFile=/etc/tl-auto/catalog-proxy.env
+EnvironmentFile=/home/ubuntu/chestny-prigon/.env.enrichment
+Environment=CHESTNY_REPORT_RETRY_RUN_ID=f9f33471-fbf9-4fd3-b5b7-747255cc449c
+Environment=CHESTNY_REPORT_RETRY_BATCH_SIZE=50
+Environment=CHESTNY_REPORT_RETRY_DELAY_MS=3000
+Environment=CHESTNY_REPORT_RETRY_DRY_RUN=false
+ExecStart=/usr/bin/flock -n /tmp/chestny-prigon-encar.lock /usr/bin/npm run radar:report-retry
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=false

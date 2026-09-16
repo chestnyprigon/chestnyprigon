@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { fetch, ProxyAgent } from "undici";
+import { readFile } from "node:fs/promises";
 
 config({ path: ".env", quiet: true });
 const runId = process.env.CHESTNY_REPORT_RETRY_RUN_ID;
@@ -13,6 +14,7 @@ type Row = { id: string; source_listing_id: string; candidate_snapshot: Record<s
 type Probe = { ok: boolean; status?: number; body?: unknown; error?: string };
 type Classification = "ready" | "report_not_found" | "timeout" | "http_error" | "captcha" | "blocked" | "proxy_error";
 const agent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+const radarPath = `${process.env.ENCAR_COORDINATION_DIR ?? "/tmp/encar-coordination"}/radar-priority.json`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const idOf = (row: Row) => String(row.candidate_snapshot.encarId ?? row.source_listing_id);
 
@@ -36,7 +38,12 @@ async function main() {
   const { data: rows, error } = dryRun ? await db.from("chestny_enrichment_queue").select("id,source_listing_id,candidate_snapshot").eq("run_id", runId).eq("status", "queued").order("created_at").limit(batchSize) : await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 30 });
   if (error) throw new Error(error.message);
   const results: Record<string, unknown>[] = [];
-  for (const row of (rows ?? []) as Row[]) {
+  for (const [index, row] of ((rows ?? []) as Row[]).entries()) {
+    if (!dryRun && await radarHasPriority()) {
+      const remaining = ((rows ?? []) as Row[]).slice(index).map((item) => item.id);
+      if (remaining.length) await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", remaining);
+      break;
+    }
     const id = idOf(row);
     const [inspection, summary] = await Promise.all([probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}`), probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}/summary`)]);
     const inspectionClassification = classify(inspection); const summaryClassification = classify(summary);
@@ -46,5 +53,8 @@ async function main() {
     results.push({ sourceListingId: row.source_listing_id, ...result }); await sleep(delayMs);
   }
   console.log(JSON.stringify({ runId, dryRun, batchSize, requested: results.length, onlyEndpoints: ["inspection", "summary"], results: results.length <= 10 ? results : undefined }, null, 2)); await agent!.close();
+}
+async function radarHasPriority() {
+  try { const owner = JSON.parse(await readFile(radarPath, "utf8")) as { pid?: number }; if (!Number.isInteger(owner.pid)) return false; try { process.kill(owner.pid!, 0); return true; } catch { return false; } } catch { return false; }
 }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exit(1); });
