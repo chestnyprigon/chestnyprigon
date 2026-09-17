@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
@@ -97,7 +98,7 @@ function flattenInspection(nodes: unknown, output: Array<{ title: string; status
   }
 }
 
-function inspectionSummary(payload: unknown, listingPayload: unknown) {
+export function inspectionSummary(payload: unknown, listingPayload: unknown) {
   const inspection = record(payload);
   const master = record(inspection.master);
   const detail = record(master.detail);
@@ -172,7 +173,7 @@ function historyType(value: string | null) {
   return "Страховой случай";
 }
 
-function accidentSummary(payload: unknown, historyPayload: unknown) {
+export function accidentSummary(payload: unknown, historyPayload: unknown) {
   const report = record(payload);
   const history = record(historyPayload);
   const insuranceEvents = Array.isArray(history.accidentHistoryResponse)
@@ -474,7 +475,9 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

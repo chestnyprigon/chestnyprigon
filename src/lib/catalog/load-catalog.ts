@@ -673,7 +673,9 @@ async function loadCatalogCarData(id: string): Promise<CatalogCarData | null> {
 // catalog payload briefly, while pricing remains refreshed independently.
 const loadCachedCatalogCarData = unstable_cache(
   loadCatalogCarData,
-  ["catalog-car-data"],
+  // Bump the cache namespace when report payloads are repaired so an older
+  // ISR entry cannot keep showing the previous "Нет данных" state.
+  ["catalog-car-data-v2"],
   { revalidate: 60 },
 );
 
