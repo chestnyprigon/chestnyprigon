@@ -30,7 +30,11 @@ const activePath = `${coordinationDirectory}/chestny-enrichment-active.json`;
 const radarPath = `${coordinationDirectory}/radar-priority.json`;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
+const text = (value: unknown) => {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+};
 const obj = (value: unknown) => value && typeof value === "object" ? value as Record<string, unknown> : {};
 
 type Row = {
