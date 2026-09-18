@@ -55,7 +55,8 @@ async function main() {
     if (!data || data.length < 1_000) break;
   }
 
-  const ready: Array<Record<string, unknown>> = [];
+  const readyByCanonical = new Map<string, Record<string, unknown>>();
+  let duplicateCanonical = 0;
   let missingPayload = 0;
   const reasons: Record<string, number> = {};
   const decisions: Record<string, number> = {};
@@ -88,7 +89,13 @@ async function main() {
     const images = Array.isArray(row.image_urls) ? row.image_urls : [];
     const basicRules = year !== null && year >= 2016 && mileage !== null && mileage <= 190_000 && priceKrw !== null && priceKrw > 0 && images.length >= 5;
     if (screening.decision === "approved" && basicRules) {
-      ready.push({ sourceListingId: sourceId, reportStatus: row.report_status ?? "unavailable", imageCount: images.length, manufacturer: snapshot.manufacturer, model: snapshot.model, modelYear: year, mileageKm: mileage, priceKrw });
+      const canonicalId = String(detail.vehicleId);
+      const candidate = { sourceListingId: sourceId, canonicalId, reportStatus: row.report_status ?? "unavailable", imageCount: images.length, manufacturer: snapshot.manufacturer, model: snapshot.model, modelYear: year, mileageKm: mileage, priceKrw };
+      if (readyByCanonical.has(canonicalId)) {
+        duplicateCanonical += 1;
+        continue;
+      }
+      readyByCanonical.set(canonicalId, candidate);
     }
   }
 
@@ -102,12 +109,13 @@ async function main() {
     unavailableExcluded: 118,
     decisions,
     rejectionReasons: reasons,
-    readyForPublication: ready.length,
-    ready,
+    duplicateCanonical,
+    readyForPublication: readyByCanonical.size,
+    ready: [...readyByCanonical.values()],
   };
   await fs.mkdir(path.resolve(process.cwd(), "output"), { recursive: true });
   await fs.writeFile(path.resolve(process.cwd(), "output/chestny-vps-publication-ready.json"), `${JSON.stringify(output, null, 2)}\n`, "utf8");
-  console.log(JSON.stringify({ ...output, ready: ready.slice(0, 20), outputFile: "output/chestny-vps-publication-ready.json" }, null, 2));
+  console.log(JSON.stringify({ ...output, ready: output.ready.slice(0, 20), outputFile: "output/chestny-vps-publication-ready.json" }, null, 2));
 }
 
 main().catch((error) => {
