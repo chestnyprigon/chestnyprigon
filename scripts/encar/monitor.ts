@@ -1,7 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { delay, fetchDetail } from "./client";
+import { delay, fetchPublicDetail } from "./client";
 import type { EncarDetail, UnknownRecord } from "./types";
 import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
@@ -122,7 +122,7 @@ async function main() {
       const sourceListingId = ids[index];
       if (!sourceListingId) return;
       try {
-        const detail = await fetchDetail(sourceListingId, { attempts: 1, timeoutMs: 8_000 });
+        const detail = await fetchPublicDetail(sourceListingId, { attempts: 1, timeoutMs: 8_000 });
         found.push(sourceListingId);
         const currentPriceKrw = sourcePriceKrw(detail);
         if (currentPriceKrw === null) {
@@ -232,6 +232,7 @@ async function main() {
     found: found.length,
     confirmedMissing: missing.length,
     transientErrors: failed.length,
+    errorSamples: failed.slice(0, 5),
     archived: dryRun ? 0 : applied.archived_count,
     priceChecked: found.length,
     priceChanged: priceChanges.length,
