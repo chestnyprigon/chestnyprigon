@@ -56,7 +56,7 @@ async function radarHasPriority() {
 }
 
 function isRetryableFailure(error: string | null) {
-  return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|429|5\d\d)/i.test(error));
+  return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|429|5\d\d)|detail_missing_canonical_identifier/i.test(error));
 }
 
 async function requestJson(agent: ProxyAgent, endpoint: string) {
@@ -159,7 +159,8 @@ async function main() {
       const advertisedId = row.source_listing_id;
       try {
         // Resolve the canonical ID from detail before calling any other endpoint.
-        const detail = obj(await requestJson(agent, `https://api.encar.com/v1/readside/vehicle/${encodeURIComponent(advertisedId)}`));
+        const detailResponse = await requestJson(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW`);
+        const detail = obj(Array.isArray(detailResponse) ? detailResponse[0] : detailResponse);
         const canonicalId = text(detail.vehicleId);
         const vehicleNo = text(detail.vehicleNo);
         if (!canonicalId || !vehicleNo) throw new Error("detail_missing_canonical_identifier");
