@@ -1,5 +1,6 @@
 import type { EncarBundle, EncarDetail, EncarSearchListing } from "./types";
 import { encarHeaders, ensureEncarVerified } from "./auth";
+import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
 
 const LIST_ENDPOINT = "https://api.encar.com/search/car/list/general";
 const DETAIL_ENDPOINT = "https://api.encar.com/v1/readside/vehicle";
@@ -9,6 +10,20 @@ type SearchResponse = {
   SearchResults?: EncarSearchListing[];
 };
 
+let proxyAgent: ProxyAgent | undefined;
+let configuredProxyUrl: string | undefined;
+
+function encarDispatcher(): Dispatcher | undefined {
+  const proxyUrl = process.env.ENCAR_PROXY_URL?.trim();
+  if (!proxyUrl) return undefined;
+  if (proxyUrl !== configuredProxyUrl) {
+    proxyAgent?.close();
+    proxyAgent = new ProxyAgent(proxyUrl);
+    configuredProxyUrl = proxyUrl;
+  }
+  return proxyAgent;
+}
+
 async function fetchJson<T>(url: URL | string, options: { attempts?: number; timeoutMs?: number } = {}): Promise<T> {
   const attempts = options.attempts ?? 3;
   const timeoutMs = options.timeoutMs ?? 20_000;
@@ -16,7 +31,12 @@ async function fetchJson<T>(url: URL | string, options: { attempts?: number; tim
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       await ensureEncarVerified();
-      const response = await fetch(url, { headers: encarHeaders(), signal: AbortSignal.timeout(timeoutMs) });
+      const dispatcher = encarDispatcher();
+      const response = await undiciFetch(url, {
+        headers: encarHeaders(),
+        signal: AbortSignal.timeout(timeoutMs),
+        ...(dispatcher ? { dispatcher } : {}),
+      });
       if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
       return (await response.json()) as T;
     } catch (error) {
@@ -33,13 +53,15 @@ async function fetchPublicJson<T>(url: URL | string, options: { attempts?: numbe
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await fetch(url, {
+      const dispatcher = encarDispatcher();
+      const response = await undiciFetch(url, {
         headers: encarHeaders({
           Accept: "application/json, text/plain, */*",
           Origin: "https://fem.encar.com",
           Referer: "https://fem.encar.com/",
         }),
         signal: AbortSignal.timeout(timeoutMs),
+        ...(dispatcher ? { dispatcher } : {}),
       });
       if (!response.ok) throw new Error(`Encar returned HTTP ${response.status} for ${url}`);
       return (await response.json()) as T;
