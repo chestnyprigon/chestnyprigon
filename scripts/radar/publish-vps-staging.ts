@@ -58,29 +58,69 @@ async function main() {
     rows.push(...((data ?? []) as Array<Record<string, unknown>>));
   }
 
+  if (new Set(selectedIds).size !== selectedIds.length) {
+    throw new Error(`Publication input contains duplicate staging IDs: selected=${selectedIds.length}, unique=${new Set(selectedIds).size}`);
+  }
+
+  const rowBySource = new Map(rows.map((row) => [String(row.source_listing_id), row]));
   const items: PilotItem[] = [];
-  for (const row of rows) {
-    const sourceId = String(row.source_listing_id ?? "");
+  const qualityRejections: Array<{ sourceListingId: string; reasons: string[] }> = [];
+  for (const sourceId of selectedIds) {
+    const row = rowBySource.get(sourceId);
+    const reasons: string[] = [];
+    if (!row) {
+      qualityRejections.push({ sourceListingId: sourceId, reasons: ["staging_row_missing"] });
+      continue;
+    }
     const snapshot = record(row.candidate_snapshot);
     const payload = record(row.encar_payload);
     const detail = record(payload.detail);
     const images = Array.isArray(row.image_urls) ? row.image_urls : [];
-    if (!sourceId || !Object.keys(detail).length || images.length < 5) continue;
+    if (runId !== "vps-staging" && payload.runId !== runId) reasons.push("run_id_mismatch");
+    if (!Object.keys(detail).length) reasons.push("detail_missing");
+    if (!detail.vehicleId || !detail.vehicleNo) reasons.push("canonical_identifier_missing");
+    if (images.length < 5) reasons.push(`incomplete_gallery:${images.length}`);
+    if (reasons.length) {
+      qualityRejections.push({ sourceListingId: sourceId, reasons });
+      continue;
+    }
     const bundle: EncarBundle = {
       fetchedAt: String(row.updated_at ?? new Date().toISOString()),
       search: searchFromSnapshot(sourceId, snapshot),
       detail,
     };
     const screening = screenListing(bundle);
-    if (screening.decision !== "approved") continue;
-    items.push({ bundle, screening, normalized: normalizeListing(bundle) });
+    if (screening.decision !== "approved") {
+      qualityRejections.push({ sourceListingId: sourceId, reasons: screening.reasonCodes.length ? screening.reasonCodes : ["screening_not_approved"] });
+      continue;
+    }
+    const normalized = normalizeListing(bundle);
+    if (!normalized) {
+      qualityRejections.push({ sourceListingId: sourceId, reasons: ["normalization_failed"] });
+      continue;
+    }
+    if (String(normalized.sourceListingId) !== String(detail.vehicleId)) {
+      qualityRejections.push({ sourceListingId: sourceId, reasons: ["canonical_id_mismatch"] });
+      continue;
+    }
+    items.push({ bundle, screening, normalized });
   }
 
-  if (items.length !== selectedIds.length) throw new Error(`Staging quality changed: selected=${selectedIds.length}, publishable=${items.length}`);
+  if (qualityRejections.length || items.length !== selectedIds.length) {
+    throw new Error(JSON.stringify({
+      message: "Staging quality changed; publication stopped before any write",
+      selected: selectedIds.length,
+      publishable: items.length,
+      rejected: qualityRejections.length,
+      samples: qualityRejections.slice(0, 20),
+    }));
+  }
   const uniqueItems = [
     ...new Map(items.map((item) => [String(item.normalized!.sourceListingId), item])).values(),
   ];
-  const rowBySource = new Map(rows.map((row) => [String(row.source_listing_id), row]));
+  if (uniqueItems.length !== items.length) {
+    throw new Error(`Publication input contains duplicate canonical IDs: selected=${items.length}, unique=${uniqueItems.length}`);
+  }
   const totals = { fetchedCount: 0, acceptedCount: 0, rejectedCount: 0, errorCount: 0, reportRows: 0, batches: 0 };
   for (let offset = 0; offset < uniqueItems.length; offset += 100) {
     const batch = uniqueItems.slice(offset, offset + 100);

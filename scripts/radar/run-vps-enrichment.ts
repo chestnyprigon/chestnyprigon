@@ -63,6 +63,14 @@ function isRetryableFailure(error: string | null) {
   return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|429|5\d\d)|detail_missing_canonical_identifier/i.test(error));
 }
 
+function failureClass(error: string) {
+  if (/incomplete_gallery/i.test(error)) return "incomplete_gallery";
+  if (/detail_missing_canonical_identifier/i.test(error)) return "canonical_identifier_missing";
+  if (/HTTP (404|410)/i.test(error)) return "source_unavailable";
+  if (/HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
+  return "enrichment_error";
+}
+
 async function requestJson(agent: ProxyAgent, endpoint: string) {
   const response = await undiciFetch(endpoint, {
     headers: {
@@ -225,8 +233,9 @@ async function main() {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const unavailable = error instanceof EncarRequestError && [404, 410].includes(error.status);
-        await complete(db, row, unavailable ? "unavailable" : "failed", { advertisedId, reason: message }, undefined, undefined, undefined, [], unavailable ? undefined : message);
-        results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: message });
+        const kind = failureClass(message);
+        await complete(db, row, unavailable ? "unavailable" : "failed", { advertisedId, reason: message, failureClass: kind, retryable: !unavailable && isRetryableFailure(message) }, undefined, undefined, undefined, [], unavailable ? undefined : message);
+        results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: message, failureClass: kind, retryable: !unavailable && isRetryableFailure(message) });
       }
       await sleep(delayMs);
     }
