@@ -53,6 +53,11 @@ function sourceUpdatedAt(detail: EncarDetail, fallback: string | null) {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+function encarRequestId(sourceUrl: string | null, fallback: string) {
+  const match = sourceUrl?.match(/[?&]carid=(\d+)/i);
+  return match?.[1] ?? fallback;
+}
+
 async function main() {
   const batchSize = integerArgument("batch-size", Number(process.env.ENCAR_MONITOR_BATCH_SIZE ?? DEFAULT_BATCH_SIZE), 1, 1_000);
   const concurrency = integerArgument("concurrency", Number(process.env.ENCAR_MONITOR_CONCURRENCY ?? DEFAULT_CONCURRENCY), 1, 2);
@@ -69,7 +74,7 @@ async function main() {
 
   const { data: candidates, error: candidateError } = await client
     .from("vehicles")
-    .select("id,source_listing_id,price_krw,engine_cc,first_registration_date,fuel_type,source_updated_at,last_checked_at,revalidation_miss_count")
+    .select("id,source_listing_id,source_url,price_krw,engine_cc,first_registration_date,fuel_type,source_updated_at,last_checked_at,revalidation_miss_count")
     .eq("status", "active")
     .eq("is_public", true)
     .order("last_checked_at", { ascending: true, nullsFirst: true })
@@ -121,8 +126,9 @@ async function main() {
       const index = next++;
       const sourceListingId = ids[index];
       if (!sourceListingId) return;
+      const requestId = encarRequestId(rows[index].source_url, sourceListingId);
       try {
-        const detail = await fetchPublicDetail(sourceListingId, { attempts: 1, timeoutMs: 8_000 });
+        const detail = await fetchPublicDetail(requestId, { attempts: 1, timeoutMs: 8_000 });
         found.push(sourceListingId);
         const currentPriceKrw = sourcePriceKrw(detail);
         if (currentPriceKrw === null) {
@@ -138,7 +144,7 @@ async function main() {
         }
       } catch (error) {
         if (isNotFoundError(error)) missing.push(sourceListingId);
-        else failed.push({ sourceListingId, error: error instanceof Error ? error.message : String(error) });
+        else failed.push({ sourceListingId: `${sourceListingId} (encar:${requestId})`, error: error instanceof Error ? error.message : String(error) });
       }
       await delay(delayMs);
     }
