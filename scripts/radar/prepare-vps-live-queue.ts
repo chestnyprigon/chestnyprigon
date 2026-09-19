@@ -91,6 +91,8 @@ async function main() {
   const agent = new ProxyAgent(proxyUrl);
   const runId = crypto.randomUUID();
   const selected = new Map<string, Record<string, unknown>>();
+  const newCandidates = new Map<string, Record<string, unknown>>();
+  const known = new Set<string>();
   const batches = selectWaveBatches(searchBudget, ["european", "korean", "other"]);
   const details: Array<Record<string, unknown>> = [];
   try {
@@ -100,24 +102,30 @@ async function main() {
       const manufacturer = wave.manufacturer === "*" ? undefined : primaryManufacturerAlias(wave.manufacturer);
       const query = createDomesticQuery(wave.yearFrom ?? yearFrom, yearTo, maxMileage, "Y", manufacturer);
       const page = await search(agent, query, batch.offset, Math.min(pageSize, batch.limit));
+      const pageIds: string[] = [];
       for (const listing of page.listings) {
         const id = String(listing.Id ?? "");
         if (!id || selected.has(id) || obviousExclusion(listing)) continue;
         const year = modelYear(listing);
         if (year !== null && year < yearFrom) continue;
         selected.set(id, listing);
+        pageIds.push(id);
       }
-      details.push({ wave: batch.wave.id, manufacturer: wave.manufacturer, offset: batch.offset, requested: batch.limit, returned: page.listings.length, total: page.total, selected: selected.size });
+      const knownPage = await existingIdentifiers(pageIds);
+      for (const id of knownPage) known.add(id);
+      for (const id of pageIds) {
+        const listing = selected.get(id);
+        if (listing && !knownPage.has(id)) newCandidates.set(id, listing);
+      }
+      details.push({ wave: batch.wave.id, manufacturer: wave.manufacturer, offset: batch.offset, requested: batch.limit, returned: page.listings.length, total: page.total, selected: selected.size, newCandidates: newCandidates.size });
       // Keep candidate discovery itself gentle and serialized.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
-      if (selected.size >= searchBudget) break;
+      if (newCandidates.size >= targetCandidates || selected.size >= searchBudget) break;
     }
   } finally {
     await agent.close();
   }
-  const ids = [...selected.keys()];
-  const known = await existingIdentifiers(ids);
-  const candidates = ids.filter((id) => !known.has(id)).slice(0, targetCandidates);
+  const candidates = [...newCandidates.keys()].slice(0, targetCandidates);
   if (!candidates.length) throw new Error("No new live Encar candidates were found");
   const { error: runError } = await db.from("chestny_enrichment_runs").insert({
     id: runId,
