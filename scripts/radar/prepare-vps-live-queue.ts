@@ -23,6 +23,10 @@ function argument(name: string, fallback: number, minimum: number, maximum: numb
 const proxyUrl = required("ENCAR_PROXY_URL");
 const targetCandidates = argument("target", 3_200, 100, 5_000);
 const pageSize = argument("page-size", 500, 50, 500);
+const overscanRaw = process.argv.find((value) => value.startsWith("--overscan="))?.split("=")[1];
+const overscan = overscanRaw === undefined ? 2.5 : Number(overscanRaw);
+if (!Number.isFinite(overscan) || overscan < 1 || overscan > 4) throw new Error("--overscan must be a number from 1 to 4");
+const searchBudget = Math.min(20_000, Math.ceil(targetCandidates * overscan));
 const maxMileage = argument("max-mileage", 190_000, 1, 500_000);
 const yearFrom = argument("year-from", 2016, 1990, new Date().getFullYear());
 const yearTo = new Date().getFullYear();
@@ -86,7 +90,7 @@ async function main() {
   const agent = new ProxyAgent(proxyUrl);
   const runId = crypto.randomUUID();
   const selected = new Map<string, Record<string, unknown>>();
-  const batches = selectWaveBatches(targetCandidates, ["european", "korean", "other"]);
+  const batches = selectWaveBatches(searchBudget, ["european", "korean", "other"]);
   const details: Array<Record<string, unknown>> = [];
   try {
     for (const batch of batches) {
@@ -105,7 +109,7 @@ async function main() {
       details.push({ wave: batch.wave.id, manufacturer: wave.manufacturer, offset: batch.offset, requested: batch.limit, returned: page.listings.length, total: page.total, selected: selected.size });
       // Keep candidate discovery itself gentle and serialized.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
-      if (selected.size >= targetCandidates) break;
+      if (selected.size >= searchBudget) break;
     }
   } finally {
     await agent.close();
@@ -120,7 +124,7 @@ async function main() {
     status: "approved",
     candidate_count: candidates.length,
     source_file: "vps-live-encar-search",
-    rules: { yearFrom, yearTo, maxMileage, targetCandidates, pageSize, groups: ["european", "korean", "other"], publication: "manual-after-screening" },
+    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, groups: ["european", "korean", "other"], publication: "manual-after-screening" },
   });
   if (runError) throw new Error(runError.message);
   for (let offset = 0; offset < candidates.length; offset += 500) {
@@ -145,7 +149,7 @@ async function main() {
     const { error } = await db.from("chestny_enrichment_queue").insert(rows);
     if (error) throw new Error(error.message);
   }
-  console.log(JSON.stringify({ status: "approved", runId, discovered: selected.size, knownSkipped: known.size, queued: candidates.length, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
+  console.log(JSON.stringify({ status: "approved", runId, discovered: selected.size, knownSkipped: known.size, queued: candidates.length, targetCandidates, searchBudget, overscan, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

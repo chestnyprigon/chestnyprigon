@@ -80,8 +80,8 @@ export function totalWaveQuota(group?: WaveGroup) {
 }
 
 export function selectWaveBatches(target: number, groups: readonly WaveGroup[] = ["european", "korean"]) {
-  if (!Number.isInteger(target) || target < 1 || target > 5_000) {
-    throw new Error("target must be an integer from 1 to 5000");
+  if (!Number.isInteger(target) || target < 1 || target > 20_000) {
+    throw new Error("target must be an integer from 1 to 20000");
   }
   const allowed = new Set(groups);
   const waves: BrandWave[] = [];
