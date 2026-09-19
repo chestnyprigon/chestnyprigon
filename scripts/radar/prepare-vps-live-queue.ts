@@ -73,6 +73,7 @@ async function existingIdentifiers(ids: string[]) {
       db.from("encar_raw_listings").select("source_listing_id").in("source_listing_id", chunk),
       db.from("chestny_catalog_staging").select("source_listing_id").in("source_listing_id", chunk),
       db.from("vehicle_source_identifiers").select("source_identifier").in("source_identifier", chunk),
+      db.from("chestny_enrichment_queue").select("source_listing_id").in("source_listing_id", chunk),
     ]);
     for (const result of queries) {
       if (result.error) throw new Error(result.error.message);
