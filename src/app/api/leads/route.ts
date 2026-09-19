@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
       utm_source: text(body.utmSource, 100) || null,
       utm_medium: text(body.utmMedium, 100) || null,
       utm_campaign: text(body.utmCampaign, 150) || null,
+      utm_content: text(body.utmContent, 150) || null,
+      utm_term: text(body.utmTerm, 150) || null,
     }).select("id, public_number").single();
     if (error || !lead) throw error ?? new Error("Lead was not created");
 

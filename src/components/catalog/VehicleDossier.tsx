@@ -9,6 +9,7 @@ import { calculateBelarusPrice, type BelarusPriceCalculation } from "@/lib/prici
 import type { KrwUsdRate } from "@/lib/pricing/krw-usdt-rate";
 import type { PricingContext } from "@/lib/pricing/pricing-context";
 import { formatUsdWithByn } from "@/lib/pricing/display";
+import { currentMarketingParams, trackMetrikaGoal } from "@/lib/analytics/metrika";
 
 const number = new Intl.NumberFormat("ru-RU");
 
@@ -146,6 +147,9 @@ export function VehicleDossier({ car, pricingContext, catalogHref = "/catalog" }
   const thumbsRef = useRef<HTMLDivElement>(null);
   const photoSwipeStart = useRef<{ x: number; y: number } | null>(null);
   const suppressPhotoClick = useRef(false);
+  useEffect(() => {
+    trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model });
+  }, [car.id, car.brand, car.model]);
   const storedCalculation = useMemo(() => calculateBelarusPrice({ priceKrw: car.sourcePriceKrw, engineCc: car.engineCc, firstRegistrationDate: car.registrationDate, fuelType: car.sourceFuel, preferential, profile: pricingContext.profile, exchangeRates: pricingContext.exchangeRates }), [car, preferential, pricingContext]);
   const calculation = liveCalculation ?? storedCalculation;
   const krwUsdRate = liveKrwUsdRate ?? pricingContext.krwUsdRate;
@@ -160,9 +164,11 @@ export function VehicleDossier({ car, pricingContext, catalogHref = "/catalog" }
         name: data.get("name"), phone: data.get("phone"), message: data.get("message"), source: "vehicle", vehicleId: car.id,
         vehicleSnapshot: { brand: car.brand, model: car.model, trim: car.trim, year: car.year, mileage: car.mileage, sourceUrl: car.sourceUrl },
         calculationSnapshot: { totalUsd: calculation.totalUsd, preferential }, pageUrl: window.location.href,
+        ...currentMarketingParams(),
       }) });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error);
+      trackMetrikaGoal("lead_submit", { source: "vehicle", vehicle_id: car.id, brand: car.brand, model: car.model });
       setLeadSent(true);
     } catch (error) { setLeadError(error instanceof Error ? error.message : "Попробуйте ещё раз"); }
     finally { setLeadSending(false); }
@@ -242,6 +248,7 @@ export function VehicleDossier({ car, pricingContext, catalogHref = "/catalog" }
   };
 
   const refreshPrice = async () => {
+    trackMetrikaGoal("price_refresh", { vehicle_id: car.id });
     setPriceRefreshing(true);
     setPriceRefreshError(null);
     try {

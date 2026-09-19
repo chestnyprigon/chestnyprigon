@@ -29,6 +29,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { CatalogCar } from "@/data/cars";
 import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
 import { HomeCatalog } from "@/components/catalog/HomeCatalog";
+import { currentMarketingParams, trackMetrikaGoal } from "@/lib/analytics/metrika";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
@@ -100,10 +101,11 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
         pageUrl: window.location.href, referrer: document.referrer,
         utmSource: new URLSearchParams(window.location.search).get("utm_source"),
         utmMedium: new URLSearchParams(window.location.search).get("utm_medium"),
-        utmCampaign: new URLSearchParams(window.location.search).get("utm_campaign"),
+        ...currentMarketingParams(),
       }) });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error);
+      trackMetrikaGoal("lead_submit", { source: "homepage" });
       setSubmitted(true);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Попробуйте ещё раз");

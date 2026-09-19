@@ -18,6 +18,8 @@ export type Database = {
           utm_source: string | null;
           utm_medium: string | null;
           utm_campaign: string | null;
+          utm_content: string | null;
+          utm_term: string | null;
           status: string;
           assigned_to: string | null;
           assigned_telegram_id: string | null;
@@ -26,7 +28,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
         };
-        Insert: { name: string; phone: string; email?: string | null; telegram_username?: string | null; message?: string | null; source?: string; page_url?: string | null; referrer?: string | null; utm_source?: string | null; utm_medium?: string | null; utm_campaign?: string | null; status?: string; assigned_telegram_id?: string | null; assigned_telegram_name?: string | null; notification_status?: string };
+        Insert: { name: string; phone: string; email?: string | null; telegram_username?: string | null; message?: string | null; source?: string; page_url?: string | null; referrer?: string | null; utm_source?: string | null; utm_medium?: string | null; utm_campaign?: string | null; utm_content?: string | null; utm_term?: string | null; status?: string; assigned_telegram_id?: string | null; assigned_telegram_name?: string | null; notification_status?: string };
         Update: Partial<Database["public"]["Tables"]["leads"]["Insert"]>;
         Relationships: [];
       };

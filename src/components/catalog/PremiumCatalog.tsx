@@ -30,6 +30,7 @@ import {
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 import { formatUsdWithByn } from "@/lib/pricing/display";
+import { trackMetrikaGoal } from "@/lib/analytics/metrika";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
@@ -151,6 +152,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     if (accidentFilter === "Без ДТП") params.set("accidents", "clear");
     if (accidentFilter === "Есть страховые случаи") params.set("accidents", "with");
     if (page > 1) params.set("page", String(page));
+    trackMetrikaGoal("filter_apply", { source: "catalog", brand, model, fuel, accident_filter: accidentFilter });
     router.push(`/catalog${params.size ? `?${params.toString()}` : ""}`);
     setFiltersOpen(false);
   };
@@ -212,7 +214,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
 
         <div className="catalog-results">
           <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
-          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => router.push(href); return <article className="result-car" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}>
+          {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "catalog" }); router.push(href); }; return <article className="result-car" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}>
             <Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} className="result-car-media" href={href}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
             <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
           </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}

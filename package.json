@@ -37,6 +37,7 @@
     "encar:backfill-specs": "tsx scripts/encar/backfill-vehicle-specs.ts",
     "test:encar": "tsx --test scripts/encar/*.test.ts",
     "pricing:recalculate": "tsx scripts/pricing/recalculate.ts",
+    "analytics:metrika": "tsx scripts/analytics/fetch-metrika-report.ts",
     "test:pricing": "tsx --test src/lib/pricing/*.test.ts"
   },
   "dependencies": {
