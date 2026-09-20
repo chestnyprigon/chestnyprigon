@@ -19,6 +19,20 @@ export function trackMetrikaHit(url: string) {
   window.ym(YANDEX_METRIKA_ID, "hit", url);
 }
 
+export function markMetrikaStaffVisit() {
+  if (typeof window === "undefined") return;
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("staff") === "1") {
+    window.localStorage.setItem("chestnyprigon_metrika_staff", "1");
+  }
+
+  if (window.localStorage.getItem("chestnyprigon_metrika_staff") !== "1") return;
+  if (typeof window.ym !== "function") return;
+
+  window.ym(YANDEX_METRIKA_ID, "userParams", { staff: 1 });
+}
+
 export function currentMarketingParams() {
   if (typeof window === "undefined") return {};
   const params = new URLSearchParams(window.location.search);

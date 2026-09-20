@@ -2,7 +2,7 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef } from "react";
-import { trackMetrikaHit } from "@/lib/analytics/metrika";
+import { markMetrikaStaffVisit, trackMetrikaHit } from "@/lib/analytics/metrika";
 
 function MetrikaTrackerContent() {
   const pathname = usePathname();
@@ -10,6 +10,7 @@ function MetrikaTrackerContent() {
   const firstRender = useRef(true);
 
   useEffect(() => {
+    markMetrikaStaffVisit();
     if (firstRender.current) {
       firstRender.current = false;
       return;
