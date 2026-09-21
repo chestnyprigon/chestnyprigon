@@ -74,6 +74,7 @@ export type BelarusPriceCalculation = {
   arrivalMinskEur: number | null;
   companyServiceUsd: number;
   totalUsd: number | null;
+  /** Numeric value is USD per EUR, derived from the two BYN rates. */
   eurPerUsd: number;
   rates: ExchangeRates;
 };
@@ -168,7 +169,9 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
   const arrivalMinskEur = dutyEur === null || utilizationByn === null
     ? null
     : Math.round(profile.svhDeclarantEur + dutyEur + profile.customsClearanceEur + utilizationByn / rates.eurByn);
-  const totalUsd = arrivalMinskEur === null ? null : Math.round(firstPaymentUsd + arrivalMinskEur / eurPerUsd + profile.companyServiceUsd);
+  // eurPerUsd is derived as (BYN per EUR) / (BYN per USD), so its unit is
+  // USD per EUR. EUR costs must therefore be converted to USD by multiplying.
+  const totalUsd = arrivalMinskEur === null ? null : Math.round(firstPaymentUsd + arrivalMinskEur * eurPerUsd + profile.companyServiceUsd);
 
   return {
     profileVersion: profile.version,

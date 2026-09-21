@@ -19,6 +19,27 @@ test("reproduces the approved client delivery and commission first payment", () 
   assert.equal(result.firstPaymentUsd, 41_826);
 });
 
+test("converts arrival costs from EUR to USD by multiplying the USD-per-EUR rate", () => {
+  const result = calculateBelarusPrice({
+    priceKrw: 15_140_000,
+    engineCc: 1_500,
+    firstRegistrationDate: "2023-05-01",
+    fuelType: "Бензин",
+    preferential: false,
+    now: new Date("2026-08-23T12:00:00Z"),
+    exchangeRates: { usdByn: 3, eurByn: 3.426, rateDate: "2026-08-23", source: "nbrb" },
+    profile: {
+      ...CHESTNY_PRIGON_PRICING_PROFILE,
+      deliveryUsd: 4_800,
+      commissionRate: 0.025,
+    },
+  });
+
+  assert.ok(Math.abs(result.eurPerUsd - 1.142) < 1e-9);
+  assert.equal(result.sourcePriceEur, Math.round(result.sourcePriceUsd / 1.142));
+  assert.equal(result.totalUsd, Math.round(result.firstPaymentUsd + result.arrivalMinskEur! * 1.142 + result.companyServiceUsd));
+});
+
 test("uses the current Belarus utilization fee by the vehicle age", () => {
   const base = {
     priceKrw: 20_000_000,
@@ -49,7 +70,7 @@ test("applies the preferential coefficient only to customs duty", () => {
   const regular = calculateBelarusPrice({ ...base, preferential: false });
 
   assert.equal(regular.customsDutyEur, preferential.customsDutyEur! * 2);
-  assert.equal(regular.totalUsd! - preferential.totalUsd!, Math.round(preferential.customsDutyEur! / preferential.eurPerUsd));
+  assert.equal(regular.totalUsd! - preferential.totalUsd!, Math.round(preferential.customsDutyEur! * preferential.eurPerUsd));
 });
 
 test("does not invent a customs amount for an electric vehicle", () => {
