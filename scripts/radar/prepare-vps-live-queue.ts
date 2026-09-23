@@ -27,6 +27,7 @@ const overscanRaw = process.argv.find((value) => value.startsWith("--overscan=")
 const overscan = overscanRaw === undefined ? 2.5 : Number(overscanRaw);
 if (!Number.isFinite(overscan) || overscan < 1 || overscan > 4) throw new Error("--overscan must be a number from 1 to 4");
 const searchBudget = Math.min(20_000, Math.ceil(targetCandidates * overscan));
+const pageOffset = argument("page-offset", 0, 0, 100_000);
 const maxMileage = argument("max-mileage", 190_000, 1, 500_000);
 const yearFrom = argument("year-from", 2016, 1990, new Date().getFullYear());
 const yearTo = new Date().getFullYear();
@@ -101,7 +102,7 @@ async function main() {
       if (!wave) continue;
       const manufacturer = wave.manufacturer === "*" ? undefined : primaryManufacturerAlias(wave.manufacturer);
       const query = createDomesticQuery(wave.yearFrom ?? yearFrom, yearTo, maxMileage, "Y", manufacturer);
-      const page = await search(agent, query, batch.offset, Math.min(pageSize, batch.limit));
+      const page = await search(agent, query, pageOffset + batch.offset, Math.min(pageSize, batch.limit));
       const pageIds: string[] = [];
       for (const listing of page.listings) {
         const id = String(listing.Id ?? "");
@@ -133,7 +134,7 @@ async function main() {
     status: "approved",
     candidate_count: candidates.length,
     source_file: "vps-live-encar-search",
-    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, groups: ["european", "korean", "other"], publication: "manual-after-screening" },
+    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, pageOffset, groups: ["european", "korean", "other"], publication: "manual-after-screening" },
   });
   if (runError) throw new Error(runError.message);
   for (let offset = 0; offset < candidates.length; offset += 500) {
@@ -158,7 +159,7 @@ async function main() {
     const { error } = await db.from("chestny_enrichment_queue").insert(rows);
     if (error) throw new Error(error.message);
   }
-  console.log(JSON.stringify({ status: "approved", runId, discovered: selected.size, knownSkipped: known.size, queued: candidates.length, targetCandidates, searchBudget, overscan, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
+  console.log(JSON.stringify({ status: "approved", runId, discovered: selected.size, knownSkipped: known.size, queued: candidates.length, targetCandidates, searchBudget, overscan, pageOffset, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
