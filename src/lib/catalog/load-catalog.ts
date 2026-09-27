@@ -361,7 +361,7 @@ function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): Cat
 function mapVehicleRows(
   data: VehicleRow[],
   imagesByVehicle: Map<string, string[]>,
-  reportsByVehicle: Map<string, { inspection_summary: unknown; accident_summary: unknown; report_status: string; fetched_at: string }>,
+  reportsByVehicle: Map<string, { options: unknown; inspection_summary: unknown; accident_summary: unknown; report_status: string; fetched_at: string }>,
   pricingContext: PricingContext,
 ): CatalogCar[] {
   return data.flatMap((row) => {
@@ -387,7 +387,7 @@ function mapVehicleRows(
       vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd ?? 0, sourcePriceKrw: Number(row.price_krw),
       location: locationName(row.location), images, imageGroups: parseImageGroups(report?.inspection_summary, images), sourceUrl: row.source_url,
       publishedAt: row.published_at, sourceUpdatedAt: row.source_updated_at, lastSeenAt: row.last_seen_at, status: "Проверено" as const,
-      calculation, options: [], inspection: parseInspection(report?.inspection_summary), accidents: parseAccidents(report?.accident_summary),
+      calculation, options: parseOptions(report?.options), inspection: parseInspection(report?.inspection_summary), accidents: parseAccidents(report?.accident_summary),
       reportStatus: report?.report_status ?? null, reportFetchedAt: report?.fetched_at ?? null,
     }];
   });
@@ -535,7 +535,7 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
   const ids = (vehicles ?? []).map((vehicle) => vehicle.id);
   const [imagesResult, reportsResult] = ids.length ? await Promise.all([
     client.from("vehicle_images").select("vehicle_id,source_url,position").in("vehicle_id", ids).order("position", { ascending: true }),
-    client.from("vehicle_reports").select("vehicle_id,inspection_summary,accident_summary,report_status,fetched_at").in("vehicle_id", ids),
+    client.from("vehicle_reports").select("vehicle_id,options,inspection_summary,accident_summary,report_status,fetched_at").in("vehicle_id", ids),
   ]) : [{ data: [], error: null }, { data: [], error: null }];
   if (imagesResult.error || reportsResult.error) throw new Error(`Catalog related data failed: ${imagesResult.error?.message ?? reportsResult.error?.message}`);
   const imagesByVehicle = new Map<string, string[]>();
@@ -657,7 +657,7 @@ async function loadCatalogCarData(id: string): Promise<CatalogCarData | null> {
 
   const [imagesResult, reportsResult] = await Promise.all([
     client.from("vehicle_images").select("vehicle_id,source_url,position").eq("vehicle_id", vehicle.id).order("position", { ascending: true }),
-    client.from("vehicle_reports").select("vehicle_id,inspection_summary,accident_summary,report_status,fetched_at").eq("vehicle_id", vehicle.id).maybeSingle(),
+    client.from("vehicle_reports").select("vehicle_id,options,inspection_summary,accident_summary,report_status,fetched_at").eq("vehicle_id", vehicle.id).maybeSingle(),
   ]);
   if (imagesResult.error || reportsResult.error) {
     throw new Error(`Vehicle related data failed: ${imagesResult.error?.message ?? reportsResult.error?.message}`);
