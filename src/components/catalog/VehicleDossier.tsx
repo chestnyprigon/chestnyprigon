@@ -5,6 +5,7 @@ import Link from "next/link";
 import { type FormEvent, type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Calculator, CarFront, Check, ChevronDown, ExternalLink, FileSearch, KeyRound, Maximize2, Menu, Minus, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { AccidentSummary, CatalogCar, InspectionSummary } from "@/data/cars";
+import { equipmentCatalog } from "@/data/equipment";
 import { calculateBelarusPrice, type BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
 import type { KrwUsdRate } from "@/lib/pricing/krw-usdt-rate";
 import type { PricingContext } from "@/lib/pricing/pricing-context";
@@ -21,12 +22,6 @@ function date(value: string | null) {
 
 function krw(value: number) { return `${number.format(value)}\u00a0₩`; }
 function eur(value: number) { return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value); }
-
-const equipmentCatalog = [
-  { name: "Экстерьер и интерьер", items: [["010", "Люк"], ["075", "LED-фары"], ["029", "Ксеноновые фары"], ["059", "Электропривод багажника"], ["080", "Доводчики дверей"], ["024", "Электроскладывание зеркал"], ["017", "Легкосплавные диски"], ["062", "Рейлинги на крыше"]] },
-  { name: "Комфорт и управление", items: [["082", "Подогрев руля"], ["083", "Электрорегулировка руля"], ["084", "Подрулевые переключатели"], ["031", "Кнопки управления на руле"], ["030", "Зеркало с автозатемнением"], ["074", "Система Hi-Pass"], ["006", "Центральный замок"], ["008", "Усилитель рулевого управления"], ["007", "Электростеклоподъёмники"]] },
-  { name: "Безопасность", items: [["002", "Подушки безопасности"], ["026", "Подушка водителя"], ["027", "Подушка пассажира"], ["020", "Боковые подушки"], ["056", "Шторки безопасности"], ["001", "Антиблокировочная система ABS"], ["019", "Противобуксовочная система TCS"]] },
-] as const;
 
 function InspectionEvidence({ images, hasAccident }: { images: InspectionSummary["inspectionImages"]; hasAccident: boolean }) {
   if (!images.length) return <div className="dossier-inspection-empty"><FileSearch size={24} /><div><strong>Изображения осмотра отсутствуют</strong><p>Encar не предоставил графические материалы по этому автомобилю.</p></div></div>;

@@ -6,6 +6,7 @@ import { encarPhotoUrl } from "../../src/lib/encar/images";
 import { encarHeaders, ensureEncarVerified } from "./auth";
 import { reportScreening } from "./report-screening";
 import { MAX_ENRICH_CONCURRENCY, SAFE_ENRICH_CONCURRENCY } from "./waves";
+import { equipmentOptionsFromCodes } from "../../src/data/equipment";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -366,7 +367,7 @@ async function main() {
     const inspectionPayload = inspectionResult.ok ? inspectionResult.payload : null;
     const accidentPayload = accidentResult.ok ? accidentResult.payload : null;
     const historyPayload = historyResult.ok ? historyResult.payload : null;
-    const options = Array.isArray(optionsPayload)
+    const choiceOptions = Array.isArray(optionsPayload)
       ? optionsPayload.slice(0, 80).flatMap((option) => {
           const value = record(option);
           const name = string(value.optionName);
@@ -376,6 +377,9 @@ async function main() {
         })
       : [];
     const inspection = inspectionSummary(inspectionPayload, payload);
+    const options = choiceOptions.length
+      ? choiceOptions
+      : equipmentOptionsFromCodes(inspection.standardOptionCodes);
     const accidents = accidentSummary(accidentPayload, historyPayload);
     const flags = usageFlags(inspection);
     const hasAccident = accidents.accidentCount > 0 || inspection.reportedAccident;
