@@ -21,7 +21,8 @@ async function main() {
   const limit = argument("limit", 100, 1, 100);
   const offset = argument("offset", 0, 0, 5_000);
   const delayMs = argument("delay-ms", 2_000, 1_000, 10_000);
-  const reportPath = path.resolve(process.cwd(), "output/radar-local-candidates.json");
+  const candidateFile = process.argv.find((value) => value.startsWith("--candidate-file="))?.slice("--candidate-file=".length);
+  const reportPath = path.resolve(process.cwd(), candidateFile ?? "output/radar-local-candidates.json");
   const report = JSON.parse(await fs.readFile(reportPath, "utf8")) as { candidates?: Array<Record<string, unknown>> };
   const candidates = (report.candidates ?? []).slice(offset, offset + limit);
   if (!candidates.length) throw new Error("No candidates in the requested range");
