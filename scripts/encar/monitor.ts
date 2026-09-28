@@ -12,7 +12,7 @@ loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true }
 const DEFAULT_BATCH_SIZE = 500;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_DELAY_MS = 1_500;
-const DEFAULT_ARCHIVE_AFTER = 3;
+const DEFAULT_ARCHIVE_AFTER = 1;
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -62,7 +62,7 @@ async function main() {
   const batchSize = integerArgument("batch-size", Number(process.env.ENCAR_MONITOR_BATCH_SIZE ?? DEFAULT_BATCH_SIZE), 1, 1_000);
   const concurrency = integerArgument("concurrency", Number(process.env.ENCAR_MONITOR_CONCURRENCY ?? DEFAULT_CONCURRENCY), 1, 2);
   const delayMs = integerArgument("delay-ms", Number(process.env.ENCAR_MONITOR_DELAY_MS ?? DEFAULT_DELAY_MS), 500, 30_000);
-  const archiveAfter = integerArgument("archive-after", Number(process.env.ENCAR_MONITOR_ARCHIVE_AFTER ?? DEFAULT_ARCHIVE_AFTER), 2, 5);
+  const archiveAfter = integerArgument("archive-after", Number(process.env.ENCAR_MONITOR_ARCHIVE_AFTER ?? DEFAULT_ARCHIVE_AFTER), 1, 5);
   const dryRun = hasFlag("dry-run");
 
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {

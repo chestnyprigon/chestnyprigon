@@ -105,7 +105,7 @@ async function main() {
     p_found_source_listing_ids: found,
     p_missing_source_listing_ids: missing,
     p_checked_at: checkedAt,
-    p_archive_after: 3,
+    p_archive_after: 1,
   });
   if (applyError) throw new Error(applyError.message);
 

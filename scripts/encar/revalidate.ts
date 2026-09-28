@@ -167,7 +167,7 @@ async function main() {
     p_found_source_listing_ids: foundIds,
     p_missing_source_listing_ids: missingIds,
     p_checked_at: checkedAt,
-    p_archive_after: 3,
+    p_archive_after: 1,
   });
   if (revalidationError) throw new Error(revalidationError.message);
   for (let offset = 0; offset < foundIds.length; offset += 500) {
@@ -206,7 +206,7 @@ async function main() {
     missingOnFirstPass: missing.length,
     updatedLastSeenAt: found.size,
     revalidationResult,
-    note: "A second consecutive miss removes a vehicle from publication; a third moves it to the removed/archive state. Rows and photos are never deleted.",
+    note: "A confirmed HTTP 404 removes a vehicle from publication immediately. Rows and photos are retained.",
   });
 }
 
