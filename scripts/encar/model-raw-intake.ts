@@ -54,6 +54,10 @@ const YEAR_FROM = 2016;
 const YEAR_TO = new Date().getFullYear();
 const MAX_MILEAGE = 300_000;
 
+function argument(name: string) {
+  return process.argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
 function required(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing environment variable ${name}`);
@@ -79,19 +83,37 @@ async function search(manufacturer: string, offset: number) {
 
 async function main() {
   if (process.env.ENCAR_PROXY_URL?.trim()) throw new Error("Local-only rule violated: ENCAR_PROXY_URL is set");
-  const target = Number(process.argv.find((arg) => arg.startsWith("--target="))?.slice(9) ?? 5_000);
+  const target = Number(argument("--target") ?? 5_000);
   if (!Number.isInteger(target) || target < 1 || target > 5_000) throw new Error("--target must be 1..5000");
+  const requestedBrands = argument("--brands")?.split(",").map((value) => value.trim()).filter(Boolean);
+  const brands = requestedBrands?.length ? TARGETS.filter((brand) => requestedBrands.includes(brand.brand)) : TARGETS;
+  if (requestedBrands?.length && brands.length !== requestedBrands.length) {
+    throw new Error(`Unknown brand in --brands. Available: ${TARGETS.map((brand) => brand.brand).join(", ")}`);
+  }
+  if (!brands.length) throw new Error("No brands selected");
+  const brandQuota = argument("--brand-quota") ? Number(argument("--brand-quota")) : null;
+  if (brandQuota !== null && (!Number.isInteger(brandQuota) || brandQuota < 1)) throw new Error("--brand-quota must be a positive integer");
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const run = await client.from("import_runs").insert({ mode: "initial", status: "running", cursor: { source: "encar-model-raw-intake", readOnly: false, yearFrom: YEAR_FROM, yearTo: YEAR_TO, horsepowerMax: 160, target } }).select("id").single();
   if (run.error) throw new Error(run.error.message);
   const runId = run.data.id as string;
   const seen = new Set<string>();
   const known = new Set<string>();
+  for (const table of ["encar_raw_listings", "vehicles"] as const) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await client.from(table).select("source_listing_id").range(offset, offset + 999);
+      if (error) throw new Error(`${table} query failed: ${error.message}`);
+      for (const row of data ?? []) {
+        if (row.source_listing_id) known.add(String(row.source_listing_id));
+      }
+      if (!data || data.length < 1_000) break;
+    }
+  }
   const rawRows: Record<string, unknown>[] = [];
   let scanned = 0;
   const summary: Array<Record<string, unknown>> = [];
   try {
-    for (const brand of TARGETS) {
+    for (const brand of brands) {
       if (rawRows.length >= target) break;
       const collected = new Map<string, number>();
       let sourceTotal = 0;
@@ -108,6 +130,7 @@ async function main() {
             if (!id || seen.has(id) || known.has(id)) continue;
             const model = brand.models.find((candidate) => matches(listing, candidate.terms));
             if (!model || (collected.get(model.name) ?? 0) >= model.target) continue;
+            if (brandQuota !== null && [...collected.values()].reduce((sum, value) => sum + value, 0) >= brandQuota) continue;
             seen.add(id);
             collected.set(model.name, (collected.get(model.name) ?? 0) + 1);
             rawRows.push({ source_listing_id: id, import_run_id: runId, source_url: `https://www.encar.com/dc/dc_cardetailview.do?carid=${id}`, payload: listing, payload_hash: createHash("sha256").update(JSON.stringify(listing)).digest("hex"), last_seen_at: new Date().toISOString(), processed_at: null });
@@ -126,7 +149,7 @@ async function main() {
       const result = await client.from("encar_raw_listings").upsert(batch, { onConflict: "source_listing_id" });
       if (result.error) throw new Error(result.error.message);
     }
-    const update = await client.from("import_runs").update({ status: "completed", finished_at: new Date().toISOString(), fetched_count: scanned, accepted_count: rawRows.length, rejected_count: 0, error_count: 0, cursor: { source: "encar-model-raw-intake", readOnly: false, yearFrom: YEAR_FROM, yearTo: YEAR_TO, horsepowerMax: 160, target, rawRows: rawRows.length, summary } }).eq("id", runId);
+    const update = await client.from("import_runs").update({ status: "completed", finished_at: new Date().toISOString(), fetched_count: scanned, accepted_count: rawRows.length, rejected_count: 0, error_count: 0, cursor: { source: "encar-model-raw-intake", readOnly: false, yearFrom: YEAR_FROM, yearTo: YEAR_TO, horsepowerMax: 160, target, brands: brands.map((brand) => brand.brand), brandQuota, rawRows: rawRows.length, summary } }).eq("id", runId);
     if (update.error) throw new Error(update.error.message);
     console.log(JSON.stringify({ status: "completed", rawOnly: true, target, rawRows: rawRows.length, scanned, summary }));
   } catch (error) {
