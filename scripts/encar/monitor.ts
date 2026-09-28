@@ -9,7 +9,7 @@ import { loadPersistedPricingProfile } from "../pricing/load-profile";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
-const DEFAULT_BATCH_SIZE = 500;
+const DEFAULT_BATCH_SIZE = 1_000;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_DELAY_MS = 1_500;
 const DEFAULT_ARCHIVE_AFTER = 1;
