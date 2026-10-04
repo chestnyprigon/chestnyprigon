@@ -26,6 +26,7 @@
     "radar:report-retry": "tsx scripts/radar/run-report-retry.ts",
     "radar:vps-enrichment-dry-run": "tsx scripts/radar/vps-enrichment-dry-run.ts",
     "radar:vps-enrichment": "tsx scripts/radar/run-vps-enrichment.ts",
+    "radar:local-enrichment-loop": "tsx scripts/radar/run-local-enrichment-loop.ts",
     "radar:enrich-local-reserve": "tsx scripts/radar/enrich-local-reserve.ts",
     "radar:screen-vps-staging": "tsx scripts/radar/screen-vps-staging.ts",
     "radar:publish-vps-staging": "tsx scripts/radar/publish-vps-staging.ts",

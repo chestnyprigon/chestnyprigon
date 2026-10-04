@@ -6,6 +6,8 @@ import { CATALOG_WAVES, selectWaveBatches } from "../encar/waves";
 import { primaryManufacturerAlias } from "../encar/manufacturer-aliases";
 
 config({ path: ".env", quiet: true });
+const direct = process.argv.includes("--direct");
+if (direct) config({ path: ".env.local", quiet: true });
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -20,7 +22,7 @@ function argument(name: string, fallback: number, minimum: number, maximum: numb
   return parsed;
 }
 
-const proxyUrl = required("ENCAR_PROXY_URL");
+const proxyUrl = direct ? null : required("ENCAR_PROXY_URL");
 const targetCandidates = argument("target", 3_200, 100, 5_000);
 const pageSize = argument("page-size", 500, 50, 500);
 const overscanRaw = process.argv.find((value) => value.startsWith("--overscan="))?.split("=")[1];
@@ -49,14 +51,14 @@ function obviousExclusion(listing: Record<string, unknown>) {
   return /렌트|렌터|리스|택시|화물|영업용|대여|법인/u.test(haystack);
 }
 
-async function search(agent: ProxyAgent, query: string, offset: number, limit: number) {
+async function search(agent: ProxyAgent | null, query: string, offset: number, limit: number) {
   const url = new URL("https://api.encar.com/search/car/list/general");
   url.searchParams.set("count", "true");
   url.searchParams.set("q", query);
   url.searchParams.set("sr", `|ModifiedDate|${offset}|${limit}`);
   const response = await undiciFetch(url, {
     headers: { Accept: "application/json, text/plain, */*", Origin: "https://fem.encar.com", Referer: "https://fem.encar.com/" },
-    dispatcher: agent,
+    ...(agent ? { dispatcher: agent } : {}),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`Encar search HTTP ${response.status}`);
@@ -89,7 +91,7 @@ async function existingIdentifiers(ids: string[]) {
 }
 
 async function main() {
-  const agent = new ProxyAgent(proxyUrl);
+  const agent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
   const runId = crypto.randomUUID();
   const selected = new Map<string, Record<string, unknown>>();
   const newCandidates = new Map<string, Record<string, unknown>>();
@@ -124,7 +126,7 @@ async function main() {
       if (newCandidates.size >= targetCandidates || selected.size >= searchBudget) break;
     }
   } finally {
-    await agent.close();
+    await agent?.close();
   }
   const candidates = [...newCandidates.keys()].slice(0, targetCandidates);
   if (!candidates.length) throw new Error("No new live Encar candidates were found");
@@ -133,8 +135,8 @@ async function main() {
     project: "chestny-prigon",
     status: "approved",
     candidate_count: candidates.length,
-    source_file: "vps-live-encar-search",
-    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, pageOffset, groups: ["european", "korean", "other"], publication: "manual-after-screening" },
+    source_file: direct ? "local-live-encar-search" : "vps-live-encar-search",
+    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, pageOffset, groups: ["european", "korean", "other"], publication: "manual-after-screening", transport: direct ? "direct" : "proxy" },
   });
   if (runError) throw new Error(runError.message);
   for (let offset = 0; offset < candidates.length; offset += 500) {
@@ -159,7 +161,7 @@ async function main() {
     const { error } = await db.from("chestny_enrichment_queue").insert(rows);
     if (error) throw new Error(error.message);
   }
-  console.log(JSON.stringify({ status: "approved", runId, discovered: selected.size, knownSkipped: known.size, queued: candidates.length, targetCandidates, searchBudget, overscan, pageOffset, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
+  console.log(JSON.stringify({ status: "approved", runId, transport: direct ? "direct" : "proxy", discovered: selected.size, knownSkipped: known.size, queued: candidates.length, targetCandidates, searchBudget, overscan, pageOffset, yearFrom, yearTo, maxMileage, batches: details }, null, 2));
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

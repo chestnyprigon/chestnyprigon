@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { fetch, ProxyAgent } from "undici";
 import { readFile } from "node:fs/promises";
 import { inspectionSummary } from "../encar/enrich";
+import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
 
 config({ path: ".env", quiet: true });
 const runId = process.env.CHESTNY_REPORT_RETRY_RUN_ID;
@@ -106,9 +107,20 @@ async function probe(url: string): Promise<Probe> {
 async function main() {
   if (!runId) throw new Error("CHESTNY_REPORT_RETRY_RUN_ID is required");
   if (!proxyUrl) throw new Error("ENCAR_PROXY_URL is required; direct requests are disabled");
+  if (!dryRun && await radarHasPriority()) {
+    console.log(JSON.stringify({ runId, deferred: "radar_priority" }));
+    await agent?.close();
+    return;
+  }
   const db = createClient<any>(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
+  if (!dryRun && isTerminalRun(run.status)) {
+    console.log(JSON.stringify({ runId, status: run.status, skipped: "terminal_run" }));
+    await agent?.close();
+    process.exitCode = TERMINAL_RUN_EXIT_CODE;
+    return;
+  }
   if (!dryRun && !["approved", "running"].includes(run.status)) throw new Error(`Run status is ${run.status}`);
   if (!dryRun && run.status === "approved") {
     const { error: startError } = await db.from("chestny_enrichment_runs").update({ status: "running", started_at: new Date().toISOString() }).eq("id", runId);
@@ -154,10 +166,8 @@ async function main() {
     results.push(result); await sleep(delayMs);
   }
   if (!dryRun) {
-    const { count, error: remainingError } = await db.from("chestny_enrichment_queue").select("*", { count: "exact", head: true }).eq("run_id", runId).in("status", ["queued", "leased"]);
-    if (remainingError) throw new Error(remainingError.message);
-    if ((count ?? 0) === 0) {
-      const { error: completeError } = await db.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId);
+    if (!(await hasPendingEnrichment(db, runId))) {
+      const { error: completeError } = await db.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId).in("status", ["approved", "running"]);
       if (completeError) throw new Error(completeError.message);
     }
   }

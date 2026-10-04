@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { ENCAR_MAX_LISTING_AGE_DAYS } from "../encar/config";
 import { normalizeListing } from "../encar/normalize";
 import { screenListing } from "../encar/screening";
 import { persistPilot } from "../encar/persistence";
@@ -49,11 +50,13 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const rows: Array<Record<string, unknown>> = [];
-  for (let offset = 0; offset < selectedIds.length; offset += 200) {
+  // Staging rows contain full Encar payloads; small reads avoid statement
+  // timeouts when publishing larger audited runs.
+  for (let offset = 0; offset < selectedIds.length; offset += 25) {
     const { data, error } = await client
       .from("chestny_catalog_staging")
       .select("source_listing_id,candidate_snapshot,encar_payload,image_urls,report_status,updated_at")
-      .in("source_listing_id", selectedIds.slice(offset, offset + 200));
+      .in("source_listing_id", selectedIds.slice(offset, offset + 25));
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Array<Record<string, unknown>>));
   }
@@ -63,6 +66,7 @@ async function main() {
   }
 
   const rowBySource = new Map(rows.map((row) => [String(row.source_listing_id), row]));
+  const freshnessCutoff = Date.now() - ENCAR_MAX_LISTING_AGE_DAYS * 24 * 60 * 60 * 1_000;
   const items: PilotItem[] = [];
   const qualityRejections: Array<{ sourceListingId: string; reasons: string[] }> = [];
   for (const sourceId of selectedIds) {
@@ -80,6 +84,9 @@ async function main() {
     if (!Object.keys(detail).length) reasons.push("detail_missing");
     if (!detail.vehicleId || !detail.vehicleNo) reasons.push("canonical_identifier_missing");
     if (images.length < 5) reasons.push(`incomplete_gallery:${images.length}`);
+    const modifiedAt = Date.parse(String(record(detail.manage).modifyDateTime ?? ""));
+    if (!Number.isFinite(modifiedAt) || modifiedAt < freshnessCutoff) reasons.push("stale_listing");
+    if (record(payload.endpointStatus).options !== "ok") reasons.push("options_request_failed");
     if (reasons.length) {
       qualityRejections.push({ sourceListingId: sourceId, reasons });
       continue;
@@ -120,6 +127,19 @@ async function main() {
   ];
   if (uniqueItems.length !== items.length) {
     throw new Error(`Publication input contains duplicate canonical IDs: selected=${items.length}, unique=${uniqueItems.length}`);
+  }
+  const canonicalIds = uniqueItems.map((item) => String(item.normalized!.sourceListingId));
+  for (let offset = 0; offset < canonicalIds.length; offset += 200) {
+    const chunk = canonicalIds.slice(offset, offset + 200);
+    const [vehicles, identifiers] = await Promise.all([
+      client.from("vehicles").select("source_listing_id").in("source_listing_id", chunk),
+      client.from("vehicle_source_identifiers").select("source_identifier").in("source_identifier", chunk),
+    ]);
+    if (vehicles.error) throw new Error(vehicles.error.message);
+    if (identifiers.error) throw new Error(identifiers.error.message);
+    if ((vehicles.data?.length ?? 0) + (identifiers.data?.length ?? 0) > 0) {
+      throw new Error("Publication input contains a canonical ID already in the catalogue; screening must be repeated");
+    }
   }
   const totals = { fetchedCount: 0, acceptedCount: 0, rejectedCount: 0, errorCount: 0, reportRows: 0, batches: 0 };
   for (let offset = 0; offset < uniqueItems.length; offset += 100) {

@@ -3,8 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { accidentSummary, inspectionSummary } from "../encar/enrich";
+import { screenListing } from "../encar/screening";
+import type { EncarBundle, EncarSearchListing } from "../encar/types";
+import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
 
 config({ path: ".env", quiet: true });
+const direct = process.env.CHESTNY_ENRICHMENT_DIRECT === "true";
+if (direct) config({ path: ".env.local", quiet: true });
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -24,7 +29,7 @@ const runId = required("CHESTNY_ENRICHMENT_RUN_ID");
 const batchSize = boundedNumber("CHESTNY_ENRICHMENT_BATCH_SIZE", 50, 1, 50);
 const delayMs = boundedNumber("CHESTNY_ENRICHMENT_DELAY_MS", 4_000, 1_000, 30_000);
 const maxAttempts = boundedNumber("CHESTNY_ENRICHMENT_MAX_ATTEMPTS", 3, 1, 5);
-const proxyUrl = required("ENCAR_PROXY_URL");
+const proxyUrl = direct ? null : required("ENCAR_PROXY_URL");
 const coordinationDirectory = process.env.ENCAR_COORDINATION_DIR?.trim() || "/tmp/encar-coordination";
 const activePath = `${coordinationDirectory}/chestny-enrichment-active.json`;
 const radarPath = `${coordinationDirectory}/radar-priority.json`;
@@ -71,14 +76,14 @@ function failureClass(error: string) {
   return "enrichment_error";
 }
 
-async function requestJson(agent: ProxyAgent, endpoint: string) {
+async function requestJson(agent: ProxyAgent | null, endpoint: string) {
   const response = await undiciFetch(endpoint, {
     headers: {
       Accept: "application/json, text/plain, */*",
       Origin: "https://fem.encar.com",
       Referer: "https://fem.encar.com/",
     },
-    dispatcher: agent,
+    ...(agent ? { dispatcher: agent } : {}),
     signal: AbortSignal.timeout(25_000),
   });
   if (!response.ok) throw new EncarRequestError(response.status, endpoint);
@@ -136,19 +141,25 @@ function choiceOptions(payload: unknown) {
 }
 
 async function maybeFinishRun(db: Db) {
-  const { data, error } = await db.from("chestny_enrichment_queue").select("status").eq("run_id", runId);
-  if (error) throw new Error(error.message);
-  const statuses = (data ?? []).map((row) => String(row.status));
-  if (statuses.some((status) => status === "queued" || status === "leased")) return false;
+  if (await hasPendingEnrichment(db, runId)) return false;
   const { error: updateError } = await db.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId).in("status", ["approved", "running"]);
   if (updateError) throw new Error(updateError.message);
   return true;
 }
 
 async function main() {
+  if (await radarHasPriority()) {
+    console.log(JSON.stringify({ runId, deferred: "radar_priority" }));
+    return;
+  }
   const db: Db = createClient<any>(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status,candidate_count").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
+  if (isTerminalRun(run.status)) {
+    console.log(JSON.stringify({ runId, status: run.status, skipped: "terminal_run" }));
+    process.exitCode = TERMINAL_RUN_EXIT_CODE;
+    return;
+  }
   if (!["approved", "running"].includes(run.status)) throw new Error(`Run status is ${run.status}`);
   if (run.status === "approved") {
     const { error } = await db.from("chestny_enrichment_runs").update({ status: "running", started_at: new Date().toISOString() }).eq("id", runId);
@@ -159,7 +170,7 @@ async function main() {
   const retriesScheduled = await requeueRetryableFailures(db);
   const { data: rows, error } = await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 45 });
   if (error) throw new Error(error.message);
-  const agent = new ProxyAgent(proxyUrl);
+  const agent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
   const results: Array<Record<string, unknown>> = [];
   try {
     for (const [index, row] of (rows ?? []).entries() as Iterable<[number, Row]>) {
@@ -184,6 +195,41 @@ async function main() {
           await sleep(delayMs);
           continue;
         }
+        const images = photoUrls(detail);
+        const detailBundle: EncarBundle = {
+          fetchedAt: new Date().toISOString(),
+          search: row.candidate_snapshot as EncarSearchListing,
+          detail: detail as EncarBundle["detail"],
+        };
+        const preliminaryScreening = screenListing(detailBundle);
+        if (preliminaryScreening.decision !== "approved") {
+          const skipped = "skipped_pre_screen";
+          const spec = obj(detail.spec);
+          const payload = {
+            runId,
+            detail,
+            choiceOptions: [],
+            inspectionSummary: {},
+            accidentSummary: {},
+            rawReports: { inspection: null, insurance: null, history: null },
+            identifiers: { advertisedId, canonicalId, vehicleNo },
+            screening: preliminaryScreening,
+            endpointStatus: { options: skipped, inspection: skipped, insurance: skipped, history: skipped },
+            fetchedAt: new Date().toISOString(),
+          };
+          await complete(db, row, "succeeded", {
+            advertisedId,
+            canonicalId,
+            vehicleNo,
+            reportReady: false,
+            galleryImages: images.length,
+            preliminaryScreening: preliminaryScreening.decision,
+            reasonCodes: preliminaryScreening.reasonCodes,
+          }, payload, text(spec.fuelName), text(spec.colorName), images);
+          results.push({ sourceListingId: advertisedId, status: "succeeded", canonicalId, screenedOut: preliminaryScreening.decision, reasonCodes: preliminaryScreening.reasonCodes, supplementalRequests: 0 });
+          await sleep(delayMs);
+          continue;
+        }
         const [optionsResult, inspectionResult, insuranceResult, historyResult] = await Promise.all([
           requestJson(agent, `https://api.encar.com/v1/readside/vehicles/car/${encodeURIComponent(canonicalId)}/options/choice`).catch((e) => e),
           requestJson(agent, `https://api.encar.com/v1/readside/inspection/vehicle/${encodeURIComponent(canonicalId)}`).catch((e) => e),
@@ -195,11 +241,9 @@ async function main() {
         const insurance = responsePayload(insuranceResult);
         const history = responsePayload(historyResult);
         const optionsPayload = responsePayload(optionsResult);
-        const images = photoUrls(detail);
         // Detail and a usable gallery are required for successful staging.
         // A missing report remains a visible status, not a hard reject.
         if (images.length < 5) throw new Error(`incomplete_gallery:${images.length}`);
-        const detailBundle = { detail, search: row.candidate_snapshot, fetchedAt: new Date().toISOString() };
         const inspectionData = inspectionSummary(inspection, detailBundle);
         const accidents = accidentSummary(insurance, history);
         const reportReady = Number(obj(inspection).vehicleId) === Number(canonicalId) && typeof obj(insurance).openData === "boolean";
@@ -239,10 +283,10 @@ async function main() {
       }
       await sleep(delayMs);
     }
-    const completed = (rows?.length ?? 0) > 0 ? await maybeFinishRun(db) : false;
-    console.log(JSON.stringify({ runId, batchSize, retriesScheduled, claimed: rows?.length ?? 0, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
+    const completed = await maybeFinishRun(db);
+    console.log(JSON.stringify({ runId, transport: direct ? "direct" : "proxy", batchSize, retriesScheduled, claimed: rows?.length ?? 0, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
   } finally {
-    await agent.close();
+    await agent?.close();
     await rm(activePath, { force: true });
   }
 }

@@ -15,6 +15,7 @@ function requireEnvironment(name: string) {
 
 async function main() {
   const publish = process.argv.includes("--publish");
+  const dryRun = process.argv.includes("--dry-run");
   const client = createClient(
     requireEnvironment("NEXT_PUBLIC_SUPABASE_URL"),
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
@@ -25,6 +26,8 @@ async function main() {
   const vehicles: Array<{
     id: string;
     price_krw: number;
+    price_usd: number | null;
+    krw_per_usd: number | null;
     engine_cc: number | null;
     first_registration_date: string | null;
     fuel_type: string;
@@ -34,7 +37,7 @@ async function main() {
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await client
       .from("vehicles")
-      .select("id,price_krw,engine_cc,first_registration_date,fuel_type,status")
+      .select("id,price_krw,price_usd,krw_per_usd,engine_cc,first_registration_date,fuel_type,status")
       .eq("status", "active")
       .eq("is_public", true)
       .order("id", { ascending: true })
@@ -65,25 +68,28 @@ async function main() {
     }
   }
 
-  await Promise.all(
-    skipped.map(async ({ id }) => {
-      const { error: updateError } = await client
-        .from("vehicles")
-        .update({ price_usd: null, krw_per_usd: profile.krwPerUsd })
-        .eq("id", id);
-      if (updateError) throw new Error(`${id}: ${updateError.message}`);
-    }),
-  );
+  const storedVehicles = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  const writes = [
+    ...updates.map(({ id, calculation }) => ({ id, priceUsd: calculation.totalUsd, makePublic: publish })),
+    ...skipped.map(({ id }) => ({ id, priceUsd: null, makePublic: false })),
+  ].filter(({ id, priceUsd }) => {
+    const stored = storedVehicles.get(id)!;
+    const storedPrice = stored.price_usd === null ? null : Number(stored.price_usd);
+    const storedRate = stored.krw_per_usd === null ? null : Number(stored.krw_per_usd);
+    // Compare the actual persisted fields after calculating every vehicle.
+    // Changes in rates, inputs, profile or vehicle age still trigger a write.
+    return storedPrice !== priceUsd || storedRate !== profile.krwPerUsd;
+  });
 
-  for (let offset = 0; offset < updates.length; offset += 10) {
+  for (let offset = 0; !dryRun && offset < writes.length; offset += 10) {
     await Promise.all(
-      updates.slice(offset, offset + 10).map(async ({ id, calculation }) => {
+      writes.slice(offset, offset + 10).map(async ({ id, priceUsd, makePublic }) => {
         const { error: updateError } = await client
           .from("vehicles")
           .update({
-            price_usd: calculation.totalUsd,
+            price_usd: priceUsd,
             krw_per_usd: profile.krwPerUsd,
-            ...(publish ? { is_public: true } : {}),
+            ...(makePublic ? { is_public: true } : {}),
           })
           .eq("id", id);
         if (updateError) throw new Error(`${id}: ${updateError.message}`);
@@ -96,9 +102,13 @@ async function main() {
     krwPerUsd: profile.krwPerUsd,
     rates: exchangeRates,
     recalculated: updates.length,
+    dryRun,
+    wouldUpdate: writes.length,
+    updated: dryRun ? 0 : writes.length,
+    unchanged: vehicles.length - writes.length,
     skipped: skipped.length,
     skippedReasons: [...new Set(skipped.map((item) => item.reason))],
-    published: publish,
+    published: publish && !dryRun,
     minTotalUsd: updates.length ? Math.min(...updates.map((item) => item.calculation.totalUsd ?? Number.POSITIVE_INFINITY)) : null,
     maxTotalUsd: updates.length ? Math.max(...updates.map((item) => item.calculation.totalUsd ?? 0)) : null,
   });
