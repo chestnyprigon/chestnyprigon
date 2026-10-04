@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { encarOptionsUrl, extractStandardOptionCodes } from "./standard-options";
 
 config({ path: ".env.local", quiet: true });
 
@@ -35,10 +36,8 @@ type ReadyItem = { sourceListingId: string; canonicalId: string };
 type Vehicle = { id: string; source_listing_id: string };
 type VehicleReport = { vehicle_id: string; inspection_summary: Record<string, unknown> | null };
 
-async function fetchStandardCodes(canonicalId: string) {
-  const url = new URL("https://api.encar.com/v1/readside/vehicles");
-  url.searchParams.set("vehicleIds", canonicalId);
-  url.searchParams.set("include", "OPTIONS");
+async function fetchStandardCodes(sourceListingId: string, canonicalId: string) {
+  const url = encarOptionsUrl(sourceListingId);
   let lastError = "unknown error";
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -48,16 +47,13 @@ async function fetchStandardCodes(canonicalId: string) {
       });
       if (response.ok) {
         const payload = await response.json() as unknown;
-        const detail = Array.isArray(payload) ? record(payload[0]) : record(payload);
-        if (String(detail.vehicleId ?? "") !== canonicalId) throw new Error("canonical_id_mismatch");
-        const standard = record(detail.options).standard;
-        if (!Array.isArray(standard)) throw new Error("standard_options_missing");
-        return [...new Set(standard.map((code) => typeof code === "string" || typeof code === "number" ? String(code).trim() : "").filter(Boolean))];
+        return extractStandardOptionCodes(payload, canonicalId);
       }
       lastError = `HTTP ${response.status}`;
       if (response.status < 500 && response.status !== 429) break;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
+      if (/^(source_listing_unavailable|canonical_id_mismatch|standard_options_missing)$/u.test(lastError)) break;
     }
     if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
   }
@@ -90,7 +86,7 @@ async function main() {
     const vehicle = vehicleByCanonical.get(String(item.canonicalId));
     const report = vehicle ? reportByVehicle.get(vehicle.id) : undefined;
     return vehicle && report && record(report.inspection_summary).standardOptionCodesAvailable !== true
-      ? [{ canonicalId: String(item.canonicalId), vehicleId: vehicle.id, summary: record(report.inspection_summary) }]
+      ? [{ sourceListingId: String(item.sourceListingId), canonicalId: String(item.canonicalId), vehicleId: vehicle.id, summary: record(report.inspection_summary) }]
       : [];
   });
   const missingTargets = selected.length - work.length - selected.filter((item) => {
@@ -100,18 +96,18 @@ async function main() {
   }).length;
   let updated = 0;
   let skippedAvailable = selected.length - work.length - missingTargets;
-  const failures: Array<{ canonicalId: string; error: string }> = [];
+  const failures: Array<{ sourceListingId: string; canonicalId: string; error: string }> = [];
   console.log(JSON.stringify({ status: "started", runId, targeted: work.length, skippedAvailable, missingTargets, delayMs, transport: "direct", published: false }));
   for (const [index, item] of work.entries()) {
     try {
-      const standardOptionCodes = await fetchStandardCodes(item.canonicalId);
+      const standardOptionCodes = await fetchStandardCodes(item.sourceListingId, item.canonicalId);
       const { error } = await client.from("vehicle_reports").update({
         inspection_summary: { ...item.summary, standardOptionCodes, standardOptionCodesAvailable: true },
       }).eq("vehicle_id", item.vehicleId);
       if (error) throw new Error(error.message);
       updated += 1;
     } catch (error) {
-      failures.push({ canonicalId: item.canonicalId, error: error instanceof Error ? error.message : String(error) });
+      failures.push({ sourceListingId: item.sourceListingId, canonicalId: item.canonicalId, error: error instanceof Error ? error.message : String(error) });
     }
     if ((index + 1) % 25 === 0 || index + 1 === work.length) {
       console.log(JSON.stringify({ processed: index + 1, targeted: work.length, updated, failed: failures.length }));
