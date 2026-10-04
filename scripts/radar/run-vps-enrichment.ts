@@ -171,7 +171,7 @@ async function main() {
       const advertisedId = row.source_listing_id;
       try {
         // Resolve the canonical ID from detail before calling any other endpoint.
-        const detailResponse = await requestJson(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW`);
+        const detailResponse = await requestJson(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS`);
         const detail = obj(Array.isArray(detailResponse) ? detailResponse[0] : detailResponse);
         const canonicalId = text(detail.vehicleId);
         const vehicleNo = text(detail.vehicleNo);

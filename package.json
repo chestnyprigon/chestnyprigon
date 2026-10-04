@@ -29,6 +29,7 @@
     "radar:enrich-local-reserve": "tsx scripts/radar/enrich-local-reserve.ts",
     "radar:screen-vps-staging": "tsx scripts/radar/screen-vps-staging.ts",
     "radar:publish-vps-staging": "tsx scripts/radar/publish-vps-staging.ts",
+    "radar:backfill-standard-options": "tsx scripts/radar/backfill-standard-options.ts",
     "catalog:publish-ready": "tsx scripts/catalog/publish-ready.ts",
     "catalog:cleanup": "tsx scripts/catalog/cleanup-technical-data.ts",
     "pricing:refresh-krw-usdt": "tsx scripts/pricing/refresh-krw-usdt-rate.ts",

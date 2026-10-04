@@ -125,7 +125,8 @@ export function inspectionSummary(payload: unknown, listingPayload: unknown) {
     : [];
   const listingOptions = record(record(listingPayload).detail).options;
   const listingPhotos = record(record(listingPayload).detail).photos;
-  const standardOptionCodes = Array.isArray(record(listingOptions).standard)
+  const standardOptionCodesAvailable = Array.isArray(record(listingOptions).standard);
+  const standardOptionCodes = standardOptionCodesAvailable
     ? (record(listingOptions).standard as unknown[]).map(string).filter((item): item is string => Boolean(item))
     : [];
   const inspectionImages = Array.isArray(inspection.images)
@@ -162,6 +163,7 @@ export function inspectionSummary(payload: unknown, listingPayload: unknown) {
     checks,
     bodyFindings,
     standardOptionCodes,
+    standardOptionCodesAvailable,
     inspectionImages,
     photoGroups,
   };

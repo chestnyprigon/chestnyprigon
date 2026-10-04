@@ -25,6 +25,7 @@ export type InspectionSummary = {
     statuses: Array<{ code: string | null; title: string }>;
   }>;
   standardOptionCodes: string[];
+  standardOptionCodesAvailable?: boolean;
   inspectionImages: Array<{ url: string; title: string }>;
 };
 

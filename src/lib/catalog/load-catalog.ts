@@ -235,6 +235,7 @@ function parseInspection(value: unknown): InspectionSummary | null {
     standardOptionCodes: Array.isArray(summary.standardOptionCodes)
       ? summary.standardOptionCodes.filter((item): item is string => typeof item === "string")
       : [],
+    standardOptionCodesAvailable: summary.standardOptionCodesAvailable === true,
     inspectionImages: Array.isArray(summary.inspectionImages)
       ? summary.inspectionImages.flatMap((item) => {
           const image = record(item);
