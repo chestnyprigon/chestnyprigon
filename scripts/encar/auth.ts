@@ -36,6 +36,11 @@ export function encarHeaders(extra: Record<string, string> = {}) {
   return { ...baseHeaders, ...extra };
 }
 
+export function encarHistoryHeaders() {
+  const bearer = process.env.ENCAR_HISTORY_BEARER?.trim();
+  return encarHeaders(bearer ? { Authorization: `Bearer ${bearer}` } : {});
+}
+
 async function verifyRequestIp() {
   const ipResponse = await fetch(VERIFY_IP_ENDPOINT, {
     headers: encarHeaders(),

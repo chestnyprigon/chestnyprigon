@@ -3,14 +3,14 @@ import { pathToFileURL } from "node:url";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
-import { encarHeaders, ensureEncarVerified } from "./auth";
+import { encarHeaders, encarHistoryHeaders, ensureEncarVerified } from "./auth";
 import { reportScreening } from "./report-screening";
 import { MAX_ENRICH_CONCURRENCY, SAFE_ENRICH_CONCURRENCY } from "./waves";
 import { equipmentOptionsFromCodes } from "../../src/data/equipment";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
-const historyHeaders = encarHeaders({ Authorization: "Bearer WqtHVjmpGX7lWsf63vwCGVPrF1BzYk" });
+const historyHeaders = encarHistoryHeaders();
 
 type RecordValue = Record<string, unknown>;
 
@@ -179,22 +179,23 @@ function historyType(value: string | null) {
 export function accidentSummary(payload: unknown, historyPayload: unknown) {
   const report = record(payload);
   const history = record(historyPayload);
-  const insuranceEvents = Array.isArray(history.accidentHistoryResponse)
-    ? history.accidentHistoryResponse.flatMap((item) => {
+  const historyEvents = Array.isArray(history.accidentHistoryResponse) ? history.accidentHistoryResponse : [];
+  const recordEvents = Array.isArray(report.accidents) ? report.accidents : [];
+  const useHistory = historyEvents.length > 0;
+  const insuranceEvents = (useHistory ? historyEvents : recordEvents).flatMap((item) => {
         const event = record(item);
-        const date = string(event.accidentDate);
-        const amountKrw = number(event.repairCost);
+        const date = string(useHistory ? event.accidentDate : event.date);
+        const amountKrw = number(useHistory ? event.repairCost : event.insuranceBenefit);
         if (!date || !amountKrw) return [];
         return [{
           date,
-          type: historyType(string(event.accidentType)),
+          type: useHistory ? historyType(string(event.accidentType)) : "Страховой случай",
           amountKrw,
           partsKrw: number(event.partCost) || null,
           paintingKrw: number(event.paintingCost) || null,
           laborKrw: number(event.laborCost) || null,
         }];
-      }).sort((left, right) => right.date.localeCompare(left.date))
-    : [];
+      }).sort((left, right) => right.date.localeCompare(left.date));
   return {
     available: Boolean(report.openData),
     accidentCount: number(report.accidentCnt),

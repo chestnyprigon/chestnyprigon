@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { ENCAR_MAX_LISTING_AGE_DAYS } from "../encar/config";
 import { normalizeListing } from "../encar/normalize";
 import { screenListing } from "../encar/screening";
+import { accidentSummary } from "../encar/enrich";
 import { persistPilot } from "../encar/persistence";
 import type { EncarBundle, EncarSearchListing, PilotItem } from "../encar/types";
 
@@ -169,7 +170,7 @@ async function main() {
         canonical_vehicle_id: String(detail.vehicleId ?? sourceId),
         options: payload.choiceOptions ?? [],
         inspection_summary: payload.inspectionSummary ?? {},
-        accident_summary: payload.accidentSummary ?? {},
+        accident_summary: accidentSummary(record(payload.rawReports).insurance, record(payload.rawReports).history),
         report_status: row.report_status === "ready" ? "ready" : "unavailable",
         fetched_at: String(payload.fetchedAt ?? row.updated_at ?? new Date().toISOString()),
       }];
