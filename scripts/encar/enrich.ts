@@ -4,6 +4,7 @@ import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
 import { encarHeaders, encarHistoryHeaders, ensureEncarVerified } from "./auth";
+import { parseBodyDiagnosis } from "./body-diagnosis";
 import { reportScreening } from "./report-screening";
 import { MAX_ENRICH_CONCURRENCY, SAFE_ENRICH_CONCURRENCY } from "./waves";
 import { equipmentOptionsFromCodes } from "../../src/data/equipment";
@@ -99,7 +100,7 @@ function flattenInspection(nodes: unknown, output: Array<{ title: string; status
   }
 }
 
-export function inspectionSummary(payload: unknown, listingPayload: unknown) {
+export function inspectionSummary(payload: unknown, listingPayload: unknown, diagnosisPayload?: unknown, diagnosisAvailable: boolean | null = null) {
   const inspection = record(payload);
   const master = record(inspection.master);
   const detail = record(master.detail);
@@ -150,6 +151,18 @@ export function inspectionSummary(payload: unknown, listingPayload: unknown) {
       })
     : [];
 
+  const diagnosis = diagnosisAvailable ? parseBodyDiagnosis(diagnosisPayload) : { findings: [], notes: [] };
+  const findingsByCode = new Map(bodyFindings.map((finding) => [finding.code, finding]));
+  for (const finding of diagnosis.findings) {
+    const existing = findingsByCode.get(finding.code);
+    findingsByCode.set(finding.code, existing ? {
+      ...existing,
+      title: finding.title,
+      statuses: [...existing.statuses, ...finding.statuses].filter((status, index, all) =>
+        all.findIndex((candidate) => candidate.code === status.code && candidate.title === status.title) === index),
+    } : finding);
+  }
+  const mergedFindings = [...findingsByCode.values()];
   return {
     state: string(record(detail.carStateType).title) ?? string(record(detail.boardStateType).title),
     reportedAccident: Boolean(master.accdient),
@@ -161,7 +174,9 @@ export function inspectionSummary(payload: unknown, listingPayload: unknown) {
     firstRegistrationDate: string(detail.firstRegistrationDate),
     inspectionMileage: number(detail.mileage) || null,
     checks,
-    bodyFindings,
+    bodyFindings: mergedFindings,
+    bodyDiagnosisAvailable: diagnosisAvailable,
+    bodyDiagnosisNotes: diagnosis.notes,
     standardOptionCodes,
     standardOptionCodesAvailable,
     inspectionImages,
@@ -337,13 +352,13 @@ async function main() {
       if (applyScreening) {
         screeningRows.push({
           source_listing_id: vehicle.source_listing_id,
-          decision: "manual_review",
+          decision: "isolated",
           is_lease: false,
           is_rental: false,
           is_taxi: false,
           is_commercial: false,
-          is_problematic: false,
-          reason_codes: ["encar_report_unavailable"],
+          is_problematic: true,
+          reason_codes: ["enrichment_identity_missing"],
           rules_version: "2026-08-16.1-report-optional",
           details: { reportStatus: "unavailable" },
         });
@@ -366,8 +381,13 @@ async function main() {
         { verifyAccess: true, attempts: 1 },
       ),
     ]);
+    const diagnosisResult = await fetchJson(`https://api.encar.com/v1/readside/diagnosis/vehicle/${resolvedCanonicalId}`);
     const optionsPayload = optionsResult.ok ? optionsResult.payload : null;
     const inspectionPayload = inspectionResult.ok ? inspectionResult.payload : null;
+    const diagnosisPayload = diagnosisResult.ok ? diagnosisResult.payload : null;
+    if (diagnosisResult.ok && String(record(diagnosisPayload).vehicleId) !== String(resolvedCanonicalId)) {
+      throw new Error("diagnosis_identity_mismatch");
+    }
     const accidentPayload = accidentResult.ok ? accidentResult.payload : null;
     const historyPayload = historyResult.ok ? historyResult.payload : null;
     const choiceOptions = Array.isArray(optionsPayload)
@@ -379,7 +399,10 @@ async function main() {
             : [];
         })
       : [];
-    const inspection = inspectionSummary(inspectionPayload, payload);
+    const diagnosisAvailable = diagnosisResult.ok
+      ? true
+      : !diagnosisResult.ok && /HTTP (404|410)/.test(diagnosisResult.reason) ? false : null;
+    const inspection = inspectionSummary(inspectionPayload, payload, diagnosisPayload, diagnosisAvailable);
     const options = choiceOptions.length
       ? choiceOptions
       : equipmentOptionsFromCodes(inspection.standardOptionCodes);

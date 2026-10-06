@@ -82,13 +82,14 @@ export function createDomesticQuery(
   maxMileage: number,
   carType: "Y" | "N" = "Y",
   manufacturer?: string,
-  priceMin = 300,
-  priceMax = 15000,
+  priceMin: number | null = 300,
+  priceMax: number | null = 15000,
 ) {
   const prefix = manufacturer
     ? `(And.Hidden.N._.(C.CarType.A._.Manufacturer.${manufacturer}.)_.Year`
     : `(And.Hidden.N._.CarType.${carType}._.Year`;
-  return `${prefix}.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})._.Price.range(${priceMin}..${priceMax}).)`;
+  const priceFilter = priceMin === null || priceMax === null ? "" : `._.Price.range(${priceMin}..${priceMax})`;
+  return `${prefix}.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})${priceFilter}.)`;
 }
 
 export async function fetchSearchPage({

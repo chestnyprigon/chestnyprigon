@@ -19,6 +19,8 @@ export type InspectionSummary = {
   firstRegistrationDate: string | null;
   inspectionMileage: number | null;
   checks: Array<{ title: string; status: string }>;
+  bodyDiagnosisAvailable: boolean | null;
+  bodyDiagnosisNotes: string[];
   bodyFindings: Array<{
     code: string | null;
     title: string;

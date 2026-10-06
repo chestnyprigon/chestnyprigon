@@ -13,6 +13,7 @@ loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true }
 
 const limit = Math.min(1_500, Math.max(1, Number(process.argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1] ?? 1_000)));
 const offsetStart = Math.max(0, Number(process.argv.find((arg) => arg.startsWith("--offset="))?.split("=")[1] ?? 0));
+const sourceIdsArgument = process.argv.find((arg) => arg.startsWith("--source-ids="))?.slice("--source-ids=".length);
 const runId = process.env.CHESTNY_ENRICHMENT_RUN_ID ?? "vps-staging";
 
 function required(name: string) {
@@ -41,10 +42,14 @@ function searchFromSnapshot(sourceId: string, snapshot: Record<string, unknown>)
 }
 
 async function main() {
-  const report = JSON.parse(await fs.readFile(path.resolve(process.cwd(), "output/chestny-vps-publication-ready.json"), "utf8")) as {
-    ready: Array<{ sourceListingId: string }>;
-  };
-  const selectedIds = report.ready.slice(offsetStart, offsetStart + limit).map((item) => item.sourceListingId);
+  const selectedIds = sourceIdsArgument
+    ? [...new Set(sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean))]
+    : (JSON.parse(await fs.readFile(path.resolve(process.cwd(), "output/chestny-vps-publication-ready.json"), "utf8")) as {
+        ready: Array<{ sourceListingId: string }>;
+      }).ready.slice(offsetStart, offsetStart + limit).map((item) => item.sourceListingId);
+  if (sourceIdsArgument && selectedIds.length !== sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean).length) {
+    throw new Error("Publication input contains duplicate --source-ids");
+  }
   if (!selectedIds.length) throw new Error("No publication-ready staging IDs");
 
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
@@ -87,14 +92,19 @@ async function main() {
     if (images.length < 5) reasons.push(`incomplete_gallery:${images.length}`);
     const modifiedAt = Date.parse(String(record(detail.manage).modifyDateTime ?? ""));
     if (!Number.isFinite(modifiedAt) || modifiedAt < freshnessCutoff) reasons.push("stale_listing");
-    if (record(payload.endpointStatus).options !== "ok") reasons.push("options_request_failed");
+    const optionsStatus = record(payload.endpointStatus).options;
+    const rawOptionsState = typeof optionsStatus === "string" ? optionsStatus : String(record(optionsStatus).state ?? "unknown");
+    const optionsState = ["ok", "confirmed_empty", "confirmed_unavailable", "not_found", "auth_error", "blocked", "rate_limited", "transient_error", "http_error", "invalid_payload", "identity_mismatch", "skipped"].includes(rawOptionsState) ? rawOptionsState : "unknown";
+    if (optionsState !== "ok") reasons.push(optionsState === "confirmed_empty" ? "options_confirmed_empty" : optionsState === "unknown" ? "options_request_failed" : `options_${optionsState}`);
     if (reasons.length) {
       qualityRejections.push({ sourceListingId: sourceId, reasons });
       continue;
     }
     const bundle: EncarBundle = {
       fetchedAt: String(row.updated_at ?? new Date().toISOString()),
-      search: searchFromSnapshot(sourceId, snapshot),
+      search: Object.keys(record(payload.search)).length
+        ? { ...record(payload.search), Id: sourceId } as EncarSearchListing
+        : searchFromSnapshot(sourceId, snapshot),
       detail,
     };
     const screening = screenListing(bundle);

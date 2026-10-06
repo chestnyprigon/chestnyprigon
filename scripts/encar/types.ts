@@ -48,7 +48,7 @@ export type EncarBundle = {
   detail: EncarDetail;
 };
 
-export type ScreeningDecision = "approved" | "rejected" | "manual_review";
+export type ScreeningDecision = "approved" | "rejected" | "isolated";
 
 export type ScreeningResult = {
   decision: ScreeningDecision;

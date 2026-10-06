@@ -56,7 +56,8 @@ export async function persistPilot(
   const approvedItems = persistableItems.filter(
     (item) => item.screening.decision === "approved" && item.normalized,
   );
-  const rejectedCount = uniqueItems.length - approvedItems.length;
+  const rejectedCount = uniqueItems.filter((item) => item.screening.decision === "rejected").length;
+  const isolatedCount = uniqueItems.filter((item) => item.screening.decision === "isolated").length;
 
   try {
     await checked(
@@ -227,6 +228,7 @@ export async function persistPilot(
     fetchedCount: uniqueItems.length,
     acceptedCount: approvedItems.length,
     rejectedCount,
+    isolatedCount,
     errorCount: 0,
     published: publish,
   };

@@ -62,8 +62,10 @@ test("rejects taxi and commercial keywords", () => {
   assert.equal(commercial.decision, "rejected");
 });
 
-test("sends incomplete listings to manual review but accepts Encar technical copies", () => {
-  assert.equal(screenListing(bundle({ photos: 2 })).decision, "manual_review");
+test("isolates incomplete listings with explicit reasons but accepts Encar technical copies", () => {
+  const incomplete = screenListing(bundle({ photos: 2 }));
+  assert.equal(incomplete.decision, "isolated");
+  assert.deepEqual(incomplete.reasonCodes, ["insufficient_photos"]);
   assert.equal(screenListing(bundle({ serviceCopyCar: "DUPLICATION" })).decision, "approved");
 });
 

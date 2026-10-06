@@ -6,15 +6,17 @@ import { inspectionSummary } from "../encar/enrich";
 import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
 
 config({ path: ".env", quiet: true });
+const direct = process.env.CHESTNY_REPORT_RETRY_DIRECT === "true";
+if (direct) config({ path: ".env.local", quiet: true });
 const runId = process.env.CHESTNY_REPORT_RETRY_RUN_ID;
 const batchSize = Math.min(50, Math.max(1, Number(process.env.CHESTNY_REPORT_RETRY_BATCH_SIZE ?? 50)));
 const delayMs = Math.max(1_000, Number(process.env.CHESTNY_REPORT_RETRY_DELAY_MS ?? 3_000));
 const dryRun = process.env.CHESTNY_REPORT_RETRY_DRY_RUN === "true";
-const proxyUrl = process.env.ENCAR_PROXY_URL?.trim();
+const proxyUrl = direct ? null : process.env.ENCAR_PROXY_URL?.trim();
 const required = (name: string) => { const value = process.env[name]?.trim(); if (!value) throw new Error(`Missing ${name}`); return value; };
 type Row = { id: string; source_listing_id: string; candidate_snapshot: Record<string, unknown> };
-type Probe = { ok: boolean; status?: number; body?: unknown; error?: string };
-type Classification = "ready" | "report_not_found" | "timeout" | "http_error" | "captcha" | "blocked" | "proxy_error";
+type Probe = { ok: boolean; status?: number; body?: unknown; error?: string; attempts?: number };
+type Classification = "ready" | "report_not_found" | "timeout" | "transient_error" | "auth_error" | "http_error" | "captcha" | "blocked" | "rate_limited" | "proxy_error";
 const agent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const radarPath = `${process.env.ENCAR_COORDINATION_DIR ?? "/tmp/encar-coordination"}/radar-priority.json`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,10 +72,15 @@ async function syncVehicleReport(
 
   const { data: previous, error: previousError } = await db
     .from("vehicle_reports")
-    .select("options,accident_summary")
+    .select("options,accident_summary,report_status")
     .eq("vehicle_id", vehicle.id)
     .maybeSingle();
   if (previousError) throw new Error(previousError.message);
+
+  // A failed technical retry says nothing about report availability. Preserve
+  // the previous report row (especially a previously ready one) until Encar
+  // returns either a valid report or an explicit 404/410.
+  if (classification !== "ready" && classification !== "report_not_found") return;
 
   const reportReady = classification === "ready" && inspection.ok;
   const normalizedInspection = reportReady
@@ -96,17 +103,34 @@ function classify(probe: Probe): Classification {
   if (/captcha/i.test(probe.error ?? "")) return "captcha";
   if (/proxy|socket|econn|eai_again|fetch failed/i.test(probe.error ?? "")) return "proxy_error";
   if (/timeout|abort|timed out/i.test(probe.error ?? "")) return "timeout";
-  if (probe.status === 403 || probe.status === 429 || probe.status === 503) return "blocked";
+  if (probe.status === 401) return "auth_error";
+  if (probe.status === 403) return "blocked";
+  if (probe.status === 429) return "rate_limited";
+  if (probe.status === 408 || (probe.status !== undefined && probe.status >= 500)) return "transient_error";
   if (probe.status === 404 || probe.status === 410) return "report_not_found";
   return "http_error";
 }
 async function probe(url: string): Promise<Probe> {
-  try { const response = await fetch(url, { headers: { Accept: "application/json", Origin: "https://fem.encar.com", Referer: "https://fem.encar.com/" }, ...(agent ? { dispatcher: agent } : {}), signal: AbortSignal.timeout(20_000) }); if (!response.ok) return { ok: false, status: response.status }; return { ok: true, status: response.status, body: await response.json() }; }
-  catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    let result: Probe;
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json", Origin: "https://fem.encar.com", Referer: "https://fem.encar.com/" }, ...(agent ? { dispatcher: agent } : {}), signal: AbortSignal.timeout(20_000) });
+      result = response.ok
+        ? { ok: true, status: response.status, body: await response.json(), attempts: attempt }
+        : { ok: false, status: response.status, attempts: attempt };
+    } catch (error) {
+      result = { ok: false, error: error instanceof Error ? error.message : String(error), attempts: attempt };
+    }
+    if (result.ok || attempt === 3) return result;
+    const classification = classify(result);
+    if (!["timeout", "transient_error", "proxy_error"].includes(classification)) return result;
+    await sleep(delayMs * attempt);
+  }
+  return { ok: false, error: "request_failed_after_retries", attempts: 3 };
 }
 async function main() {
   if (!runId) throw new Error("CHESTNY_REPORT_RETRY_RUN_ID is required");
-  if (!proxyUrl) throw new Error("ENCAR_PROXY_URL is required; direct requests are disabled");
+  if (!proxyUrl && !direct) throw new Error("Set CHESTNY_REPORT_RETRY_DIRECT=true for local direct requests, or configure ENCAR_PROXY_URL");
   if (!dryRun && await radarHasPriority()) {
     console.log(JSON.stringify({ runId, deferred: "radar_priority" }));
     await agent?.close();
@@ -137,7 +161,9 @@ async function main() {
       break;
     }
     const id = idOf(row, staging);
-    const [inspection, summary] = await Promise.all([probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}`), probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}/summary`)]);
+    const inspection = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}`);
+    await sleep(delayMs);
+    const summary = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}/summary`);
     const inspectionClassification = classify(inspection); const summaryClassification = classify(summary);
     const classification = inspection.ok ? "ready" : inspectionClassification;
     const result = { sourceListingId: row.source_listing_id, encarId: id, classification, inspectionStatus: inspection.status ?? null, summaryStatus: summary.status ?? null, inspectionError: inspection.error ?? null, summaryError: summary.error ?? null, inspectionAvailable: inspection.ok, summaryAvailable: summary.ok };
@@ -153,7 +179,7 @@ async function main() {
       });
       if (done.error) throw new Error(done.error.message);
       await syncVehicleReport(db, row, id, staging.get(row.source_listing_id), inspection, classification);
-      if (classification === "captcha" || classification === "blocked") {
+      if (["captcha", "blocked", "rate_limited", "auth_error"].includes(classification)) {
         const remaining = ((rows ?? []) as Row[]).slice(index + 1).map((item) => item.id);
         if (remaining.length) {
           const { error: requeueError } = await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", remaining);
@@ -171,7 +197,7 @@ async function main() {
       if (completeError) throw new Error(completeError.message);
     }
   }
-  console.log(JSON.stringify({ runId, dryRun, batchSize, requested: results.length, onlyEndpoints: ["inspection", "summary"], results: results.length <= 10 ? results : undefined }, null, 2)); await agent!.close();
+  console.log(JSON.stringify({ runId, dryRun, transport: direct ? "direct" : "proxy", batchSize, requested: results.length, onlyEndpoints: ["inspection", "summary"], results: results.length <= 10 ? results : undefined }, null, 2)); await agent?.close();
 }
 async function radarHasPriority() {
   try { const owner = JSON.parse(await readFile(radarPath, "utf8")) as { pid?: number }; if (!Number.isInteger(owner.pid)) return false; try { process.kill(owner.pid!, 0); return true; } catch { return false; } } catch { return false; }

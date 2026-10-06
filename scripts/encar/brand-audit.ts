@@ -178,7 +178,7 @@ async function main() {
     sourceTotals: results.reduce((total, result) => total + Number(result.sourceTotal ?? 0), 0),
     sampled: results.reduce((total, result) => total + Number(result.sampled ?? 0), 0),
     approved: results.reduce((total, result) => total + Number((result.decisions as Record<string, number>)?.approved ?? 0), 0),
-    manualReview: results.reduce((total, result) => total + Number((result.decisions as Record<string, number>)?.manual_review ?? 0), 0),
+    isolated: results.reduce((total, result) => total + Number((result.decisions as Record<string, number>)?.isolated ?? 0), 0),
     rejected: results.reduce((total, result) => total + Number((result.decisions as Record<string, number>)?.rejected ?? 0), 0),
   }));
 }

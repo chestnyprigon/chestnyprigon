@@ -103,7 +103,7 @@ async function main() {
       const wave = [...CATALOG_WAVES].find((item) => item.id === batch.wave.id);
       if (!wave) continue;
       const manufacturer = wave.manufacturer === "*" ? undefined : primaryManufacturerAlias(wave.manufacturer);
-      const query = createDomesticQuery(wave.yearFrom ?? yearFrom, yearTo, maxMileage, "Y", manufacturer);
+      const query = createDomesticQuery(wave.yearFrom ?? yearFrom, yearTo, maxMileage, "Y", manufacturer, null, null);
       const page = await search(agent, query, pageOffset + batch.offset, Math.min(pageSize, batch.limit));
       const pageIds: string[] = [];
       for (const listing of page.listings) {

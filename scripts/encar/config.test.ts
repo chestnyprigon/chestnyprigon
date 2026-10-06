@@ -14,3 +14,10 @@ test("uses the customer-confirmed seven-year and mileage limits", () => {
   assert.match(createDomesticQuery(encarYearFrom(yearTo), yearTo, ENCAR_MAX_MILEAGE_KM, "Y", "BMW"), /Manufacturer\.BMW/);
   assert.match(createDomesticQuery(encarYearFrom(yearTo), yearTo, ENCAR_MAX_MILEAGE_KM, "Y", "현대"), /Manufacturer\.현대/);
 });
+
+test("can omit the price filter for the catalog live-search flow", () => {
+  const query = createDomesticQuery(2016, 2026, 190_000, "Y", "BMW", null, null);
+  assert.match(query, /Manufacturer\.BMW/);
+  assert.match(query, /Mileage\.range\(\.\.190000\)/);
+  assert.doesNotMatch(query, /Price\.range/);
+});

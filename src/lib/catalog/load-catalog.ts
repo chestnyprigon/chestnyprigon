@@ -216,6 +216,10 @@ function parseInspection(value: unknown): InspectionSummary | null {
     firstRegistrationDate: asString(summary.firstRegistrationDate),
     inspectionMileage: asNumber(summary.inspectionMileage) || null,
     checks,
+    bodyDiagnosisAvailable: typeof summary.bodyDiagnosisAvailable === "boolean" ? summary.bodyDiagnosisAvailable : null,
+    bodyDiagnosisNotes: Array.isArray(summary.bodyDiagnosisNotes)
+      ? summary.bodyDiagnosisNotes.filter((item): item is string => typeof item === "string")
+      : [],
     bodyFindings: Array.isArray(summary.bodyFindings)
       ? summary.bodyFindings.flatMap((item) => {
           const finding = record(item);
@@ -689,7 +693,7 @@ const loadCachedCatalogCarData = unstable_cache(
   loadCatalogCarData,
   // Bump the cache namespace when report payloads are repaired so an older
   // ISR entry cannot keep showing the previous "Нет данных" state.
-  ["catalog-car-data-v2"],
+  ["catalog-car-data-v3"],
   { revalidate: 60 },
 );
 

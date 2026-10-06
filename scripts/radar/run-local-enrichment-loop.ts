@@ -24,7 +24,7 @@ type WorkerResult = {
   succeeded: number;
   unavailable: number;
   failed: number;
-  results: Array<{ error?: string }>;
+  results: Array<{ error?: string; failureClass?: string }>;
 };
 
 async function queueCounts() {
@@ -75,7 +75,8 @@ async function main() {
     batch += 1;
     const counts = await queueCounts();
     console.log(JSON.stringify({ runId, batch, transport: "direct", ...counts }));
-    if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? ""))) {
+    if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
+      || /^(endpoint_(transient_error|auth_error|blocked|rate_limited)|transient_request|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
       throw new Error("Encar access restriction detected; local enrichment paused");
     }
     if (result.claimed > 0 && result.failed >= Math.ceil(result.claimed / 2)) {

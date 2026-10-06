@@ -148,7 +148,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   const isProblematic = invalidData || needsReview;
 
   return {
-    decision: hardExclusion ? "rejected" : isProblematic ? "manual_review" : "approved",
+    decision: hardExclusion ? "rejected" : isProblematic ? "isolated" : "approved",
     isLease,
     isRental,
     isTaxi,

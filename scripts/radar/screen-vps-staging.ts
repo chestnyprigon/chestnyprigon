@@ -108,15 +108,27 @@ async function main() {
     }
     const bundle: EncarBundle = {
       fetchedAt: String(row.updated_at ?? new Date().toISOString()),
-      search: searchFromSnapshot(sourceId, snapshot),
+      search: Object.keys(record(payload.search)).length
+        ? { ...record(payload.search), Id: sourceId } as EncarSearchListing
+        : searchFromSnapshot(sourceId, snapshot),
       detail,
     };
     const screening = screenListing(bundle);
     decisions[screening.decision] = (decisions[screening.decision] ?? 0) + 1;
     for (const reason of screening.reasonCodes) reasons[reason] = (reasons[reason] ?? 0) + 1;
     if (screening.decision !== "approved") continue;
-    if (record(payload.endpointStatus).options !== "ok") {
-      reasons.options_request_failed = (reasons.options_request_failed ?? 0) + 1;
+    const optionsStatus = record(payload.endpointStatus).options;
+    const rawOptionsState = typeof optionsStatus === "string" ? optionsStatus : String(record(optionsStatus).state ?? "unknown");
+    const optionsState = ["ok", "confirmed_empty", "confirmed_unavailable", "not_found", "auth_error", "blocked", "rate_limited", "transient_error", "http_error", "invalid_payload", "identity_mismatch", "skipped"].includes(rawOptionsState) ? rawOptionsState : "unknown";
+    if (optionsState === "confirmed_empty") {
+      decisions.approved = Math.max(0, (decisions.approved ?? 1) - 1);
+      decisions.isolated = (decisions.isolated ?? 0) + 1;
+      reasons.options_confirmed_empty = (reasons.options_confirmed_empty ?? 0) + 1;
+      continue;
+    }
+    if (optionsState !== "ok") {
+      const reason = optionsState === "unknown" ? "options_request_failed" : `options_${optionsState}`;
+      reasons[reason] = (reasons[reason] ?? 0) + 1;
       continue;
     }
     const year = number(snapshot.modelYear);

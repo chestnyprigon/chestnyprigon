@@ -31,7 +31,7 @@ async function main() {
   let errors = 0;
   let missing = 0;
   let rejected = 0;
-  let manualReview = 0;
+  let isolated = 0;
   for (const candidate of candidates) {
     const id = String(candidate.sourceListingId ?? "");
     try {
@@ -49,7 +49,7 @@ async function main() {
       const bundle: EncarBundle = { fetchedAt: new Date().toISOString(), search: listing, detail: await fetchPublicDetail(id, { attempts: 1, timeoutMs: 20_000 }) };
       const screening = screenListing(bundle);
       if (screening.decision === "rejected") rejected += 1;
-      if (screening.decision === "manual_review") manualReview += 1;
+      if (screening.decision === "isolated") isolated += 1;
       items.push({ bundle, screening, normalized: screening.decision === "approved" ? normalizeListing(bundle) : null });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -63,7 +63,7 @@ async function main() {
   }
 
   const persisted = items.length ? await persistPilot(items, false, { source: "radar-local-reserve", offset, requested: candidates.length, publish: false }) : null;
-  console.log(JSON.stringify({ status: "completed", mode: "local-only", requested: candidates.length, fetched: items.length, approved: items.filter((item) => item.screening.decision === "approved").length, manualReview, rejected, missing, errors, persisted }, null, 2));
+  console.log(JSON.stringify({ status: "completed", mode: "local-only", requested: candidates.length, fetched: items.length, approved: items.filter((item) => item.screening.decision === "approved").length, isolated, rejected, missing, errors, persisted }, null, 2));
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
