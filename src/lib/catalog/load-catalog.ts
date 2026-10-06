@@ -460,7 +460,7 @@ async function loadAccidentVehicleIds(
   return ids;
 }
 
-export async function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
+async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<CatalogPage> {
   const client = createSupabasePublicServerClient();
   // Begin independent reads together. In particular, pricing must never block
   // the catalogue query while it waits for the daily currency cache.
@@ -555,6 +555,19 @@ export async function loadCatalogPage(search: CatalogSearch = {}): Promise<Catal
     generations: [...new Set((vehicles ?? []).flatMap((car) => car.generation ? [car.generation] : []))],
     trims: [...new Set((vehicles ?? []).flatMap((car) => car.trim ? [car.trim] : []))],
   };
+}
+
+// The home and catalog routes are dynamic because they accept live search
+// parameters. Cache each normalized parameter set briefly so repeat visits
+// reuse the same Supabase result while availability and prices stay fresh.
+const loadCachedCatalogPage = unstable_cache(
+  async (search: CatalogSearch) => loadCatalogPageUncached(search),
+  ["catalog-page-v1"],
+  { revalidate: 30 },
+);
+
+export function loadCatalogPage(search: CatalogSearch = {}): Promise<CatalogPage> {
+  return loadCachedCatalogPage(search);
 }
 
 /**
