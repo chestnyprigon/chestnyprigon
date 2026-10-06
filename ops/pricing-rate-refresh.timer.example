@@ -1,8 +1,9 @@
 [Unit]
-Description=Refresh Chestny Prigon KRW/USD rate hourly
+Description=Refresh Chestny Prigon KRW/USD rate daily
 
 [Timer]
-OnCalendar=hourly
+# 09:00 Minsk / 15:00 Seoul. Recalculation follows the rate refresh.
+OnCalendar=*-*-* 06:00:00 UTC
 RandomizedDelaySec=5m
 Persistent=true
 Unit=chestny-prigon-pricing-rate-refresh.service
