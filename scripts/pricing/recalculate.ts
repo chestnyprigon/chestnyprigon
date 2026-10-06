@@ -1,9 +1,9 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
-import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
+import { calculateBelarusPrice } from "../../src/lib/pricing/chestny-prigon-profile";
 import { loadPersistedPricingProfile } from "./load-profile";
+import { loadRecalculationRates } from "./load-exchange-rates";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -22,7 +22,7 @@ async function main() {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   const profile = await loadPersistedPricingProfile(client);
-  const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
+  const exchangeRates = await loadRecalculationRates(client, dryRun);
   const vehicles: Array<{
     id: string;
     price_krw: number;

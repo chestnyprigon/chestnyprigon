@@ -8,8 +8,8 @@ function decimal(value: unknown) {
 }
 
 /** Official daily rates used to convert Belarusian statutory payments. */
-export async function fetchNbrbRates(): Promise<ExchangeRates> {
-  const response = await fetch(NBRB_DAILY_URL, { next: { revalidate: 86_400 } });
+export async function fetchNbrbRates(signal?: AbortSignal): Promise<ExchangeRates> {
+  const response = await fetch(NBRB_DAILY_URL, { next: { revalidate: 86_400 }, ...(signal ? { signal } : {}) });
   if (!response.ok) throw new Error(`NBRB returned ${response.status}`);
   const rows = await response.json() as Array<{ Cur_Abbreviation?: string; Cur_OfficialRate?: number; Cur_Scale?: number; Date?: string }>;
   const find = (currency: string) => rows.find((row) => row.Cur_Abbreviation === currency);
