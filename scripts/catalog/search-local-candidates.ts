@@ -5,6 +5,7 @@ import { CATALOG_POLICY } from "../encar/catalog-policy";
 import { primaryManufacturerAlias } from "../encar/manufacturer-aliases";
 import { planBrandSearch, type BrandSearchState } from "./resumable-search";
 import { withEnrichmentWorkerLock } from "../radar/enrichment-worker-lock";
+import { notifyCatalogOwner } from "../radar/telegram-catalog-notify";
 
 config({ path: ".env.local", quiet: true });
 
@@ -74,10 +75,28 @@ async function main() {
     .select("manufacturer,target,remaining_quota,published_count,search_offset,scanned_count,candidate_count,processed_candidates,conversion_rate,status,last_error,run_id")
     .eq("launch_id", launch.id).order("manufacturer");
   if (error) throw new Error(error.message);
+  const processedByManufacturer = new Map<string, number>();
+  const { data: cohortRuns, error: cohortError } = await client.from("chestny_enrichment_runs")
+    .select("id").contains("rules", { catalogLaunchId: launch.id });
+  if (cohortError) throw new Error(cohortError.message);
+  const completedStatuses = ["succeeded", "unavailable", "failed", "cancelled"];
+  for (const cohortRun of cohortRuns ?? []) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data: queueRows, error: queueError } = await client.from("chestny_enrichment_queue")
+        .select("status,candidate_snapshot").eq("run_id", cohortRun.id).order("id").range(offset, offset + 999);
+      if (queueError) throw new Error(queueError.message);
+      for (const item of queueRows ?? []) {
+        if (!completedStatuses.includes(item.status)) continue;
+        const manufacturer = String(asRecord(item.candidate_snapshot).quotaManufacturer ?? "");
+        if (manufacturer) processedByManufacturer.set(manufacturer, (processedByManufacturer.get(manufacturer) ?? 0) + 1);
+      }
+      if (!queueRows || queueRows.length < 1_000) break;
+    }
+  }
   const states: BrandSearchState[] = (rows ?? []).map((row: Record<string, unknown>) => ({
     manufacturer: String(row.manufacturer), quotaTarget: Number(row.target), remainingQuota: Number(row.remaining_quota),
     searchOffset: Number(row.search_offset), scannedCount: Number(row.scanned_count), candidateCount: Number(row.candidate_count),
-    processedCandidates: Number(row.processed_candidates), conversionRate: row.conversion_rate === null ? null : Number(row.conversion_rate),
+    processedCandidates: processedByManufacturer.get(String(row.manufacturer)) ?? 0, conversionRate: row.conversion_rate === null ? null : Number(row.conversion_rate),
     exhausted: row.status === "exhausted",
   }));
   const plan = planBrandSearch(states, pilotPoolTarget);
@@ -92,6 +111,11 @@ async function main() {
   }));
   if (!apply) {
     console.log(JSON.stringify({ mode: "plan_only", launchId: launch.id, launchName: launch.name, pageSize, maxPagesPerBrand, brands: printable }, null, 2));
+    return;
+  }
+
+  if (!plan.some((brand) => brand.candidatesToFind > 0)) {
+    console.log(JSON.stringify({ mode: "no_searchable_brands", launchId: launch.id, launchName: launch.name, runId: null, queued: 0, noSearchableBrands: true, brands: printable }, null, 2));
     return;
   }
 
@@ -128,6 +152,14 @@ async function main() {
 
   await withEnrichmentWorkerLock({ db: client, runId: activeRunId, task: async (_token, signal) => {
   const summaries: Array<Record<string, unknown>> = [];
+  const searchable = plan.filter((brand) => brand.candidatesToFind > 0 && !brand.exhausted);
+  try {
+    await notifyCatalogOwner(`Поиск новой волны запущен: ${searchable.length} марок имеют квотный недобор. Буду сохранять offset после каждой страницы.`);
+  } catch (error) {
+    console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let finishedBrands = 0;
+  let foundAcrossBrands = 0;
   for (const brand of plan) {
     if (signal.aborted) throw signal.reason;
     if (!brand.candidatesToFind || brand.exhausted) continue;
@@ -186,6 +218,15 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, CATALOG_POLICY.requestDelayMs));
     }
     summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages, newCandidates: found, exhausted, targetReached: found >= brand.candidatesToFind });
+    finishedBrands += 1;
+    foundAcrossBrands += found;
+    if (finishedBrands % 5 === 0 || finishedBrands === searchable.length) {
+      try {
+        await notifyCatalogOwner(`Поиск квот: обработано марок ${finishedBrands}/${searchable.length}; найдено новых кандидатов ${foundAcrossBrands}. Последняя: ${brand.manufacturer}, offset ${offset}${exhausted ? " (выдача исчерпана)" : ""}.`);
+      } catch (error) {
+        console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
   const { data: finalProgress, error: progressError } = await client.from("chestny_catalog_brand_search_status")
     .select("manufacturer,target,published_count,remaining_quota,search_offset,scanned_count,candidate_count,processed_candidates,candidate_backlog,conversion_rate,status,candidates_needed_at_observed_conversion")

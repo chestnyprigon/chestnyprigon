@@ -77,6 +77,29 @@ async function runBatch(lockToken: string, signal: AbortSignal): Promise<WorkerR
   return JSON.parse(output.slice(jsonStart)) as WorkerResult;
 }
 
+async function screenCompletedItems() {
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = spawn("npm", ["run", "radar:screen-vps-staging"], {
+      env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) reject(new Error(`Screening exited ${code}: ${stderr.trim() || stdout.trim()}`));
+      else resolve(stdout);
+    });
+  });
+  try {
+    return JSON.parse(output) as { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
+  } catch {
+    throw new Error(`Screening did not return a summary: ${output.trim()}`);
+  }
+}
+
 async function processLoop(lockToken: string, signal: AbortSignal) {
   let batch = 0;
   const { data: run, error: runError } = await client.from("chestny_enrichment_runs")
@@ -99,14 +122,11 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     try { await notifyCatalogOwner(message); }
     catch (error) { console.error(`Telegram progress notification failed: ${error instanceof Error ? error.message : String(error)}`); }
   };
-  await notify(`Worker начал run ${runId}. Уже обработано ${processed}/${maxItems}; в очереди ${initialCounts.queued}.`);
-  if (processed >= maxItems) {
-    console.log(JSON.stringify({ runId, stoppedAtLimit: true, processed, maxItems, recoveredLeases: recoveredIds.length, ...initialCounts }));
-    await notify(`Волна run ${runId} остановлена на лимите ${maxItems}. Обработано ${processed}; queued ${initialCounts.queued}, leased ${initialCounts.leased}.`);
-    return;
-  }
+  const processedBeforeWave = processed;
+  let processedThisWave = 0;
+  await notify(`Началась новая волна run ${runId}. Обработано ранее ${processedBeforeWave}; лимит этой волны ${maxItems}; в очереди ${initialCounts.queued}.`);
   try {
-    while (processed < maxItems) {
+    while (processedThisWave < maxItems) {
       const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
         .select("status").eq("id", runId).single();
       if (currentRunError) throw new Error(`Cannot refresh run control status: ${currentRunError.message}`);
@@ -119,10 +139,11 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       }
       const result = await runBatch(lockToken, signal);
       batch += 1;
+      processedThisWave += result.claimed;
       processed += result.claimed;
       const counts = await queueCounts();
-      console.log(JSON.stringify({ runId, batch, processed, maxItems, recoveredLeases: recoveredIds.length, transport: "direct", ...counts }));
-      if (processed > 0 && processed % 10 === 0) await notify(`Прогресс run ${runId}: ${processed}/${maxItems}. Успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}, осталось queued ${counts.queued}.`);
+      console.log(JSON.stringify({ runId, batch, processedThisWave, processedTotal: processed, maxItems, recoveredLeases: recoveredIds.length, transport: "direct", ...counts }));
+      if (processedThisWave > 0 && processedThisWave % 10 === 0) await notify(`Прогресс run ${runId}: эта волна ${processedThisWave}/${maxItems}; всего обработано ${processed}. Успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}, осталось в очереди ${counts.queued}.`);
       if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
         || /^(endpoint_(transient_error|auth_error|blocked|rate_limited)|transient_request|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
         throw new Error("Encar access restriction detected; local enrichment paused");
@@ -131,17 +152,26 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
         throw new Error("At least half the batch failed; local enrichment paused");
       }
       if (counts.queued === 0 && counts.leased === 0) break;
-      if (processed >= maxItems) { console.log(JSON.stringify({ runId, stoppedAtLimit: true, processed, maxItems, ...counts })); break; }
+      if (processedThisWave >= maxItems) { console.log(JSON.stringify({ runId, stoppedAtLimit: true, processedThisWave, processedTotal: processed, maxItems, ...counts })); break; }
       if (result.claimed === 0) throw new Error("Queue has pending or leased items but the worker claimed none");
     }
     const finalCounts = await queueCounts();
-    await notify(`Волна run ${runId} остановлена (${processed}/${maxItems}). Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}, отменено ${finalCounts.cancelled}, queued ${finalCounts.queued}.`);
+    if (finalCounts.queued + finalCounts.leased > 0 && processedThisWave >= maxItems) {
+      const { error } = await client.from("chestny_enrichment_runs").update({
+        status: "paused",
+        pause_reason: { source: "wave_limit", maxItems, processedThisWave, processedTotal: processed, observedAt: new Date().toISOString() },
+      }).eq("id", runId).in("status", ["approved", "running"]);
+      if (error) throw new Error(`Could not pause run at wave limit: ${error.message}`);
+    }
+    const screening = await screenCompletedItems();
+    console.log(JSON.stringify({ runId, screening, ...finalCounts }));
+    await notify(`Волна run ${runId} завершена: обработано в этой волне ${processedThisWave}/${maxItems}, всего ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось в очереди ${finalCounts.queued}. Screening: допущено ${screening.decisions?.approved ?? 0}, отклонено ${screening.decisions?.rejected ?? 0}, изолировано ${screening.decisions?.isolated ?? 0}; готово к публикации ${screening.readyForPublication ?? 0}. Публикация не выполнялась.`);
   } catch (error) {
     if (!signal.aborted) {
       const { error: pauseError } = await client.from("chestny_enrichment_runs").update({
         status: "paused",
         pause_reason: { source: "local_worker_loop", message: error instanceof Error ? error.message : String(error), observedAt: new Date().toISOString() },
-      }).eq("id", runId).in("status", ["approved", "running"]);
+      }).eq("id", runId).in("status", ["approved", "running", "completed"]);
       if (pauseError) throw new Error(`Worker failed and run could not be paused: ${pauseError.message}`);
     }
     await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItems}: ${error instanceof Error ? error.message : String(error)}`);

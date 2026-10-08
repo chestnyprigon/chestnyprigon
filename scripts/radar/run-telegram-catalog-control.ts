@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { config } from "dotenv";
@@ -45,7 +45,7 @@ async function setRunStatus(runId: string, status: string, allowed: string[]) {
   if (!allowed.includes(data.status)) throw new Error(`Run ${runId} has status ${data.status}; command requires ${allowed.join(" or ")}`);
   const update: Record<string, unknown> = { status };
   if (status === "running") update.started_at = new Date().toISOString();
-  if (status === "cancelled") update.completed_at = new Date().toISOString();
+  if (status === "cancelled" || status === "completed") update.completed_at = new Date().toISOString();
   const { data: changed, error: updateError } = await db.from("chestny_enrichment_runs")
     .update(update).eq("id", runId).eq("status", data.status).select("id").maybeSingle();
   if (updateError) throw new Error(`Cannot change run status: ${updateError.message}`);
@@ -68,22 +68,76 @@ async function startWorker(command: Command) {
   }
 }
 
+async function searchNextWave() {
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--pilot-candidates=50"], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) reject(new Error(`Quota search exited ${code}: ${stderr.trim() || stdout.trim()}`));
+      else resolve(stdout);
+    });
+  });
+  try {
+    return JSON.parse(output.trim()) as { mode: string; runId?: string; queued?: number; pages?: Array<{ manufacturer: string; newCandidates: number }>; noSearchableBrands?: boolean };
+  } catch {
+    throw new Error(`Quota search did not return a summary: ${output.trim()}`);
+  }
+}
+
+async function startPreparedRun(command: Command) {
+  await setRunStatus(command.run_id, "running", ["approved"]);
+  try {
+    await startWorker(command);
+  } catch (error) {
+    const marker = await readFile(activeRunFile, "utf8").catch(() => "");
+    if (marker.trim() === command.run_id) await unlink(activeRunFile).catch(() => undefined);
+    await setRunStatus(command.run_id, "approved", ["running"]).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function processCommand(command: Command) {
   if (String(command.telegram_user_id) !== ownerId) throw new Error("Command owner does not match the configured Telegram owner");
   if (command.max_items < 1 || command.max_items > 50) throw new Error("Command exceeds the approved 50-item wave limit");
 
   switch (command.command) {
     case "start":
-      await setRunStatus(command.run_id, "running", ["approved"]);
-      try {
-        await startWorker(command);
-      } catch (error) {
-        const marker = await readFile(activeRunFile, "utf8").catch(() => "");
-        if (marker.trim() === command.run_id) await unlink(activeRunFile).catch(() => undefined);
-        await setRunStatus(command.run_id, "approved", ["running"]).catch(() => undefined);
-        throw error;
+      {
+        const { data: current, error } = await db.from("chestny_enrichment_runs").select("status").eq("id", command.run_id).single();
+        if (error) throw new Error(`Cannot read run before start: ${error.message}`);
+        if (["completed", "cancelled", "paused"].includes(current.status)) {
+          const { count: queued, error: queueError } = await db.from("chestny_enrichment_queue")
+            .select("id", { count: "exact", head: true }).eq("run_id", command.run_id).in("status", ["queued", "leased"]);
+          if (queueError) throw new Error(`Cannot verify previous queue: ${queueError.message}`);
+          if ((queued ?? 0) > 0) throw new Error("Previous wave still has queued or leased candidates; resume it or stop it before starting a new search");
+
+          await sendTelegram(command.telegram_chat_id, "Ищу следующую волну по незакрытым квотам. Поиск идёт последовательно, offset сохраняется после каждой страницы; после поиска начнутся обогащение и screening. Публикация отключена.").catch(() => undefined);
+          const search = await searchNextWave();
+          if (!search.runId) {
+            return "Поиск завершён: новых кандидатов для следующей волны пока нет. Состояние и offset по маркам сохранены; публикация не выполнялась.";
+          }
+          const { count: queuedCount, error: newQueueError } = await db.from("chestny_enrichment_queue")
+            .select("id", { count: "exact", head: true }).eq("run_id", search.runId).eq("status", "queued");
+          if (newQueueError) throw new Error(`Could not count candidates from the new search: ${newQueueError.message}`);
+          if (!queuedCount) {
+            await setRunStatus(search.runId, "completed", ["approved"]);
+            return `Поиск завершён, но новых кандидатов не найдено. Позиции марок сохранены; следующий поиск начнётся с них. Публикации нет.`;
+          }
+          await startPreparedRun({ ...command, run_id: search.runId });
+          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Worker запущен; после обогащения выполнится screening. Публикации нет.`;
+        }
+        if (current.status !== "approved") throw new Error(`Run ${command.run_id} has status ${current.status}; it is not ready to start`);
+        await startPreparedRun(command);
+        return `Начата обработка подготовленной волны run ${command.run_id}, лимит ${command.max_items}. Новые объявления не ищутся; публикации нет.`;
       }
-      return `Запуск подтверждён: run ${command.run_id}, лимит ${command.max_items}.`;
     case "resume":
       await setRunStatus(command.run_id, "running", ["paused"]);
       try {
@@ -94,7 +148,7 @@ async function processCommand(command: Command) {
         await setRunStatus(command.run_id, "paused", ["running"]).catch(() => undefined);
         throw error;
       }
-      return `Run ${command.run_id} возобновлён; лимит одного запуска — ${command.max_items}.`;
+      return `Волна run ${command.run_id} возобновлена; лимит — ${command.max_items}. После обработки автоматически выполняется screening. Публикация не запускается.`;
     case "pause":
       await setRunStatus(command.run_id, "paused", ["approved", "running"]);
       return `Run ${command.run_id} приостановлен. Текущая карточка завершится перед остановкой.`;
