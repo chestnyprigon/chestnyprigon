@@ -98,7 +98,7 @@ function imageUrls(bundle: EncarBundle) {
       const typeOrder = (PHOTO_PRIORITY[left.type ?? ""] ?? 9) - (PHOTO_PRIORITY[right.type ?? ""] ?? 9);
       return typeOrder || String(left.code ?? "").localeCompare(String(right.code ?? ""));
     })
-    .map((photo) => encarPhotoUrl(`https://ci.encar.com${photo.path}`))
+    .map((photo) => encarPhotoUrl(String(photo.path).startsWith("http") ? String(photo.path) : `https://ci.encar.com${photo.path}`))
     .filter((url, index, urls) => urls.indexOf(url) === index)
     .slice(0, 30);
 }

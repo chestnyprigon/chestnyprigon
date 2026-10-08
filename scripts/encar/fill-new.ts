@@ -1,6 +1,6 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createDomesticQuery, delay, fetchBundle, fetchSearchPage } from "./client";
 import { encarYearFrom, ENCAR_MAX_LISTING_AGE_DAYS, ENCAR_MAX_MILEAGE_KM } from "./config";
 import { normalizeListing } from "./normalize";
@@ -39,7 +39,7 @@ function integerArgument(name: string, fallback: number, minimum: number, maximu
   return value;
 }
 
-async function knownIdentifiers(client: any, ids: string[]) {
+async function knownIdentifiers(client: SupabaseClient, ids: string[]) {
   const known = new Set<string>();
   for (let offset = 0; offset < ids.length; offset += 200) {
     const chunk = ids.slice(offset, offset + 200);

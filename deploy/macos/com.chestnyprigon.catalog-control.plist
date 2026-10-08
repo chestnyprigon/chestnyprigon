@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chestnyprigon.catalog-control</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/node@24/bin/npm</string>
+    <string>run</string>
+    <string>catalog:control-local</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/koredigital/Developer/chestny-prigon</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>TELEGRAM_CATALOG_OWNER_ID</key>
+    <string>376069219</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>15</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/koredigital/Library/Logs/chestny-prigon/catalog-control.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/koredigital/Library/Logs/chestny-prigon/catalog-control.err.log</string>
+</dict>
+</plist>

@@ -4,11 +4,12 @@
 alter table public.listing_screening
   drop constraint if exists listing_screening_decision_check;
 
-alter table public.listing_screening
-  add constraint listing_screening_decision_check
-  check (decision in ('pending', 'approved', 'rejected', 'isolated'));
 
 update public.listing_screening
 set decision = 'isolated',
     is_problematic = true
 where decision = 'manual_review';
+
+alter table public.listing_screening
+  add constraint listing_screening_decision_check
+  check (decision in ('pending', 'approved', 'rejected', 'isolated'));

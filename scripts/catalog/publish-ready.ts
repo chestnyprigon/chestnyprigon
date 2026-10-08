@@ -1,81 +1,35 @@
-import path from "node:path";
-import { config as loadEnvironment } from "dotenv";
+import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-
-loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
-
-function required(name: string) {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing environment variable ${name}`);
-  return value;
-}
+import { screenStaging } from "../encar/staging-gate";
+import { CATALOG_POLICY } from "../encar/catalog-policy";
+config({ path: ".env.local", quiet: true });
 
 async function main() {
-  const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const candidates: Array<{ id: string; source_listing_id: string }> = [];
-  for (let offset = 0; ; offset += 1_000) {
-    const { data, error } = await client
-      .from("vehicles")
-      .select("id,source_listing_id")
-      .eq("status", "active")
-      .eq("is_public", false)
-      .not("price_usd", "is", null)
-      .or("revalidation_miss_count.is.null,revalidation_miss_count.eq.0")
-      .order("published_at", { ascending: true, nullsFirst: true })
-      .order("id", { ascending: true })
-      .range(offset, offset + 999);
-    if (error) throw new Error(error.message);
-    candidates.push(...(data ?? []));
-    if ((data?.length ?? 0) < 1_000) break;
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Supabase credentials missing");
+  const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const candidates = await db.from("vehicles").select("id,source_listing_id,source_url").eq("is_public", false).eq("status", "active").not("price_usd", "is", null).limit(1000);
+  if (candidates.error) throw Error(candidates.error.message);
+  let published = 0, isolated = 0, rejected = 0;
+  for (const vehicle of candidates.data ?? []) {
+    const raw = await db.from("encar_raw_listings").select("payload").eq("source_listing_id", vehicle.source_listing_id).single();
+    if (raw.error) throw Error(raw.error.message);
+    const bundle = raw.data.payload;
+    const stage = await db.from("chestny_catalog_staging").select("*").eq("source_listing_id", String(bundle?.search?.Id ?? vehicle.source_listing_id)).maybeSingle();
+    if (stage.error) throw Error(stage.error.message);
+    const row = stage.data ?? { source_listing_id: bundle?.search?.Id, source_url: vehicle.source_url, candidate_snapshot: bundle?.search, encar_payload: bundle };
+    const result = screenStaging(row);
+    const s = result.screening;
+    const saved = await db.from("listing_screening").upsert({ source_listing_id: vehicle.source_listing_id, decision: s.decision,
+      is_lease: s.isLease, is_rental: s.isRental, is_taxi: s.isTaxi, is_commercial: s.isCommercial, is_problematic: s.isProblematic,
+      reason_codes: s.reasonCodes, rules_version: s.rulesVersion, screened_at: new Date().toISOString(),
+      details: { evidence: s.reasonEvidence, publicationGate: result.proof, policy: CATALOG_POLICY } });
+    if (saved.error) throw Error(saved.error.message);
+    if (s.decision !== "approved") { if (s.decision === "isolated") isolated++; else rejected++; continue; }
+    // The DB guard independently requires five stored images, confirmed report outcome and current proof.
+    const update = await db.from("vehicles").update({ is_public: true }).eq("id", vehicle.id);
+    if (update.error) throw Error(update.error.message);
+    published++;
   }
-
-  const reportReady = new Set<string>();
-  const approved = new Set<string>();
-  const withImages = new Set<string>();
-  for (let offset = 0; offset < candidates.length; offset += 200) {
-    const ids = candidates.slice(offset, offset + 200).map((item) => item.id);
-    const { data: reports, error: reportError } = await client
-      .from("vehicle_reports")
-      .select("vehicle_id")
-      .in("vehicle_id", ids)
-      .eq("report_status", "ready");
-    if (reportError) throw new Error(reportError.message);
-    for (const row of reports ?? []) reportReady.add(row.vehicle_id);
-
-    const sourceIds = candidates.slice(offset, offset + 200).map((item) => item.source_listing_id);
-    const { data: screening, error: screeningError } = await client
-      .from("listing_screening")
-      .select("source_listing_id")
-      .in("source_listing_id", sourceIds)
-      .eq("decision", "approved");
-    if (screeningError) throw new Error(screeningError.message);
-    for (const row of screening ?? []) approved.add(row.source_listing_id);
-
-    const { data: images, error: imageError } = await client
-      .from("vehicle_images")
-      .select("vehicle_id")
-      .in("vehicle_id", ids);
-    if (imageError) throw new Error(imageError.message);
-    for (const row of images ?? []) withImages.add(row.vehicle_id);
-  }
-
-  const ready = candidates.filter((vehicle) =>
-    reportReady.has(vehicle.id) && approved.has(vehicle.source_listing_id) && withImages.has(vehicle.id),
-  );
-  const selected = ready.slice(0, 1_000);
-  for (let offset = 0; offset < selected.length; offset += 200) {
-    const { error } = await client
-      .from("vehicles")
-      .update({ is_public: true })
-      .in("id", selected.slice(offset, offset + 200).map((vehicle) => vehicle.id));
-    if (error) throw new Error(error.message);
-  }
-  console.log({ candidates: candidates.length, qualityApproved: ready.length, published: selected.length });
+  console.log(JSON.stringify({ candidates: candidates.data?.length ?? 0, published, isolated, rejected }));
 }
-
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+main().catch(error => { console.error(error.message); process.exitCode = 1; });

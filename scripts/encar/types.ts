@@ -64,6 +64,7 @@ export type ScreeningResult = {
   reasonCodes: string[];
   matchedTerms: Record<string, string[]>;
   rulesVersion: string;
+  reasonEvidence: import("./catalog-policy").DecisionEvidence[];
 };
 
 export type NormalizedVehicle = {
@@ -93,4 +94,5 @@ export type PilotItem = {
   bundle: EncarBundle;
   screening: ScreeningResult;
   normalized: NormalizedVehicle | null;
+  enrichment?: Omit<import("./publication-gate").PublicationInput, "bundle">;
 };

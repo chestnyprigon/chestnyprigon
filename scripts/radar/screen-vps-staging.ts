@@ -3,6 +3,7 @@ import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { ENCAR_MAX_LISTING_AGE_DAYS } from "../encar/config";
+import { screenStaging } from "../encar/staging-gate";
 import { screenListing } from "../encar/screening";
 import type { EncarBundle, EncarDetail, EncarSearchListing } from "../encar/types";
 
@@ -62,7 +63,7 @@ async function main() {
     // enough to avoid Supabase statement timeouts on larger runs.
     for (let offset = 0; offset < sourceIds.length; offset += 25) {
       const { data, error } = await client.from("chestny_catalog_staging")
-        .select("source_listing_id,candidate_snapshot,encar_payload,image_urls,report_status,enrichment_status,updated_at")
+        .select("source_listing_id,source_url,candidate_snapshot,encar_payload,image_urls,report_status,enrichment_status,updated_at")
         .in("source_listing_id", sourceIds.slice(offset, offset + 25));
       if (error) throw new Error(error.message);
       rows.push(...((data ?? []) as Array<Record<string, unknown>>));
@@ -70,7 +71,7 @@ async function main() {
   } else {
     for (let offset = 0; ; offset += 1_000) {
       const { data, error } = await client.from("chestny_catalog_staging")
-        .select("source_listing_id,candidate_snapshot,encar_payload,image_urls,report_status,enrichment_status,updated_at")
+        .select("source_listing_id,source_url,candidate_snapshot,encar_payload,image_urls,report_status,enrichment_status,updated_at")
         .range(offset, offset + 999);
       if (error) throw new Error(error.message);
       rows.push(...((data ?? []) as Array<Record<string, unknown>>));
@@ -96,55 +97,23 @@ async function main() {
       missingPayload += 1;
       continue;
     }
-    const detail = record(payload.detail) as EncarDetail;
-    if (!detail.vehicleId || !detail.vehicleNo) {
-      reasons.missing_canonical_identifier = (reasons.missing_canonical_identifier ?? 0) + 1;
-      continue;
-    }
-    const modifiedAt = Date.parse(String(record(detail.manage).modifyDateTime ?? ""));
-    if (!Number.isFinite(modifiedAt) || modifiedAt < freshnessCutoff) {
-      reasons.stale_listing = (reasons.stale_listing ?? 0) + 1;
-      continue;
-    }
-    const bundle: EncarBundle = {
-      fetchedAt: String(row.updated_at ?? new Date().toISOString()),
-      search: Object.keys(record(payload.search)).length
-        ? { ...record(payload.search), Id: sourceId } as EncarSearchListing
-        : searchFromSnapshot(sourceId, snapshot),
-      detail,
-    };
-    const screening = screenListing(bundle);
+    const evaluated = screenStaging(row);
+    const screening = evaluated.screening;
     decisions[screening.decision] = (decisions[screening.decision] ?? 0) + 1;
     for (const reason of screening.reasonCodes) reasons[reason] = (reasons[reason] ?? 0) + 1;
+    const storedDecision = await client.from("chestny_catalog_decisions").upsert({
+      source_listing_id: sourceId, run_id: payload.runId ?? null, decision: screening.decision,
+      rules_version: screening.rulesVersion, evidence: screening.reasonEvidence, proof: evaluated.proof,
+      decided_at: new Date().toISOString(),
+    }, { onConflict: "source_listing_id" });
+    if (storedDecision.error) throw new Error(storedDecision.error.message);
     if (screening.decision !== "approved") continue;
-    const optionsStatus = record(payload.endpointStatus).options;
-    const rawOptionsState = typeof optionsStatus === "string" ? optionsStatus : String(record(optionsStatus).state ?? "unknown");
-    const optionsState = ["ok", "confirmed_empty", "confirmed_unavailable", "not_found", "auth_error", "blocked", "rate_limited", "transient_error", "http_error", "invalid_payload", "identity_mismatch", "skipped"].includes(rawOptionsState) ? rawOptionsState : "unknown";
-    if (optionsState === "confirmed_empty") {
-      decisions.approved = Math.max(0, (decisions.approved ?? 1) - 1);
-      decisions.isolated = (decisions.isolated ?? 0) + 1;
-      reasons.options_confirmed_empty = (reasons.options_confirmed_empty ?? 0) + 1;
-      continue;
-    }
-    if (optionsState !== "ok") {
-      const reason = optionsState === "unknown" ? "options_request_failed" : `options_${optionsState}`;
-      reasons[reason] = (reasons[reason] ?? 0) + 1;
-      continue;
-    }
-    const year = number(snapshot.modelYear);
-    const mileage = number(snapshot.mileageKm);
-    const priceKrw = number(snapshot.priceKrw);
-    const images = Array.isArray(row.image_urls) ? row.image_urls : [];
-    const basicRules = year !== null && year >= 2016 && mileage !== null && mileage <= 190_000 && priceKrw !== null && priceKrw > 0 && images.length >= 5;
-    if (screening.decision === "approved" && basicRules) {
-      const canonicalId = String(detail.vehicleId);
-      const candidate = { sourceListingId: sourceId, canonicalId, reportStatus: row.report_status ?? "unavailable", sourceUpdatedAt: String(record(detail.manage).modifyDateTime), imageCount: images.length, manufacturer: snapshot.manufacturer, model: snapshot.model, modelYear: year, mileageKm: mileage, priceKrw };
-      if (readyByCanonical.has(canonicalId)) {
-        duplicateCanonical += 1;
-        continue;
-      }
-      readyByCanonical.set(canonicalId, candidate);
-    }
+    const canonicalId = evaluated.normalized.sourceListingId;
+    if (readyByCanonical.has(canonicalId)) { duplicateCanonical += 1; continue; }
+    readyByCanonical.set(canonicalId, { sourceListingId: sourceId, canonicalId, reportStatus: evaluated.reportStatus,
+      sourceUpdatedAt: evaluated.normalized.sourceUpdatedAt, imageCount: evaluated.normalized.imageUrls.length,
+      manufacturer: evaluated.normalized.manufacturer, model: evaluated.normalized.model, modelYear: evaluated.normalized.modelYear,
+      mileageKm: evaluated.normalized.mileageKm, priceKrw: evaluated.normalized.priceKrw });
   }
 
   let existingCanonical = 0;
@@ -173,7 +142,7 @@ async function main() {
   });
   const output = {
     status: "completed",
-    mode: "local-read-only-screening",
+    mode: "local-screening-with-persisted-decisions",
     runId: RUN_ID,
     sourceRows: matchingRunRows,
     payloadRows: matchingRunRows - missingPayload,

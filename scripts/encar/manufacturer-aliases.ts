@@ -22,7 +22,7 @@ export const MANUFACTURER_ALIASES: Readonly<Record<string, readonly string[]>> =
   Ford: ["포드"],
   Jeep: ["지프"],
   "Renault Korea": ["르노", "르노코리아", "르노삼성"],
-  KGM: ["쌍용", "KG모빌리티", "KG모빌리티(쌍용)"],
+  KGM: ["KG모빌리티(쌍용)", "KG모빌리티", "쌍용"],
   BMW: ["BMW"],
   Peugeot: ["푸조"],
 };

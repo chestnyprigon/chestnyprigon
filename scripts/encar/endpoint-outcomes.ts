@@ -23,6 +23,8 @@ export type EndpointOutcome = {
   retryable: boolean;
   payload: unknown | null;
   reasonCode: string;
+  requestedCanonicalId?: string;
+  requestedVehicleNo?: string;
 };
 
 type Probe = {
@@ -32,6 +34,7 @@ type Probe = {
   error?: unknown;
   attempts?: number;
   canonicalId?: string;
+  vehicleNo?: string;
 };
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -102,6 +105,14 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     }
   }
 
+  if (state === "ok" || state === "confirmed_empty" || state === "confirmed_unavailable") {
+    const values = object(payload);
+    const returnedId = values.vehicleId ?? values.carId ?? values.canonicalVehicleId;
+    const returnedNo = values.vehicleNo;
+    if ((returnedId !== undefined && probe.canonicalId && String(returnedId) !== probe.canonicalId)
+      || (returnedNo !== undefined && probe.vehicleNo && String(returnedNo) !== probe.vehicleNo)) state = "identity_mismatch";
+  }
+  if (probe.endpoint === "options" && state === "not_found") state = "confirmed_empty";
   const retryable = state === "transient_error";
   return {
     endpoint: probe.endpoint,
@@ -112,6 +123,8 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     retryable,
     payload,
     reasonCode: `${probe.endpoint}_${state}`,
+    requestedCanonicalId: probe.canonicalId,
+    requestedVehicleNo: probe.vehicleNo,
   };
 }
 

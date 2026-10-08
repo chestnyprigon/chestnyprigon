@@ -28,6 +28,7 @@ export type ExistingIdentityRows = {
 
 const normalizedText = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
 const asNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -144,11 +145,23 @@ export function validateSnapshotAgainstDetail(snapshot: EncarSearchListing & Unk
   const expectedBrand = manufacturerKey(snapshot.Manufacturer);
   const actualBrand = manufacturerKey(category.manufacturerName ?? spec.manufacturerName);
   if (expectedBrand && actualBrand) addMismatch(issues, "integrity_manufacturer_conflict", "manufacturer", expectedBrand, actualBrand, "candidate_snapshot ↔ encar.detail.category");
+  else if (snapshot.Manufacturer && (category.manufacturerName ?? spec.manufacturerName)
+    && normalizedText(snapshot.Manufacturer) !== normalizedText(category.manufacturerName ?? spec.manufacturerName)) {
+    issues.push({ code: "integrity_manufacturer_comparison_unconfirmed", field: "manufacturer", expected: snapshot.Manufacturer,
+      actual: category.manufacturerName ?? spec.manufacturerName, source: "candidate_snapshot ↔ encar.detail.category", severity: "blocker" });
+  }
 
   const expectedModel = snapshot.Model;
-  const actualModel = category.modelGroupEnglishName ?? category.modelGroupName ?? category.modelName;
+  const modelNames = [category.modelGroupEnglishName, category.modelGroupName, category.modelName].filter(value => typeof value === "string" && value);
+  const matchingName = modelNames.find(value => normalizedText(value) === normalizedText(expectedModel)
+    || modelTokens(value).some(token => modelTokens(expectedModel).includes(token)));
+  const actualModel = matchingName ?? modelNames[0];
   if (clearModelConflict(expectedModel, actualModel)) {
     issues.push({ code: "integrity_model_family_conflict", field: "model", expected: expectedModel, actual: actualModel, source: "candidate_snapshot ↔ encar.detail.category", severity: "blocker" });
+  }
+  else if (expectedModel && actualModel && !matchingName) {
+    issues.push({ code: "integrity_model_comparison_unconfirmed", field: "model", expected: expectedModel, actual: actualModel,
+      source: "candidate_snapshot ↔ encar.detail.category model aliases", severity: "blocker" });
   }
 
   const expectedYear = modelYear(snapshot);

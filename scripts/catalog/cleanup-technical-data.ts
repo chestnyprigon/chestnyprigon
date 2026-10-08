@@ -1,6 +1,6 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -23,7 +23,7 @@ const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1_000).toISO
 const archivedImageCutoff = new Date(Date.now() - archivedImageRetentionDays * 24 * 60 * 60 * 1_000).toISOString();
 const apply = process.argv.includes("--apply");
 
-async function count(client: any, table: string, column: string, filters: string[] = []) {
+async function count(client: SupabaseClient, table: string, column: string, filters: string[] = []) {
   let query = client.from(table).select(column, { count: "exact", head: true });
   for (const filter of filters) {
     const [operator, value] = filter.split("=", 2);

@@ -6,6 +6,9 @@ import { ENCAR_MAX_LISTING_AGE_DAYS } from "../encar/config";
 import { normalizeListing } from "../encar/normalize";
 import { screenListing } from "../encar/screening";
 import { accidentSummary } from "../encar/enrich";
+import { isolate } from "../encar/publication-gate";
+import { evidence } from "../encar/catalog-policy";
+import { screenStaging } from "../encar/staging-gate";
 import { persistPilot } from "../encar/persistence";
 import type { EncarBundle, EncarSearchListing, PilotItem } from "../encar/types";
 
@@ -55,13 +58,16 @@ async function main() {
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  const launch = await client.from("chestny_catalog_launches").select("id,status,rules").eq("name", "local-catalog-1000-20261007").single();
+  if (launch.error) throw Error(launch.error.message);
+  if (!["prepared", "running"].includes(launch.data.status)) throw Error("Local catalogue launch is not active");
   const rows: Array<Record<string, unknown>> = [];
   // Staging rows contain full Encar payloads; small reads avoid statement
   // timeouts when publishing larger audited runs.
   for (let offset = 0; offset < selectedIds.length; offset += 25) {
     const { data, error } = await client
       .from("chestny_catalog_staging")
-      .select("source_listing_id,candidate_snapshot,encar_payload,image_urls,report_status,updated_at")
+      .select("source_listing_id,source_url,candidate_snapshot,encar_payload,image_urls,report_status,enrichment_status,updated_at")
       .in("source_listing_id", selectedIds.slice(offset, offset + 25));
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Array<Record<string, unknown>>));
@@ -82,46 +88,22 @@ async function main() {
       qualityRejections.push({ sourceListingId: sourceId, reasons: ["staging_row_missing"] });
       continue;
     }
-    const snapshot = record(row.candidate_snapshot);
     const payload = record(row.encar_payload);
-    const detail = record(payload.detail);
-    const images = Array.isArray(row.image_urls) ? row.image_urls : [];
-    if (runId !== "vps-staging" && payload.runId !== runId) reasons.push("run_id_mismatch");
-    if (!Object.keys(detail).length) reasons.push("detail_missing");
-    if (!detail.vehicleId || !detail.vehicleNo) reasons.push("canonical_identifier_missing");
-    if (images.length < 5) reasons.push(`incomplete_gallery:${images.length}`);
-    const modifiedAt = Date.parse(String(record(detail.manage).modifyDateTime ?? ""));
-    if (!Number.isFinite(modifiedAt) || modifiedAt < freshnessCutoff) reasons.push("stale_listing");
-    const optionsStatus = record(payload.endpointStatus).options;
-    const rawOptionsState = typeof optionsStatus === "string" ? optionsStatus : String(record(optionsStatus).state ?? "unknown");
-    const optionsState = ["ok", "confirmed_empty", "confirmed_unavailable", "not_found", "auth_error", "blocked", "rate_limited", "transient_error", "http_error", "invalid_payload", "identity_mismatch", "skipped"].includes(rawOptionsState) ? rawOptionsState : "unknown";
-    if (optionsState !== "ok") reasons.push(optionsState === "confirmed_empty" ? "options_confirmed_empty" : optionsState === "unknown" ? "options_request_failed" : `options_${optionsState}`);
-    if (reasons.length) {
-      qualityRejections.push({ sourceListingId: sourceId, reasons });
+    const evaluated = screenStaging(row);
+    if (row.enrichment_status !== "succeeded" || (runId !== "vps-staging" && payload.runId !== runId)) {
+      evaluated.screening = isolate(evaluated.screening, [evidence("publication_context_unconfirmed", "Staging не принадлежит ожидаемому успешному запуску.", { expectedRunId: runId, actualRunId: payload.runId, enrichmentStatus: row.enrichment_status }, "chestny_catalog_staging")]);
+    }
+    const savedDecision = await client.from("chestny_catalog_decisions").upsert({ source_listing_id: sourceId,
+      decision: evaluated.screening.decision, rules_version: evaluated.screening.rulesVersion,
+      evidence: evaluated.screening.reasonEvidence, proof: { ...evaluated.proof, validated: evaluated.screening.decision === "approved" }, decided_at: new Date().toISOString() });
+    if (savedDecision.error) throw Error(savedDecision.error.message);
+    const { bundle, ...enrichment } = evaluated.input;
+    const wrongRun = runId !== "vps-staging" && payload.runId !== runId;
+    if (row.enrichment_status !== "succeeded" || wrongRun || evaluated.screening.decision !== "approved") {
+      qualityRejections.push({ sourceListingId: sourceId, reasons: wrongRun ? ["run_id_mismatch"] : row.enrichment_status !== "succeeded" ? ["enrichment_not_succeeded"] : evaluated.screening.reasonCodes });
       continue;
     }
-    const bundle: EncarBundle = {
-      fetchedAt: String(row.updated_at ?? new Date().toISOString()),
-      search: Object.keys(record(payload.search)).length
-        ? { ...record(payload.search), Id: sourceId } as EncarSearchListing
-        : searchFromSnapshot(sourceId, snapshot),
-      detail,
-    };
-    const screening = screenListing(bundle);
-    if (screening.decision !== "approved") {
-      qualityRejections.push({ sourceListingId: sourceId, reasons: screening.reasonCodes.length ? screening.reasonCodes : ["screening_not_approved"] });
-      continue;
-    }
-    const normalized = normalizeListing(bundle);
-    if (!normalized) {
-      qualityRejections.push({ sourceListingId: sourceId, reasons: ["normalization_failed"] });
-      continue;
-    }
-    if (String(normalized.sourceListingId) !== String(detail.vehicleId)) {
-      qualityRejections.push({ sourceListingId: sourceId, reasons: ["canonical_id_mismatch"] });
-      continue;
-    }
-    items.push({ bundle, screening, normalized });
+    items.push({ bundle, enrichment, screening: evaluated.screening, normalized: evaluated.normalized });
   }
 
   if (qualityRejections.length || items.length !== selectedIds.length) {
@@ -159,9 +141,9 @@ async function main() {
     // returned in the detail payload. Persistence uses the canonical ID as the
     // vehicle source key, so use that key when resolving stored vehicles.
     const batchIds = batch.map((item) => String(item.normalized!.sourceListingId));
-    const result = await persistPilot(batch, true, { source: "chestny-vps-staging", runId, requested: batch.length, offset, publish: true });
+    const result = await persistPilot(batch, true, { source: "chestny-local-staging", runId, catalogLaunchId: launch.data.id, requested: batch.length, offset, publish: true });
     totals.fetchedCount += result.fetchedCount;
-    totals.acceptedCount += result.acceptedCount;
+    totals.acceptedCount += result.publishedCount;
     totals.rejectedCount += result.rejectedCount;
     totals.errorCount += result.errorCount;
     const stored = await client.from("vehicles").select("id,source_listing_id").in("source_listing_id", batchIds);
@@ -181,7 +163,7 @@ async function main() {
         options: payload.choiceOptions ?? [],
         inspection_summary: payload.inspectionSummary ?? {},
         accident_summary: accidentSummary(record(payload.rawReports).insurance, record(payload.rawReports).history),
-        report_status: row.report_status === "ready" ? "ready" : "unavailable",
+        report_status: screenStaging(row).reportStatus,
         fetched_at: String(payload.fetchedAt ?? row.updated_at ?? new Date().toISOString()),
       }];
     });

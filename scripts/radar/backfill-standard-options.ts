@@ -95,7 +95,7 @@ async function main() {
     return Boolean(vehicle && report && record(report.inspection_summary).standardOptionCodesAvailable === true);
   }).length;
   let updated = 0;
-  let skippedAvailable = selected.length - work.length - missingTargets;
+  const skippedAvailable = selected.length - work.length - missingTargets;
   const failures: Array<{ sourceListingId: string; canonicalId: string; error: string }> = [];
   console.log(JSON.stringify({ status: "started", runId, targeted: work.length, skippedAvailable, missingTargets, delayMs, transport: "direct", published: false }));
   for (const [index, item] of work.entries()) {

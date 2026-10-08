@@ -1,3 +1,4 @@
+import { CATALOG_POLICY } from "../encar/catalog-policy";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
@@ -33,7 +34,7 @@ const pageOffset = argument("page-offset", 0, 0, 100_000);
 const maxMileage = argument("max-mileage", 190_000, 1, 500_000);
 const yearFrom = argument("year-from", 2016, 1990, new Date().getFullYear());
 const yearTo = new Date().getFullYear();
-const db = createClient<any>(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
+const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
 
 function number(value: unknown) {
   const parsed = Number(value);
@@ -103,7 +104,7 @@ async function main() {
       const wave = [...CATALOG_WAVES].find((item) => item.id === batch.wave.id);
       if (!wave) continue;
       const manufacturer = wave.manufacturer === "*" ? undefined : primaryManufacturerAlias(wave.manufacturer);
-      const query = createDomesticQuery(wave.yearFrom ?? yearFrom, yearTo, maxMileage, "Y", manufacturer, null, null);
+      const query = createDomesticQuery(yearFrom, yearTo, maxMileage, "Y", manufacturer, null, null);
       const page = await search(agent, query, pageOffset + batch.offset, Math.min(pageSize, batch.limit));
       const pageIds: string[] = [];
       for (const listing of page.listings) {
@@ -122,7 +123,7 @@ async function main() {
       }
       details.push({ wave: batch.wave.id, manufacturer: wave.manufacturer, offset: batch.offset, requested: batch.limit, returned: page.listings.length, total: page.total, selected: selected.size, newCandidates: newCandidates.size });
       // Keep candidate discovery itself gentle and serialized.
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await new Promise((resolve) => setTimeout(resolve, CATALOG_POLICY.requestDelayMs));
       if (newCandidates.size >= targetCandidates || selected.size >= searchBudget) break;
     }
   } finally {
@@ -136,7 +137,7 @@ async function main() {
     status: "approved",
     candidate_count: candidates.length,
     source_file: direct ? "local-live-encar-search" : "vps-live-encar-search",
-    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, pageOffset, groups: ["european", "korean", "other"], publication: "manual-after-screening", transport: direct ? "direct" : "proxy" },
+    rules: { yearFrom, yearTo, maxMileage, targetCandidates, searchBudget, overscan, pageSize, pageOffset, groups: ["european", "korean", "other"], publication: "approved-only-after-integrity", rulesVersion: CATALOG_POLICY.version, catalogLaunchId: process.env.CHESTNY_CATALOG_LAUNCH_ID ?? null, transport: direct ? "direct" : "proxy" },
   });
   if (runError) throw new Error(runError.message);
   for (let offset = 0; offset < candidates.length; offset += 500) {

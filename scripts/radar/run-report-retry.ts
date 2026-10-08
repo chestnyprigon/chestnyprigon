@@ -2,21 +2,24 @@ import { config } from "dotenv";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { fetch, ProxyAgent } from "undici";
 import { readFile } from "node:fs/promises";
+import { classifyEndpointProbe } from "../encar/endpoint-outcomes";
+import { CATALOG_POLICY } from "../encar/catalog-policy";
 import { inspectionSummary } from "../encar/enrich";
 import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
+import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
 
 config({ path: ".env", quiet: true });
 const direct = process.env.CHESTNY_REPORT_RETRY_DIRECT === "true";
 if (direct) config({ path: ".env.local", quiet: true });
 const runId = process.env.CHESTNY_REPORT_RETRY_RUN_ID;
-const batchSize = Math.min(50, Math.max(1, Number(process.env.CHESTNY_REPORT_RETRY_BATCH_SIZE ?? 50)));
-const delayMs = Math.max(1_000, Number(process.env.CHESTNY_REPORT_RETRY_DELAY_MS ?? 3_000));
+const batchSize = direct ? 1 : Math.min(50, Math.max(1, Number(process.env.CHESTNY_REPORT_RETRY_BATCH_SIZE ?? 50)));
+const delayMs = Math.max(CATALOG_POLICY.requestDelayMs, Number(process.env.CHESTNY_REPORT_RETRY_DELAY_MS ?? CATALOG_POLICY.requestDelayMs));
 const dryRun = process.env.CHESTNY_REPORT_RETRY_DRY_RUN === "true";
 const proxyUrl = direct ? null : process.env.ENCAR_PROXY_URL?.trim();
 const required = (name: string) => { const value = process.env[name]?.trim(); if (!value) throw new Error(`Missing ${name}`); return value; };
 type Row = { id: string; source_listing_id: string; candidate_snapshot: Record<string, unknown> };
 type Probe = { ok: boolean; status?: number; body?: unknown; error?: string; attempts?: number };
-type Classification = "ready" | "report_not_found" | "timeout" | "transient_error" | "auth_error" | "http_error" | "captcha" | "blocked" | "rate_limited" | "proxy_error";
+type Classification = "ready" | "report_not_found" | "timeout" | "transient_error" | "auth_error" | "http_error" | "captcha" | "blocked" | "rate_limited" | "proxy_error" | "identity_mismatch" | "invalid_payload";
 const agent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const radarPath = `${process.env.ENCAR_COORDINATION_DIR ?? "/tmp/encar-coordination"}/radar-priority.json`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,7 +33,7 @@ const idOf = (row: Row, staging: Map<string, StagingContext>) => String(
     ?? row.source_listing_id,
 );
 
-async function loadStagingContext(db: SupabaseClient<any>, rows: Row[]) {
+async function loadStagingContext(db: SupabaseClient, rows: Row[]) {
   const ids = rows.map((row) => row.source_listing_id).filter(Boolean);
   if (!ids.length) return new Map<string, StagingContext>();
   const { data, error } = await db
@@ -55,7 +58,7 @@ async function loadStagingContext(db: SupabaseClient<any>, rows: Row[]) {
 }
 
 async function syncVehicleReport(
-  db: SupabaseClient<any>,
+  db: SupabaseClient,
   row: Row,
   canonicalId: string,
   staging: StagingContext | undefined,
@@ -100,6 +103,7 @@ async function syncVehicleReport(
 
 function classify(probe: Probe): Classification {
   if (probe.ok) return "ready";
+  if (probe.error === "identity_mismatch" || probe.error === "invalid_payload") return probe.error;
   if (/captcha/i.test(probe.error ?? "")) return "captcha";
   if (/proxy|socket|econn|eai_again|fetch failed/i.test(probe.error ?? "")) return "proxy_error";
   if (/timeout|abort|timed out/i.test(probe.error ?? "")) return "timeout";
@@ -110,15 +114,16 @@ function classify(probe: Probe): Classification {
   if (probe.status === 404 || probe.status === 410) return "report_not_found";
   return "http_error";
 }
-async function probe(url: string): Promise<Probe> {
+async function probe(url: string, lockSignal?: AbortSignal): Promise<Probe> {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     let result: Probe;
     try {
-      const response = await fetch(url, { headers: { Accept: "application/json", Origin: "https://fem.encar.com", Referer: "https://fem.encar.com/" }, ...(agent ? { dispatcher: agent } : {}), signal: AbortSignal.timeout(20_000) });
+      const response = await fetch(url, { headers: { Accept: "application/json", Origin: "https://fem.encar.com", Referer: "https://fem.encar.com/" }, ...(agent ? { dispatcher: agent } : {}), signal: lockSignal ? AbortSignal.any([AbortSignal.timeout(20_000), lockSignal]) : AbortSignal.timeout(20_000) });
       result = response.ok
         ? { ok: true, status: response.status, body: await response.json(), attempts: attempt }
         : { ok: false, status: response.status, attempts: attempt };
     } catch (error) {
+      if (lockSignal?.aborted) throw lockSignal.reason ?? error;
       result = { ok: false, error: error instanceof Error ? error.message : String(error), attempts: attempt };
     }
     if (result.ok || attempt === 3) return result;
@@ -128,7 +133,7 @@ async function probe(url: string): Promise<Probe> {
   }
   return { ok: false, error: "request_failed_after_retries", attempts: 3 };
 }
-async function main() {
+async function processReportRetry(db: SupabaseClient, lockSignal: AbortSignal) {
   if (!runId) throw new Error("CHESTNY_REPORT_RETRY_RUN_ID is required");
   if (!proxyUrl && !direct) throw new Error("Set CHESTNY_REPORT_RETRY_DIRECT=true for local direct requests, or configure ENCAR_PROXY_URL");
   if (!dryRun && await radarHasPriority()) {
@@ -136,7 +141,6 @@ async function main() {
     await agent?.close();
     return;
   }
-  const db = createClient<any>(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
   if (!dryRun && isTerminalRun(run.status)) {
@@ -155,15 +159,23 @@ async function main() {
   const staging = await loadStagingContext(db, (rows ?? []) as Row[]);
   const results: Record<string, unknown>[] = [];
   for (const [index, row] of ((rows ?? []) as Row[]).entries()) {
+    if (lockSignal.aborted) {
+      if (!dryRun) await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", ((rows ?? []) as Row[]).slice(index).map((item) => item.id)).eq("status", "leased");
+      throw lockSignal.reason;
+    }
     if (!dryRun && await radarHasPriority()) {
       const remaining = ((rows ?? []) as Row[]).slice(index).map((item) => item.id);
       if (remaining.length) await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", remaining);
       break;
     }
     const id = idOf(row, staging);
-    const inspection = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}`);
+    const inspection = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}`, lockSignal);
     await sleep(delayMs);
-    const summary = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}/summary`);
+    if (inspection.ok) {
+      const verified = classifyEndpointProbe({ endpoint: "inspection", httpStatus: inspection.status, payload: inspection.body, canonicalId: id });
+      if (verified.state !== "ok") { inspection.ok = false; inspection.error = verified.state; }
+    }
+    const summary = await probe(`https://api.encar.com/v1/readside/inspection/vehicle/${id}/summary`, lockSignal);
     const inspectionClassification = classify(inspection); const summaryClassification = classify(summary);
     const classification = inspection.ok ? "ready" : inspectionClassification;
     const result = { sourceListingId: row.source_listing_id, encarId: id, classification, inspectionStatus: inspection.status ?? null, summaryStatus: summary.status ?? null, inspectionError: inspection.error ?? null, summaryError: summary.error ?? null, inspectionAvailable: inspection.ok, summaryAvailable: summary.ok };
@@ -179,7 +191,7 @@ async function main() {
       });
       if (done.error) throw new Error(done.error.message);
       await syncVehicleReport(db, row, id, staging.get(row.source_listing_id), inspection, classification);
-      if (["captcha", "blocked", "rate_limited", "auth_error"].includes(classification)) {
+      if (["captcha", "blocked", "rate_limited", "auth_error", "timeout", "transient_error", "proxy_error"].includes(classification)) {
         const remaining = ((rows ?? []) as Row[]).slice(index + 1).map((item) => item.id);
         if (remaining.length) {
           const { error: requeueError } = await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).in("id", remaining);
@@ -201,5 +213,10 @@ async function main() {
 }
 async function radarHasPriority() {
   try { const owner = JSON.parse(await readFile(radarPath, "utf8")) as { pid?: number }; if (!Number.isInteger(owner.pid)) return false; try { process.kill(owner.pid!, 0); return true; } catch { return false; } } catch { return false; }
+}
+async function main() {
+  if (!runId) throw new Error("CHESTNY_REPORT_RETRY_RUN_ID is required");
+  const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
+  await withEnrichmentWorkerLock({ db, runId, inheritedToken: process.env.CHESTNY_ENRICHMENT_LOCK_TOKEN, task: (_token, signal) => processReportRetry(db, signal) });
 }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exit(1); });

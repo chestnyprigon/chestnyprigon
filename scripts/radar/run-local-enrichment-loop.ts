@@ -1,6 +1,10 @@
+import { CATALOG_POLICY } from "../encar/catalog-policy";
 import { spawn } from "node:child_process";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
+import { attemptedEnrichmentItems } from "./enrichment-run-state";
+import { notifyCatalogOwner } from "./telegram-catalog-notify";
 
 config({ path: ".env.local", quiet: true });
 
@@ -13,8 +17,11 @@ function required(name: string) {
 const runId = process.argv.find((argument) => argument.startsWith("--run-id="))?.slice("--run-id=".length);
 if (!runId || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--run-id must be a run UUID");
 
-const batchSize = 10;
-const delayMs = 7_000;
+const batchSize = 1;
+const maxItemsArgument = process.argv.find((argument) => argument.startsWith("--max-items="))?.slice("--max-items=".length);
+const maxItems = maxItemsArgument === undefined ? 50 : Number(maxItemsArgument);
+if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 500) throw new Error("--max-items must be 1..500");
+const delayMs = CATALOG_POLICY.requestDelayMs;
 const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -29,7 +36,7 @@ type WorkerResult = {
 
 async function queueCounts() {
   const counts: Record<string, number> = {};
-  for (const status of ["queued", "leased", "succeeded", "unavailable", "failed"]) {
+  for (const status of ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"]) {
     const { count, error } = await client.from("chestny_enrichment_queue")
       .select("id", { count: "exact", head: true })
       .eq("run_id", runId)
@@ -40,7 +47,7 @@ async function queueCounts() {
   return counts;
 }
 
-async function runBatch(): Promise<WorkerResult> {
+async function runBatch(lockToken: string, signal: AbortSignal): Promise<WorkerResult> {
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn("npm", ["run", "radar:vps-enrichment"], {
       env: {
@@ -50,8 +57,10 @@ async function runBatch(): Promise<WorkerResult> {
         CHESTNY_ENRICHMENT_BATCH_SIZE: String(batchSize),
         CHESTNY_ENRICHMENT_DELAY_MS: String(delayMs),
         CHESTNY_ENRICHMENT_MAX_ATTEMPTS: "3",
+        CHESTNY_ENRICHMENT_LOCK_TOKEN: lockToken,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      signal,
     });
     let stdout = "";
     let stderr = "";
@@ -68,23 +77,83 @@ async function runBatch(): Promise<WorkerResult> {
   return JSON.parse(output.slice(jsonStart)) as WorkerResult;
 }
 
-async function main() {
+async function processLoop(lockToken: string, signal: AbortSignal) {
   let batch = 0;
-  while (true) {
-    const result = await runBatch();
-    batch += 1;
-    const counts = await queueCounts();
-    console.log(JSON.stringify({ runId, batch, transport: "direct", ...counts }));
-    if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
-      || /^(endpoint_(transient_error|auth_error|blocked|rate_limited)|transient_request|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
-      throw new Error("Encar access restriction detected; local enrichment paused");
-    }
-    if (result.claimed > 0 && result.failed >= Math.ceil(result.claimed / 2)) {
-      throw new Error("At least half the batch failed; local enrichment paused");
-    }
-    if (counts.queued === 0 && counts.leased === 0) break;
-    if (result.claimed === 0) throw new Error("Queue has pending or leased items but the worker claimed none");
+  const { data: run, error: runError } = await client.from("chestny_enrichment_runs")
+    .select("status").eq("id", runId).single();
+  if (runError) throw new Error(runError.message);
+  if (!(run.status === "approved" || run.status === "running")) throw new Error(`Run status ${run.status} is not eligible for a worker`);
+  const { data: abandoned, error: abandonedError } = await client.from("chestny_enrichment_queue")
+    .select("id").eq("run_id", runId).eq("status", "leased");
+  if (abandonedError) throw new Error(abandonedError.message);
+  const recoveredIds = (abandoned ?? []).map((item: { id: string }) => item.id);
+  if (recoveredIds.length) {
+    const { error } = await client.from("chestny_enrichment_queue")
+      .update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() })
+      .in("id", recoveredIds).eq("status", "leased");
+    if (error) throw new Error(error.message);
   }
+  const initialCounts = await queueCounts();
+  let processed = attemptedEnrichmentItems(initialCounts);
+  const notify = async (message: string) => {
+    try { await notifyCatalogOwner(message); }
+    catch (error) { console.error(`Telegram progress notification failed: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+  await notify(`Worker начал run ${runId}. Уже обработано ${processed}/${maxItems}; в очереди ${initialCounts.queued}.`);
+  if (processed >= maxItems) {
+    console.log(JSON.stringify({ runId, stoppedAtLimit: true, processed, maxItems, recoveredLeases: recoveredIds.length, ...initialCounts }));
+    await notify(`Волна run ${runId} остановлена на лимите ${maxItems}. Обработано ${processed}; queued ${initialCounts.queued}, leased ${initialCounts.leased}.`);
+    return;
+  }
+  try {
+    while (processed < maxItems) {
+      const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
+        .select("status").eq("id", runId).single();
+      if (currentRunError) throw new Error(`Cannot refresh run control status: ${currentRunError.message}`);
+      if (currentRun.status === "paused" || currentRun.status === "cancelled") {
+        console.log(JSON.stringify({ runId, stoppedByControl: currentRun.status, processed, maxItems }));
+        break;
+      }
+      if (!(currentRun.status === "approved" || currentRun.status === "running")) {
+        throw new Error(`Run changed to unexpected status ${currentRun.status}`);
+      }
+      const result = await runBatch(lockToken, signal);
+      batch += 1;
+      processed += result.claimed;
+      const counts = await queueCounts();
+      console.log(JSON.stringify({ runId, batch, processed, maxItems, recoveredLeases: recoveredIds.length, transport: "direct", ...counts }));
+      if (processed > 0 && processed % 10 === 0) await notify(`Прогресс run ${runId}: ${processed}/${maxItems}. Успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}, осталось queued ${counts.queued}.`);
+      if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
+        || /^(endpoint_(transient_error|auth_error|blocked|rate_limited)|transient_request|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
+        throw new Error("Encar access restriction detected; local enrichment paused");
+      }
+      if (result.claimed > 0 && result.failed >= Math.ceil(result.claimed / 2)) {
+        throw new Error("At least half the batch failed; local enrichment paused");
+      }
+      if (counts.queued === 0 && counts.leased === 0) break;
+      if (processed >= maxItems) { console.log(JSON.stringify({ runId, stoppedAtLimit: true, processed, maxItems, ...counts })); break; }
+      if (result.claimed === 0) throw new Error("Queue has pending or leased items but the worker claimed none");
+    }
+    const finalCounts = await queueCounts();
+    await notify(`Волна run ${runId} остановлена (${processed}/${maxItems}). Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}, отменено ${finalCounts.cancelled}, queued ${finalCounts.queued}.`);
+  } catch (error) {
+    if (!signal.aborted) {
+      const { error: pauseError } = await client.from("chestny_enrichment_runs").update({
+        status: "paused",
+        pause_reason: { source: "local_worker_loop", message: error instanceof Error ? error.message : String(error), observedAt: new Date().toISOString() },
+      }).eq("id", runId).in("status", ["approved", "running"]);
+      if (pauseError) throw new Error(`Worker failed and run could not be paused: ${pauseError.message}`);
+    }
+    await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItems}: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
+async function main() {
+  const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  await withEnrichmentWorkerLock({ db: client, runId: runId!, task: (token, signal) => processLoop(token, signal) });
 }
 
 main().catch((error) => {

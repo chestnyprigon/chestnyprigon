@@ -82,14 +82,46 @@ export function createDomesticQuery(
   maxMileage: number,
   carType: "Y" | "N" = "Y",
   manufacturer?: string,
-  priceMin: number | null = 300,
-  priceMax: number | null = 15000,
+  priceMin: number | null = null,
+  priceMax: number | null = null,
 ) {
   const prefix = manufacturer
     ? `(And.Hidden.N._.(C.CarType.A._.Manufacturer.${manufacturer}.)_.Year`
     : `(And.Hidden.N._.CarType.${carType}._.Year`;
   const priceFilter = priceMin === null || priceMax === null ? "" : `._.Price.range(${priceMin}..${priceMax})`;
   return `${prefix}.range(${yearFrom}00..${yearTo}99)._.Mileage.range(..${maxMileage})${priceFilter}.)`;
+}
+
+export async function fetchDirectSearchPage({
+  offset,
+  limit,
+  query,
+  signal,
+}: {
+  offset: number;
+  limit: number;
+  query: string;
+  signal?: AbortSignal;
+}) {
+  if (signal?.aborted) throw signal.reason;
+  await ensureEncarVerified();
+  if (signal?.aborted) throw signal.reason;
+  const url = new URL(LIST_ENDPOINT);
+  url.searchParams.set("count", "true");
+  url.searchParams.set("q", query);
+  url.searchParams.set("sr", `|ModifiedDate|${offset}|${limit}`);
+  const response = await undiciFetch(url, {
+    headers: encarHeaders({
+      Accept: "application/json, text/plain, */*",
+      Origin: "https://fem.encar.com",
+      Referer: "https://fem.encar.com/",
+    }),
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(30_000), signal]) : AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`Encar search HTTP ${response.status}`);
+  const payload = await response.json() as SearchResponse;
+  if (!Array.isArray(payload.SearchResults)) throw new Error("Encar search response does not contain SearchResults");
+  return { total: Number(payload.Count ?? 0), listings: payload.SearchResults };
 }
 
 export async function fetchSearchPage({

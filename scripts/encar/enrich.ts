@@ -5,7 +5,10 @@ import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
 import { encarHeaders, encarHistoryHeaders, ensureEncarVerified } from "./auth";
 import { parseBodyDiagnosis } from "./body-diagnosis";
-import { reportScreening } from "./report-screening";
+import { publicationGate } from "./publication-gate";
+import { classifyEndpointProbe, type EncarEndpoint } from "./endpoint-outcomes";
+import { CATALOG_POLICY } from "./catalog-policy";
+import type { EncarBundle } from "./types";
 import { MAX_ENRICH_CONCURRENCY, SAFE_ENRICH_CONCURRENCY } from "./waves";
 import { equipmentOptionsFromCodes } from "../../src/data/equipment";
 
@@ -61,7 +64,7 @@ const publicReportHeaders = encarHeaders({
 });
 
 function retryableStatus(status: number) {
-  return status === 408 || status === 429 || status >= 500;
+  return status === 408 || status >= 500;
 }
 
 async function fetchJson(
@@ -83,7 +86,7 @@ async function fetchJson(
     } catch (error) {
       reason = error instanceof Error ? error.message : String(error);
     }
-    if (attempt < attempts) await delay(attempt * 750);
+    if (attempt < attempts) await delay(attempt * CATALOG_POLICY.requestDelayMs);
   }
   return { ok: false, reason };
 }
@@ -252,9 +255,9 @@ async function main() {
   const requestedOffset = integerArgument("offset", 0, 0, 100_000);
   const detailConcurrency = integerArgument(
     "detail-concurrency",
-    Number(process.env.ENCAR_ENRICH_CONCURRENCY ?? SAFE_ENRICH_CONCURRENCY),
     1,
-    MAX_ENRICH_CONCURRENCY,
+    1,
+    1,
   );
   if (publishEligible && !applyScreening) throw new Error("--publish-eligible requires --apply-screening");
   const client = createClient(
@@ -262,12 +265,12 @@ async function main() {
     requireEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
-  const selectedVehicles: Array<{ id: string; source_listing_id: string; price_usd: number | null }> = [];
+  const selectedVehicles: Array<{ id: string; source_listing_id: string; price_usd: number | null; source_url: string }> = [];
   const pageSize = 1_000;
   if (requestedSourceIds.length) {
     let requestedQuery = client
       .from("vehicles")
-      .select("id,source_listing_id,price_usd")
+      .select("id,source_listing_id,price_usd,source_url")
       .eq("status", "active")
       .in("source_listing_id", requestedSourceIds);
     if (onlyNotPublic) requestedQuery = requestedQuery.eq("is_public", false);
@@ -279,7 +282,7 @@ async function main() {
     const take = Math.min(pageSize, limit - selectedVehicles.length);
     let vehicleQuery = client
       .from("vehicles")
-      .select("id,source_listing_id,price_usd")
+      .select("id,source_listing_id,price_usd,source_url")
       .eq("status", "active");
     if (onlyNotPublic) vehicleQuery = vehicleQuery.eq("is_public", false);
     const { data, error: vehicleError } = await vehicleQuery
@@ -359,7 +362,7 @@ async function main() {
           is_commercial: false,
           is_problematic: true,
           reason_codes: ["enrichment_identity_missing"],
-          rules_version: "2026-08-16.1-report-optional",
+          rules_version: CATALOG_POLICY.version,
           details: { reportStatus: "unavailable" },
         });
       }
@@ -369,18 +372,21 @@ async function main() {
     const resolvedCanonicalId = canonicalId;
     const resolvedVehicleNo = vehicleNo;
 
-    const [optionsResult, inspectionResult, accidentResult, historyResult] = await Promise.all([
-      fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${resolvedCanonicalId}/options/choice`),
-      fetchJson(`https://api.encar.com/v1/readside/inspection/vehicle/${resolvedCanonicalId}`),
-      fetchJson(
+    const requests = [
+      () => fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${resolvedCanonicalId}/options/choice`),
+      () => fetchJson(`https://api.encar.com/v1/readside/inspection/vehicle/${resolvedCanonicalId}`),
+      () => fetchJson(
         `https://api.encar.com/v1/readside/record/vehicle/${resolvedCanonicalId}/open?vehicleNo=${encodeURIComponent(resolvedVehicleNo)}`,
       ),
-      fetchJson(
+      () => fetchJson(
         `https://api.encar.com/v1/vehicle/resume?vehicleNo=${encodeURIComponent(resolvedVehicleNo)}`,
         historyHeaders,
         { verifyAccess: true, attempts: 1 },
       ),
-    ]);
+    ];
+    const results: FetchJsonResult[] = [];
+    for (const request of requests) { results.push(await request()); await delay(CATALOG_POLICY.requestDelayMs); }
+    const [optionsResult, inspectionResult, accidentResult, historyResult] = results;
     const diagnosisResult = await fetchJson(`https://api.encar.com/v1/readside/diagnosis/vehicle/${resolvedCanonicalId}`);
     const optionsPayload = optionsResult.ok ? optionsResult.payload : null;
     const inspectionPayload = inspectionResult.ok ? inspectionResult.payload : null;
@@ -412,7 +418,13 @@ async function main() {
     const reportReady =
       number(record(inspectionPayload).vehicleId) === number(resolvedCanonicalId) &&
       typeof record(accidentPayload).openData === "boolean";
-    const screening = reportScreening(flags, hasAccident, reportReady);
+    const probes = { options: optionsResult, inspection: inspectionResult, diagnosis: diagnosisResult, insurance: accidentResult, history: historyResult };
+    const endpointStatus = Object.fromEntries(Object.entries(probes).map(([name, result]) => [name,
+      classifyEndpointProbe({ endpoint: name as EncarEndpoint, canonicalId: resolvedCanonicalId, vehicleNo: resolvedVehicleNo,
+        ...(result.ok ? { httpStatus: 200, payload: result.payload } : { error: result.reason }) })]));
+    const gate = publicationGate({ bundle: payload as unknown as EncarBundle, sourceUrl: String(vehicle.source_url), options: optionsPayload,
+      rawReports: { inspection: inspectionPayload, diagnosis: diagnosisPayload, insurance: accidentPayload, history: historyPayload }, endpointStatus });
+    const screening = gate.screening;
     if (!reportReady) {
       unavailable += 1;
       if (previousReportStatus.get(vehicle.id) === "ready") {
@@ -430,7 +442,7 @@ async function main() {
       options,
       inspection_summary: inspection,
       accident_summary: accidents,
-      report_status: reportReady ? "ready" : "unavailable",
+      report_status: gate.reportStatus,
       fetched_at: new Date().toISOString(),
     });
 
@@ -438,20 +450,21 @@ async function main() {
       screeningRows.push({
         source_listing_id: vehicle.source_listing_id,
         decision: screening.decision,
-        is_lease: false,
-        is_rental: flags.rental,
-        is_taxi: flags.taxi,
-        is_commercial: flags.commercial,
+        is_lease: screening.isLease,
+        is_rental: screening.isRental,
+        is_taxi: screening.isTaxi,
+        is_commercial: screening.isCommercial,
         is_problematic: screening.isProblematic,
         reason_codes: screening.reasonCodes,
-        rules_version: "2026-08-16.1-report-optional",
-        details: { inspection, accidents, reportStatus: reportReady ? "ready" : "unavailable" },
+        rules_version: CATALOG_POLICY.version,
+        details: { inspection, accidents, reportStatus: gate.reportStatus, evidence: screening.reasonEvidence, publicationGate: gate.proof },
+        screened_at: new Date().toISOString(),
       });
-      if (screening.hardExclusion) unpublishIds.push(vehicle.id);
+      if (screening.decision !== "approved") unpublishIds.push(vehicle.id);
       else if (publishEligible && vehicle.price_usd !== null && screening.decision === "approved") publishIds.push(vehicle.id);
     }
 
-    console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.hardExclusion ? ", excluded" : hasAccident ? ", disclosed" : ""}`);
+    console.log(`${vehicle.source_listing_id}: ${options.length} options, ${accidents.accidentCount} accidents${screening.decision !== "approved" ? ", excluded" : hasAccident ? ", disclosed" : ""}`);
     await delay(350);
   }
 

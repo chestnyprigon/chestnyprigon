@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { hasPendingEnrichment, isTerminalRun } from "./enrichment-run-state";
+import { attemptedEnrichmentItems, hasPendingEnrichment, isTerminalRun } from "./enrichment-run-state";
 
 test("pending check filters before limiting, so terminal rows cannot hide pending work", async () => {
   for (const status of ["queued", "leased", "succeeded"]) {
@@ -34,4 +34,9 @@ test("database errors never look like an empty queue", async () => {
 test("only completed and cancelled runs are terminal", () => {
   for (const status of ["approved", "running", "awaiting_approval"]) assert.equal(isTerminalRun(status), false);
   for (const status of ["completed", "cancelled"]) assert.equal(isTerminalRun(status), true);
+});
+
+test("candidate limit counts completed queue outcomes across worker restarts", () => {
+  assert.equal(attemptedEnrichmentItems({ queued: 31, leased: 1, succeeded: 15, unavailable: 2, failed: 1 }), 18);
+  assert.equal(Math.max(0, 50 - attemptedEnrichmentItems({ succeeded: 49, failed: 1 })), 0);
 });

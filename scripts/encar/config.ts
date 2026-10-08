@@ -12,5 +12,5 @@ export const ENCAR_MAX_MILEAGE_KM = CATALOG_MAX_MILEAGE_KM;
 export const ENCAR_MAX_LISTING_AGE_DAYS = 180;
 
 export function encarYearFrom(yearTo: number) {
-  return yearTo - ENCAR_MIN_VEHICLE_AGE_YEARS;
+  return Math.min(yearTo, 2016);
 }

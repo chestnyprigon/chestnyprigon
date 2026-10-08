@@ -5,6 +5,10 @@ import type { PilotItem } from "./types";
 import { calculateBelarusPrice, FALLBACK_EXCHANGE_RATES } from "../../src/lib/pricing/chestny-prigon-profile";
 import { fetchNbrbRates } from "../../src/lib/pricing/nbrb-rates";
 import { loadPersistedPricingProfile } from "../pricing/load-profile";
+import { publicationGate } from "./publication-gate";
+import { CATALOG_POLICY } from "./catalog-policy";
+import { evidence } from "./catalog-policy";
+import { accidentSummary, inspectionSummary } from "./enrich";
 
 function requireEnvironment(name: string) {
   const value = process.env[name]?.trim();
@@ -36,6 +40,39 @@ export async function persistPilot(
   runCursor: Record<string, unknown> = { pilot: true, publish },
 ) {
   const supabase = adminClient();
+  async function recordCollision(item: PilotItem, sourceIdentifier: string, expected: unknown, actual: unknown) {
+    const e = evidence("identity_source_identifier_collision", "Идентификатор уже принадлежит другой карточке; публикация изолирована.", { sourceIdentifier, expected, actual }, "vehicle_source_identifiers / publication batch");
+    await checked(supabase.from("chestny_catalog_decisions").upsert({ source_listing_id: String(item.bundle.search.Id),
+      decision: "isolated", rules_version: CATALOG_POLICY.version, evidence: [e], proof: { validated: false }, decided_at: e.observedAt }));
+  }
+  const proofs = new Map<string, ReturnType<typeof publicationGate>>();
+  if (publish) items = items.map(item => {
+    const result = publicationGate({ bundle: item.bundle, sourceUrl: item.normalized?.sourceUrl ?? "", ...item.enrichment });
+    proofs.set(canonicalSourceId(item.bundle), result);
+    return { ...item, screening: result.screening, normalized: result.normalized };
+  });
+  const owners = new Map<string, string>();
+  for (const item of items) for (const id of sourceIdentifiers(item.bundle)) {
+    if (!id.value) continue;
+    const canonical = canonicalSourceId(item.bundle);
+    if (owners.has(id.value) && owners.get(id.value) !== canonical) {
+      await recordCollision(item, id.value, canonical, owners.get(id.value));
+      throw new Error(`identity_batch_collision:${id.value}`);
+    }
+    owners.set(id.value, canonical);
+  }
+  for (let offset = 0; offset < owners.size; offset += 200) {
+    const ids = [...owners.keys()].slice(offset, offset + 200);
+    const links = await checked(supabase.from("vehicle_source_identifiers").select("source_identifier,vehicle_id,vehicles!inner(source_listing_id)").in("source_identifier", ids));
+    for (const link of links ?? []) {
+      const vehicle = link.vehicles as unknown as { source_listing_id: string };
+      if (vehicle.source_listing_id !== owners.get(link.source_identifier)) {
+        const item = items.find(candidate => sourceIdentifiers(candidate.bundle).some(id => id.value === link.source_identifier))!;
+        await recordCollision(item, link.source_identifier, owners.get(link.source_identifier), vehicle.source_listing_id);
+        throw new Error(`identity_source_identifier_collision:${link.source_identifier}`);
+      }
+    }
+  }
   const profile = await loadPersistedPricingProfile(supabase);
   const exchangeRates = await fetchNbrbRates().catch(() => FALLBACK_EXCHANGE_RATES);
   const uniqueItems = [
@@ -52,13 +89,14 @@ export async function persistPilot(
   // Unsupported powertrains are intentionally not persisted, including raw payloads.
   // The client confirmed that hybrids are accepted and calculated by ICE displacement;
   // pure EV and hydrogen listings wait for a separate customs rule.
-  const persistableItems = uniqueItems.filter((item) => !item.screening.isUnsupportedPowertrain);
+  const persistableItems = uniqueItems;
   const approvedItems = persistableItems.filter(
     (item) => item.screening.decision === "approved" && item.normalized,
   );
   const rejectedCount = uniqueItems.filter((item) => item.screening.decision === "rejected").length;
   const isolatedCount = uniqueItems.filter((item) => item.screening.decision === "isolated").length;
 
+  let publishedCount = 0;
   try {
     await checked(
       supabase.from("encar_raw_listings").upsert(
@@ -91,7 +129,9 @@ export async function persistPilot(
           is_problematic: item.screening.isProblematic,
           reason_codes: item.screening.reasonCodes,
           rules_version: item.screening.rulesVersion,
-          details: { matchedTerms: item.screening.matchedTerms },
+          details: { matchedTerms: item.screening.matchedTerms, evidence: item.screening.reasonEvidence,
+            publicationGate: proofs.get(canonicalSourceId(item.bundle))?.proof ?? null, policy: CATALOG_POLICY },
+          screened_at: new Date().toISOString(),
         })),
         { onConflict: "source_listing_id" },
       ),
@@ -139,7 +179,7 @@ export async function persistPilot(
                 location: vehicle.location,
                 vin_masked: vehicle.vinMasked,
                 status: "active",
-                ...(publish && calculation.totalUsd !== null ? { is_public: true } : {}),
+                ...(publish ? { is_public: false, catalog_launch_id: String(runCursor.catalogLaunchId ?? process.env.CHESTNY_CATALOG_LAUNCH_ID ?? "") || null } : {}),
                 source_url: vehicle.sourceUrl,
                 source_updated_at: vehicle.sourceUpdatedAt,
                 last_seen_at: item.bundle.fetchedAt,
@@ -195,6 +235,20 @@ export async function persistPilot(
       for (let offset = 0; offset < imageRows.length; offset += 500) {
         await checked(supabase.from("vehicle_images").insert(imageRows.slice(offset, offset + 500)));
       }
+      if (publish) {
+        const reportRows = approvedItems.map(item => {
+          const reports = item.enrichment?.rawReports ?? {};
+          const diagnosisState = proofs.get(canonicalSourceId(item.bundle))?.proof.endpointStates.diagnosis;
+          return { vehicle_id: idBySource.get(canonicalSourceId(item.bundle)), canonical_vehicle_id: canonicalSourceId(item.bundle),
+            options: item.enrichment?.options ?? [], inspection_summary: inspectionSummary(reports.inspection, item.bundle, reports.diagnosis, diagnosisState === "ok"),
+            accident_summary: accidentSummary(reports.insurance, reports.history), report_status: proofs.get(canonicalSourceId(item.bundle))?.reportStatus,
+            fetched_at: item.bundle.fetchedAt };
+        });
+        await checked(supabase.from("vehicle_reports").upsert(reportRows, { onConflict: "vehicle_id" }));
+        // Publish only after identifiers, images and reports were successfully stored.
+        const publishedRows = await checked(supabase.from("vehicles").update({ is_public: true }).in("id", vehicleIds).not("price_usd", "is", null).select("id"));
+        publishedCount = publishedRows?.length ?? 0;
+      }
     }
 
     await checked(
@@ -231,5 +285,6 @@ export async function persistPilot(
     isolatedCount,
     errorCount: 0,
     published: publish,
+    publishedCount,
   };
 }
