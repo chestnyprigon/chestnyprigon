@@ -147,6 +147,11 @@ async function handleMessage(update: TelegramUpdate) {
     if (!run) return apiResponse("sendMessage", { chat_id: chatId, text: "Run каталога пока не найден." });
     const counts = await queueCounts(db, run.id);
     const decisions = await decisionCounts(db, run.id);
+    const { data: goal, error: goalError } = await db.from("control_center_tasks")
+      .select("id,goal,state,progress,result,updated_at")
+      .eq("module_id", "chestny-prigon.catalog").eq("external_ref", run.id)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    if (goalError) throw new Error("Could not read catalog goal status");
     const processed = counts.succeeded + counts.unavailable + counts.failed;
     const pause = run.pause_reason ? `\nПричина паузы: ${JSON.stringify(run.pause_reason).slice(0, 500)}` : "";
     const phase = run.status === "approved" ? "ожидает команды на обработку"
@@ -156,7 +161,7 @@ async function handleMessage(update: TelegramUpdate) {
             : run.status === "cancelled" ? "отменён" : run.status;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\nПоиск новых объявлений и публикация этой командой не выполняются.${pause}`,
+      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\nЗадача обновлена: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}`,
     });
   }
 
