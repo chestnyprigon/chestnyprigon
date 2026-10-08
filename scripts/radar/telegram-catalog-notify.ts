@@ -1,10 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { readTelegramBotToken } from "./telegram-keychain";
 
 export async function notifyCatalogOwner(text: string) {
   const ownerId = process.env.TELEGRAM_CATALOG_OWNER_ID?.trim();
   if (!ownerId || !/^\d{5,15}$/.test(ownerId)) throw new Error("TELEGRAM_CATALOG_OWNER_ID is missing or invalid");
-  const token = execFileSync("/usr/bin/security", ["find-generic-password", "-s", "chestny-prigon-telegram-bot", "-w"], { encoding: "utf8" }).trim();
-  if (!token) throw new Error("Telegram bot token is missing from macOS Keychain");
+  const token = readTelegramBotToken();
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

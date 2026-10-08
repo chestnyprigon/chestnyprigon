@@ -3,9 +3,9 @@ import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { readTelegramBotToken } from "./telegram-keychain";
 
 config({ path: ".env.local", quiet: true });
 
@@ -16,7 +16,7 @@ function required(name: string) {
 }
 
 const ownerId = required("TELEGRAM_CATALOG_OWNER_ID");
-const botToken = execFileSync("/usr/bin/security", ["find-generic-password", "-s", "chestny-prigon-telegram-bot", "-w"], { encoding: "utf8" }).trim();
+const botToken = readTelegramBotToken();
 const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
 const stateDir = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const activeRunFile = join(stateDir, "active-run");
