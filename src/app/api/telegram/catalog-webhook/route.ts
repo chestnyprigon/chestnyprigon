@@ -57,6 +57,8 @@ const MENU_COMMANDS: Record<string, string> = {
   "🛑 остановить": "/catalog_stop",
 };
 
+let ownerCommandsLastSyncedAt = 0;
+
 function publicationState(goal: CatalogGoal | null) {
   const parameters = goal?.parameters ?? {};
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
@@ -66,22 +68,76 @@ function publicationState(goal: CatalogGoal | null) {
   return "Публикация цели: выключена; одобренные карточки не публикуются автоматически.";
 }
 
-async function setOwnerBotCommands() {
+async function setOwnerBotCommands(): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   const owner = ownerId();
-  if (!token || !owner) return;
-  const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      scope: { type: "chat", chat_id: Number(owner) },
-      language_code: "ru",
-      commands: [
-        { command: "start", description: "Открыть панель каталога" },
-      ],
-    }),
-  });
-  if (!response.ok) console.error("Could not update Telegram catalog command menu", response.status);
+  if (!token || !owner) return false;
+  const commands = [{ command: "start", description: "Открыть панель каталога" }];
+  const scopes = [
+    { scope: { type: "default" } },
+    { scope: { type: "all_private_chats" } },
+    { scope: { type: "chat", chat_id: Number(owner) } },
+  ];
+  try {
+    for (const { scope } of scopes) {
+      for (const language_code of ["", "ru"]) {
+        const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scope, language_code, commands }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        const result = await response.json() as { ok?: boolean; description?: string };
+        if (!response.ok || result.ok !== true) {
+          console.error("Could not update Telegram catalog command menu", response.status, result.description ?? "unknown error");
+          return false;
+        }
+      }
+    }
+    return true;
+  } catch (error) {
+    console.error("Could not update Telegram catalog command menu", error instanceof Error ? error.message : "unknown error");
+    return false;
+  }
+}
+
+async function ensureOwnerBotCommands(): Promise<boolean> {
+  if (Date.now() - ownerCommandsLastSyncedAt < 6 * 60 * 60 * 1_000) return true;
+  const updated = await setOwnerBotCommands();
+  if (updated) ownerCommandsLastSyncedAt = Date.now();
+  return updated;
+}
+
+function escapeHtml(value: unknown): string {
+  const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" };
+  return String(value ?? "").replace(/[&<>\"]/g, (character) => entities[character] ?? character);
+}
+
+function formatDate(value: unknown): string {
+  if (!value) return "неизвестно";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "неизвестно";
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short",
+  }).format(date);
+}
+
+function runStateLabel(status: string): string {
+  return ({ approved: "готов к обработке", running: "обрабатывается", paused: "приостановлен",
+    completed: "завершён", cancelled: "остановлен" } as Record<string, string>)[status] ?? "состояние обновляется";
+}
+
+function pauseReasonLabel(value: unknown): string {
+  if (!value || typeof value !== "object") return "Причина не указана.";
+  const reason = value as Record<string, unknown>;
+  const message = String(reason.message ?? "");
+  const known: Record<string, string> = {
+    "At least half the batch failed; local enrichment paused": "Воркер остановил волну: не менее половины последних карточек завершились ошибкой. Перед продолжением нужно разобраться с причинами.",
+    "Another Encar enrichment worker holds the global Supabase lock": "Поиск остановлен: другой Encar worker уже использует общую блокировку базы данных.",
+  };
+  const source = reason.source === "local_worker_loop" ? "Локальный worker" : "Система";
+  const description = known[message] ?? (message ? escapeHtml(message) : "Причина не указана.");
+  return `${source}: ${description}${reason.observedAt ? ` (${formatDate(reason.observedAt)})` : ""}`;
 }
 
 function apiResponse(method: string, params: Record<string, unknown>) {
@@ -162,10 +218,12 @@ function goalStateLabel(state: string) {
 function goalStageLabel(stage: unknown) {
   const value = String(stage ?? "подготовка");
   return ({ search_candidates: "поиск кандидатов", search_next_wave: "поиск следующей волны",
+    search_pending: "поиск готовится", owner_command: "команда владельца", start_worker: "запуск обработки",
+    worker_started: "обогащение и проверка", continue_wave: "продолжение очереди",
     next_wave_started: "обогащение и проверка", enrichment_screening: "обогащение и проверка",
     publish_wave: "пакетная публикация", published: "волна опубликована",
     paused_for_attention: "пауза: требуется разбор причины", pilot_review: "ожидает проверки пилота",
-    goal_completed: "цель выполнена", search_exhausted: "новых кандидатов не найдено" } as Record<string, string>)[value] ?? value;
+    goal_completed: "цель выполнена", search_exhausted: "новых кандидатов не найдено" } as Record<string, string>)[value] ?? "обработка";
 }
 
 function goalProgressLabel(goal: CatalogGoal) {
@@ -239,13 +297,14 @@ async function handleMessage(update: TelegramUpdate) {
   const commandToken = messageText.split(/\s+/, 1)[0]?.replace(/@[^@]+$/, "").toLowerCase() ?? "";
   const command = MENU_COMMANDS[messageText.toLowerCase()] ?? commandToken;
   if (!privateOwnerMessage(update) || !message || !chatId || !actor) return noOp();
+  const commandsUpdated = await ensureOwnerBotCommands();
 
   if (command === "/start" || command === "/catalog" || command === "/catalog_help") {
-    await setOwnerBotCommands().catch((error) => console.error("Could not set Telegram catalog commands", error));
     return apiResponse("sendMessage", {
       chat_id: chatId,
       disable_web_page_preview: true,
-      text: "Пульт каталога\n\nСтатус и отчёт показывают ход текущей цели. Кнопка следующей волны ищет новые объявления по незакрытым квотам; продолжение работает только с сохранённой очередью. Все действия ограничены правилами screening и публикационным разрешением цели.",
+      text: `🚗 <b>Панель каталога</b>\n\nНажимай кнопки внизу чата: они показывают статус, квоты и отчёт, запускают следующую волну или управляют текущей очередью.\n\nПубликация идёт только по разрешённым правилам цели.${commandsUpdated ? "\n\n✅ Меню команд обновлено: оставлена только /start." : "\n\n⚠️ Не удалось обновить меню команд. Попробуй ещё раз через минуту."}`,
+      parse_mode: "HTML",
       reply_markup: OWNER_MENU,
     });
   }
@@ -273,30 +332,32 @@ async function handleMessage(update: TelegramUpdate) {
       if (data) run = data as Run;
     }
     const previousRunNote = previousRun && run && previousRun.id !== run.id
-      ? `\nПредыдущая волна: ${previousRun.id} (${previousRun.status}); её очередь сохранена без изменений.` : "";
+      ? `Предыдущий запуск: ${previousRun.id} — ${runStateLabel(previousRun.status)}; его очередь сохранена.` : "";
 
-    if (goal && !goal.external_ref) return apiResponse("sendMessage", { chat_id: chatId,
-      text: `Цель: ${goal.goal}\nСостояние: ${goalStateLabel(goal.state)}\n${goalProgressLabel(goal)}\n${publicationState(goal)}\nОбновлено: ${goal.updated_at}${previousRunNote}` });
+    const reportTitle = command === "/catalog_report" ? "🧾 Отчёт по каталогу" : "🚗 Статус каталога";
+    if (goal && !goal.external_ref) return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+      text: `${reportTitle}\n\n<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние:</b> ${goalStateLabel(goal.state)}\n${goalProgressLabel(goal)}\n${publicationState(goal)}\n<b>Обновлено:</b> ${formatDate(goal.updated_at)}${previousRunNote ? `\n${escapeHtml(previousRunNote)}` : ""}` });
     if (!run) {
       const { data: latestGoal, error } = await db.from("control_center_tasks").select("goal,state,parameters,progress,result,updated_at")
         .eq("module_id", "chestny-prigon.catalog").order("updated_at", { ascending: false }).limit(1).maybeSingle();
       if (error) throw new Error("Could not read catalog goal status");
-      return apiResponse("sendMessage", { chat_id: chatId, text: latestGoal
-        ? `Цель: ${latestGoal.goal}\nСостояние: ${goalStateLabel(latestGoal.state)}\n${goalProgressLabel(latestGoal as CatalogGoal)}\n${publicationState(latestGoal as CatalogGoal)}\nОбновлено: ${latestGoal.updated_at}`
+      return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML", text: latestGoal
+        ? `${reportTitle}\n\n<b>Цель:</b> ${escapeHtml(latestGoal.goal)}\n<b>Состояние:</b> ${goalStateLabel(latestGoal.state)}\n${goalProgressLabel(latestGoal as CatalogGoal)}\n${publicationState(latestGoal as CatalogGoal)}\n<b>Обновлено:</b> ${formatDate(latestGoal.updated_at)}`
         : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
     }
     const counts = await queueCounts(db, run.id);
     const decisions = await decisionCounts(db, run.id);
     const processed = counts.succeeded + counts.unavailable + counts.failed;
-    const pause = run.pause_reason ? `\nПричина паузы: ${JSON.stringify(run.pause_reason).slice(0, 500)}` : "";
-    const phase = run.status === "approved" ? "ожидает команды на обработку"
-      : run.status === "running" ? "обогащение"
-        : run.status === "paused" ? "пауза"
-          : run.status === "completed" ? "обогащение завершено"
-            : run.status === "cancelled" ? "отменён" : run.status;
+    const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
+    const wave = Number(goal?.progress?.waveNumber ?? 0);
+    const target = Number(goal?.parameters?.targetPublications ?? 1_000);
+    const published = Number(goal?.progress?.published ?? goal?.progress?.publishedCount ?? 0);
+    const stage = goalStageLabel(goal?.progress?.stage);
+    const title = command === "/catalog_report" ? "🧾 Отчёт по каталогу" : "🚗 Статус каталога";
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\n${publicationState(goal)}\nОбновлено: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}${previousRunNote}`,
+      parse_mode: "HTML",
+      text: `${title}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> опубликовано ${published} из ${target}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : ""}\n<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}${previousRunNote ? `\n\n${escapeHtml(previousRunNote)}` : ""}\n\n<b>Публикация:</b> ${publicationState(goal)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.created_at)}`,
     });
   }
 
@@ -308,14 +369,20 @@ async function handleMessage(update: TelegramUpdate) {
     if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога пока не найден." });
     const { data: brands, error } = await db.from("chestny_catalog_brand_search_status")
       .select("manufacturer,target,published_count,remaining_quota,candidate_count,search_offset,scanned_count,status,last_error")
-      .eq("launch_id", launch.id).gt("remaining_quota", 0).order("manufacturer");
+      .eq("launch_id", launch.id).order("manufacturer");
     if (error) throw new Error("Could not read catalog quotas");
-    const searchStatus = (status: unknown) => status === "ready" ? "можно искать дальше"
-      : status === "searching" ? "идёт поиск"
-        : status === "exhausted" ? "выдача исчерпана"
-          : status === "paused" ? "поиск на паузе" : String(status ?? "не начат");
-    const lines = (brands ?? []).map((brand: Record<string, unknown>) => `${brand.manufacturer}: публикации ${brand.published_count}/${brand.target}, осталось ${brand.remaining_quota}; найдено всего ${brand.candidate_count}; просмотрено ${brand.scanned_count}, offset ${brand.search_offset}; ${searchStatus(brand.status)}${brand.last_error ? ` — ${String(brand.last_error).slice(0, 120)}` : ""}`);
-    return apiResponse("sendMessage", { chat_id: chatId, text: `План ${launch.name} (${launch.status})\nКвота — цель опубликованных карточек. «Найдено всего» — кандидаты из поиска, это ещё не число публикаций. Offset — позиция Encar для продолжения.\n${lines.join("\n")}`.slice(0, 3900) });
+    const searchStatus = (status: unknown) => status === "ready" ? "🔎 поиск доступен"
+      : status === "searching" ? "⏳ поиск идёт"
+        : status === "exhausted" ? "⛔ выдача исчерпана"
+          : status === "paused" ? "⏸ поиск на паузе" : "поиск ещё не запускался";
+    const allBrands = (brands ?? []) as Record<string, unknown>[];
+    const targetTotal = allBrands.reduce((sum, brand) => sum + Number(brand.target ?? 0), 0);
+    const publishedTotal = allBrands.reduce((sum, brand) => sum + Number(brand.published_count ?? 0), 0);
+    const remainingTotal = allBrands.reduce((sum, brand) => sum + Number(brand.remaining_quota ?? 0), 0);
+    const lines = allBrands.filter((brand) => Number(brand.remaining_quota ?? 0) > 0).map((brand) =>
+      `• <b>${escapeHtml(brand.manufacturer)}</b> — ${Number(brand.published_count ?? 0)}/${Number(brand.target ?? 0)} опубликовано; осталось ${Number(brand.remaining_quota ?? 0)}; кандидатов ${Number(brand.candidate_count ?? 0)}; просмотрено ${Number(brand.scanned_count ?? 0)}; позиция ${Number(brand.search_offset ?? 0)} · ${searchStatus(brand.status)}`);
+    return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+      text: `📈 <b>Квоты каталога</b>\nОпубликовано: ${publishedTotal} из ${targetTotal} · осталось ${remainingTotal}\n\n«Кандидатов» — найденные объявления; «просмотрено» — объявления, проверенные при поиске; «позиция» — откуда поиск продолжится.\n\n${lines.join("\n")}` });
   }
 
   if (command === "/catalog_publish") {
