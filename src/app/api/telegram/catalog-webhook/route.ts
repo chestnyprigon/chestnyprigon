@@ -242,8 +242,13 @@ function goalStageLabel(stage: unknown) {
     goal_completed: "цель выполнена", search_exhausted: "новых кандидатов не найдено" } as Record<string, string>)[value] ?? "обработка";
 }
 
-function goalProgressLabel(goal: CatalogGoal) {
+function goalProgressLabel(goal: CatalogGoal, currentProcessed?: number) {
   const wave = Number(goal.progress?.waveNumber ?? 0);
+  if (goal.parameters?.queueOnly === true) {
+    const total = Number(goal.parameters.targetCandidates ?? 0);
+    const processed = currentProcessed ?? Number(goal.progress?.processed ?? 0);
+    return `Обработано ${processed} из ${total} кандидатов.`;
+  }
   const target = Number(goal.parameters?.targetPublications ?? 1_000);
   const published = Number(goal.progress?.published ?? goal.progress?.publishedCount ?? 0);
   return `${wave ? `Волна ${wave}. ` : ""}Опубликовано по цели: ${published}/${target}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
@@ -343,14 +348,12 @@ async function handleMessage(update: TelegramUpdate) {
     const processed = counts.succeeded + counts.unavailable + counts.failed;
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
     const wave = Number(goal?.progress?.waveNumber ?? 0);
-    const target = Number(goal?.parameters?.targetPublications ?? 1_000);
-    const published = Number(goal?.progress?.published ?? goal?.progress?.publishedCount ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);
     const title = command === "/catalog_report" ? "🧾 Отчёт по каталогу" : "🚗 Статус каталога";
     return apiResponse("sendMessage", {
       chat_id: chatId,
       parse_mode: "HTML",
-      text: `${title}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> опубликовано ${published} из ${target}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
+      text: `${title}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
     });
   }
 
