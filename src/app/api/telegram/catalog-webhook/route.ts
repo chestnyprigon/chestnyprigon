@@ -29,11 +29,66 @@ type CatalogGoal = {
   id: string;
   goal: string;
   state: string;
+  parameters: Record<string, unknown> | null;
   progress: Record<string, unknown> | null;
   result: Record<string, unknown> | null;
   external_ref: string | null;
   updated_at: string;
 };
+
+const OWNER_MENU = {
+  keyboard: [
+    [{ text: "📊 Статус" }, { text: "📈 Квоты" }, { text: "🧾 Отчёт" }],
+    [{ text: "🚀 Следующая волна" }, { text: "▶️ Продолжить очередь" }],
+    [{ text: "⏸ Пауза" }, { text: "🛑 Остановить" }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+  input_field_placeholder: "Выберите действие",
+};
+
+const MENU_COMMANDS: Record<string, string> = {
+  "📊 статус": "/catalog_status",
+  "📈 квоты": "/catalog_plan",
+  "🧾 отчёт": "/catalog_report",
+  "🚀 следующая волна": "/catalog_start",
+  "▶️ продолжить очередь": "/catalog_resume",
+  "⏸ пауза": "/catalog_pause",
+  "🛑 остановить": "/catalog_stop",
+};
+
+function publicationState(goal: CatalogGoal | null) {
+  const parameters = goal?.parameters ?? {};
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "whole_run") {
+    return `Публикация цели: разрешена пакетно (до ${Number(parameters.publicationBatchLimit ?? parameters.maxItemsPerWave ?? 50)} карточек за волну); публикуются только одобренные screening карточки.`;
+  }
+  return "Публикация цели: выключена; одобренные карточки не публикуются автоматически.";
+}
+
+async function setOwnerBotCommands() {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const owner = ownerId();
+  if (!token || !owner) return;
+  const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scope: { type: "chat", chat_id: Number(owner) },
+      language_code: "ru",
+      commands: [
+        { command: "catalog_status", description: "Текущее состояние и прогресс" },
+        { command: "catalog_plan", description: "Квоты по маркам" },
+        { command: "catalog_report", description: "Результат последней волны" },
+        { command: "catalog_start", description: "Найти следующую волну" },
+        { command: "catalog_resume", description: "Продолжить очередь" },
+        { command: "catalog_pause", description: "Поставить обработку на паузу" },
+        { command: "catalog_stop", description: "Остановить текущую волну" },
+      ],
+    }),
+  });
+  if (!response.ok) console.error("Could not update Telegram catalog command menu", response.status);
+}
 
 function apiResponse(method: string, params: Record<string, unknown>) {
   return NextResponse.json({ method, ...params });
@@ -96,6 +151,36 @@ async function pilotGoalButton(db: ReturnType<typeof database>, chatId: number) 
   });
 }
 
+async function goalForRun(db: ReturnType<typeof database>, runId: string): Promise<CatalogGoal | null> {
+  const { data, error } = await db.from("control_center_tasks")
+    .select("id,goal,state,parameters,progress,result,external_ref,updated_at")
+    .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
+  if (error) throw new Error("Could not read catalog goal publication settings");
+  return data as CatalogGoal | null;
+}
+
+function goalStateLabel(state: string) {
+  return ({ queued: "в очереди", preparing: "подготовка", ready: "готова к следующему этапу",
+    running: "выполняется", paused: "приостановлена", completed: "завершена",
+    failed: "ошибка", cancelled: "остановлена" } as Record<string, string>)[state] ?? state;
+}
+
+function goalStageLabel(stage: unknown) {
+  const value = String(stage ?? "подготовка");
+  return ({ search_candidates: "поиск кандидатов", search_next_wave: "поиск следующей волны",
+    next_wave_started: "обогащение и проверка", enrichment_screening: "обогащение и проверка",
+    publish_wave: "пакетная публикация", published: "волна опубликована",
+    paused_for_attention: "пауза: требуется разбор причины", pilot_review: "ожидает проверки пилота",
+    goal_completed: "цель выполнена", search_exhausted: "новых кандидатов не найдено" } as Record<string, string>)[value] ?? value;
+}
+
+function goalProgressLabel(goal: CatalogGoal) {
+  const wave = Number(goal.progress?.waveNumber ?? 0);
+  const target = Number(goal.parameters?.targetPublications ?? 1_000);
+  const published = Number(goal.progress?.published ?? goal.progress?.publishedCount ?? 0);
+  return `${wave ? `Волна ${wave}. ` : ""}Опубликовано по цели: ${published}/${target}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
+}
+
 async function queueCounts(db: ReturnType<typeof database>, runId: string) {
   const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
   const entries = await Promise.all(statuses.map(async (status) => {
@@ -156,14 +241,18 @@ async function handleMessage(update: TelegramUpdate) {
   const message = update.message;
   const chatId = message?.chat?.id;
   const actor = message?.from;
-  const command = message?.text?.trim().split(/\s+/, 1)[0]?.replace(/@[^@]+$/, "").toLowerCase();
+  const messageText = message?.text?.trim() ?? "";
+  const commandToken = messageText.split(/\s+/, 1)[0]?.replace(/@[^@]+$/, "").toLowerCase() ?? "";
+  const command = MENU_COMMANDS[messageText.toLowerCase()] ?? commandToken;
   if (!privateOwnerMessage(update) || !message || !chatId || !actor) return noOp();
 
   if (command === "/start" || command === "/catalog" || command === "/catalog_help") {
+    await setOwnerBotCommands().catch((error) => console.error("Could not set Telegram catalog commands", error));
     return apiResponse("sendMessage", {
       chat_id: chatId,
       disable_web_page_preview: true,
-      text: "Пульт каталога:\n/catalog_status — этап и очередь текущего запуска\n/catalog_plan — квоты, найденные кандидаты и прогресс поиска\n/catalog_report — результаты обогащения и screening\n/catalog_start — обработать подготовленную волну или найти следующую по квотам\n/catalog_pause — пауза после текущей карточки\n/catalog_resume — обработать до 50 следующих кандидатов из очереди\n/catalog_stop — отменить текущий run\n/catalog_publish — публикация закрыта до отдельного решения после пилота\n\nНовая волна запускает последовательный поиск Encar, сверку с БД, обогащение и screening. Публикация автоматически не выполняется.",
+      text: "Пульт каталога\n\nСтатус и отчёт показывают ход текущей цели. Кнопка следующей волны ищет новые объявления по незакрытым квотам; продолжение работает только с сохранённой очередью. Все действия ограничены правилами screening и публикационным разрешением цели.",
+      reply_markup: OWNER_MENU,
     });
   }
 
@@ -175,7 +264,7 @@ async function handleMessage(update: TelegramUpdate) {
     let goal: CatalogGoal | null = null;
     if (launch) {
       const { data, error } = await db.from("control_center_tasks")
-        .select("id,goal,state,progress,result,external_ref,updated_at").eq("module_id", "chestny-prigon.catalog")
+        .select("id,goal,state,parameters,progress,result,external_ref,updated_at").eq("module_id", "chestny-prigon.catalog")
         .contains("parameters", { launchId: launch.id }).in("state", ["queued", "preparing", "ready", "running", "paused"])
         .order("updated_at", { ascending: false }).limit(1).maybeSingle();
       if (error) throw new Error("Could not read active catalog goal status");
@@ -193,13 +282,13 @@ async function handleMessage(update: TelegramUpdate) {
       ? `\nПредыдущая волна: ${previousRun.id} (${previousRun.status}); её очередь сохранена без изменений.` : "";
 
     if (goal && !goal.external_ref) return apiResponse("sendMessage", { chat_id: chatId,
-      text: `Цель: ${goal.goal}\nСостояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(goal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${goal.updated_at}${previousRunNote}\nПубликация не запускается.` });
+      text: `Цель: ${goal.goal}\nСостояние: ${goalStateLabel(goal.state)}\n${goalProgressLabel(goal)}\n${publicationState(goal)}\nОбновлено: ${goal.updated_at}${previousRunNote}` });
     if (!run) {
-      const { data: latestGoal, error } = await db.from("control_center_tasks").select("goal,state,progress,result,updated_at")
+      const { data: latestGoal, error } = await db.from("control_center_tasks").select("goal,state,parameters,progress,result,updated_at")
         .eq("module_id", "chestny-prigon.catalog").order("updated_at", { ascending: false }).limit(1).maybeSingle();
       if (error) throw new Error("Could not read catalog goal status");
       return apiResponse("sendMessage", { chat_id: chatId, text: latestGoal
-        ? `Цель: ${latestGoal.goal}\nСостояние: ${latestGoal.state}\nЭтап: ${String(latestGoal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(latestGoal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${latestGoal.updated_at}\nПубликация не запускается.`
+        ? `Цель: ${latestGoal.goal}\nСостояние: ${goalStateLabel(latestGoal.state)}\n${goalProgressLabel(latestGoal as CatalogGoal)}\n${publicationState(latestGoal as CatalogGoal)}\nОбновлено: ${latestGoal.updated_at}`
         : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
     }
     const counts = await queueCounts(db, run.id);
@@ -213,7 +302,7 @@ async function handleMessage(update: TelegramUpdate) {
             : run.status === "cancelled" ? "отменён" : run.status;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\nЗадача обновлена: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}${previousRunNote}`,
+      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\n${publicationState(goal)}\nОбновлено: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}${previousRunNote}`,
     });
   }
 
@@ -236,9 +325,12 @@ async function handleMessage(update: TelegramUpdate) {
   }
 
   if (command === "/catalog_publish") {
+    const db = database();
+    const run = await currentRun(db);
+    const goal = run ? await goalForRun(db, run.id) : null;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: "Публикация сейчас недоступна. Она откроется только после проверки отчёта пилота и отдельного подтверждения.",
+      text: `${publicationState(goal)}\n${goal ? `Этап цели: ${goalStageLabel(goal.progress?.stage)}. Публикацией управляет координатор после завершения screening волны.` : "Для текущей волны не найдена связанная цель Control Center."}${run ? `\nТекущий run: ${run.id} (${run.status}).` : ""}`,
     });
   }
 
@@ -262,10 +354,11 @@ async function handleMessage(update: TelegramUpdate) {
           reply_markup: { inline_keyboard: [[{ text: "Создать отдельную пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
         });
       }
+      const goal = await goalForRun(db, run.id);
       const callbackData = `catalog:confirm:start:${run.id}:50`;
       return apiResponse("sendMessage", {
         chat_id: chatId,
-        text: `Предыдущая волна ${run.id} завершена или приостановлена без остатка в очереди. Подтверди новую: поиск по маркам с недобором квоты, исключение известных ID, обогащение до 50 карточек и автоматический screening. Публикация не выполняется.`,
+        text: `Предыдущая волна завершена. Подтверди следующую: поиск по недостающим квотам, сверка ID, обогащение и screening до 50 кандидатов. ${publicationState(goal)} При разрешении координатор запустит пакетную публикацию допущенных карточек после screening.`,
         reply_markup: { inline_keyboard: [[{ text: "Начать следующую волну", callback_data: callbackData }]] },
       });
     }
@@ -287,10 +380,11 @@ async function handleMessage(update: TelegramUpdate) {
   if (command === "/catalog_start" || command === "/catalog_resume" || command === "/catalog_stop") {
     const kind = command === "/catalog_start" ? "start" : command === "/catalog_resume" ? "resume" : "stop";
     const counts = await queueCounts(database(), run.id);
+    const goal = await goalForRun(db, run.id);
     const callbackData = `catalog:confirm:${kind}:${run.id}:50`;
     const text = kind === "start"
-      ? `Подтверди обработку уже найденных кандидатов run ${run.id}: до 50 новых карточек за эту волну, по одной за раз. Поиск новых объявлений и публикация не запускаются.`
-      : kind === "resume" ? `Подтверди продолжение run ${run.id}: до 50 следующих кандидатов из очереди. Публикация не запускается.`
+      ? `Подтверди обработку уже найденных кандидатов run ${run.id}: до 50 карточек, по одной за раз. Новый поиск эта команда не запускает. ${publicationState(goal)} После screening координатор отдельно отчитается о публикационном этапе.`
+      : kind === "resume" ? `Подтверди продолжение run ${run.id}: до 50 следующих кандидатов из сохранённой очереди. ${publicationState(goal)} После screening координатор отдельно отчитается о публикационном этапе.`
         : `Подтверди отмену run ${run.id}. В очереди ${counts.queued}, leased ${counts.leased}; queued будут отменены.`;
     return apiResponse("sendMessage", {
       chat_id: chatId,
