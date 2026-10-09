@@ -77,13 +77,7 @@ async function setOwnerBotCommands() {
       scope: { type: "chat", chat_id: Number(owner) },
       language_code: "ru",
       commands: [
-        { command: "catalog_status", description: "Текущее состояние и прогресс" },
-        { command: "catalog_plan", description: "Квоты по маркам" },
-        { command: "catalog_report", description: "Результат последней волны" },
-        { command: "catalog_start", description: "Найти следующую волну" },
-        { command: "catalog_resume", description: "Продолжить очередь" },
-        { command: "catalog_pause", description: "Поставить обработку на паузу" },
-        { command: "catalog_stop", description: "Остановить текущую волну" },
+        { command: "start", description: "Открыть панель каталога" },
       ],
     }),
   });
