@@ -57,7 +57,6 @@ const MENU_COMMANDS: Record<string, string> = {
   "🛑 остановить": "/catalog_stop",
 };
 
-let ownerCommandsLastSyncedAt = 0;
 
 function publicationState(goal: CatalogGoal | null) {
   const parameters = goal?.parameters ?? {};
@@ -66,46 +65,6 @@ function publicationState(goal: CatalogGoal | null) {
     return `Публикация цели: разрешена пакетно (до ${Number(parameters.publicationBatchLimit ?? parameters.maxItemsPerWave ?? 50)} карточек за волну); публикуются только одобренные screening карточки.`;
   }
   return "Публикация цели: выключена; одобренные карточки не публикуются автоматически.";
-}
-
-async function setOwnerBotCommands(): Promise<boolean> {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  const owner = ownerId();
-  if (!token || !owner) return false;
-  const commands = [{ command: "start", description: "Открыть панель каталога" }];
-  const scopes = [
-    { scope: { type: "default" } },
-    { scope: { type: "all_private_chats" } },
-    { scope: { type: "chat", chat_id: Number(owner) } },
-  ];
-  try {
-    for (const { scope } of scopes) {
-      for (const language_code of ["", "ru"]) {
-        const response = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scope, language_code, commands }),
-          signal: AbortSignal.timeout(5_000),
-        });
-        const result = await response.json() as { ok?: boolean; description?: string };
-        if (!response.ok || result.ok !== true) {
-          console.error("Could not update Telegram catalog command menu", response.status, result.description ?? "unknown error");
-          return false;
-        }
-      }
-    }
-    return true;
-  } catch (error) {
-    console.error("Could not update Telegram catalog command menu", error instanceof Error ? error.message : "unknown error");
-    return false;
-  }
-}
-
-async function ensureOwnerBotCommands(): Promise<boolean> {
-  if (Date.now() - ownerCommandsLastSyncedAt < 6 * 60 * 60 * 1_000) return true;
-  const updated = await setOwnerBotCommands();
-  if (updated) ownerCommandsLastSyncedAt = Date.now();
-  return updated;
 }
 
 function escapeHtml(value: unknown): string {
@@ -297,13 +256,12 @@ async function handleMessage(update: TelegramUpdate) {
   const commandToken = messageText.split(/\s+/, 1)[0]?.replace(/@[^@]+$/, "").toLowerCase() ?? "";
   const command = MENU_COMMANDS[messageText.toLowerCase()] ?? commandToken;
   if (!privateOwnerMessage(update) || !message || !chatId || !actor) return noOp();
-  const commandsUpdated = await ensureOwnerBotCommands();
 
   if (command === "/start" || command === "/catalog" || command === "/catalog_help") {
     return apiResponse("sendMessage", {
       chat_id: chatId,
       disable_web_page_preview: true,
-      text: `🚗 <b>Панель каталога</b>\n\nНажимай кнопки внизу чата: они показывают статус, квоты и отчёт, запускают следующую волну или управляют текущей очередью.\n\nПубликация идёт только по разрешённым правилам цели.${commandsUpdated ? "\n\n✅ Меню команд обновлено: оставлена только /start." : "\n\n⚠️ Не удалось обновить меню команд. Попробуй ещё раз через минуту."}`,
+      text: `🚗 <b>Панель каталога</b>\n\nНажимай кнопки внизу чата: они показывают статус, квоты и отчёт, запускают следующую волну или управляют текущей очередью.\n\nПубликация идёт только по разрешённым правилам цели.`,
       parse_mode: "HTML",
       reply_markup: OWNER_MENU,
     });
