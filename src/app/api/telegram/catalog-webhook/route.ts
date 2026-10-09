@@ -43,7 +43,6 @@ type CatalogGoal = {
 const OWNER_MENU = {
   keyboard: [
     [{ text: "📊 Статус" }, { text: "📈 Квоты" }, { text: "🧾 Отчёт" }],
-    [{ text: "🚀 Следующая волна" }, { text: "▶️ Продолжить очередь" }],
     [{ text: "⏸ Пауза" }, { text: "🛑 Остановить" }],
   ],
   resize_keyboard: true,
@@ -55,8 +54,6 @@ const MENU_COMMANDS: Record<string, string> = {
   "📊 статус": "/catalog_status",
   "📈 квоты": "/catalog_plan",
   "🧾 отчёт": "/catalog_report",
-  "🚀 следующая волна": "/catalog_start",
-  "▶️ продолжить очередь": "/catalog_resume",
   "⏸ пауза": "/catalog_pause",
   "🛑 остановить": "/catalog_stop",
 };
@@ -115,7 +112,10 @@ function pauseReasonLabel(value: unknown): string {
 }
 
 function apiResponse(method: string, params: Record<string, unknown>) {
-  return NextResponse.json({ method, ...params });
+  const withMenu = method === "sendMessage" && !params.reply_markup
+    ? { ...params, reply_markup: OWNER_MENU }
+    : params;
+  return NextResponse.json({ method, ...withMenu });
 }
 
 function isValidSecret(received: string | null, expected: string | undefined) {
@@ -318,7 +318,7 @@ async function handleMessage(update: TelegramUpdate) {
     return apiResponse("sendMessage", {
       chat_id: chatId,
       disable_web_page_preview: true,
-      text: `🚗 <b>Панель каталога</b>\n\nНажимай кнопки внизу чата: они показывают статус, квоты и отчёт, запускают следующую волну или управляют текущей очередью.\n\nПубликация идёт только по разрешённым правилам цели.`,
+      text: `🚗 <b>Панель каталога</b>\n\nКнопки показывают статус, квоты и отчёт. Волны запускаются координатором последовательно. При необходимости можно поставить обработку на паузу или остановить её.\n\nПубликация выполняется координатором после screening, только если цель получила необходимые разрешения.`,
       parse_mode: "HTML",
       reply_markup: OWNER_MENU,
     });
