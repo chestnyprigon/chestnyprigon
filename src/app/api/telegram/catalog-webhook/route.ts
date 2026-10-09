@@ -25,6 +25,16 @@ type Run = {
   pause_reason: unknown;
 };
 
+type CatalogGoal = {
+  id: string;
+  goal: string;
+  state: string;
+  progress: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  external_ref: string | null;
+  updated_at: string;
+};
+
 function apiResponse(method: string, params: Record<string, unknown>) {
   return NextResponse.json({ method, ...params });
 }
@@ -159,33 +169,41 @@ async function handleMessage(update: TelegramUpdate) {
 
   if (command === "/catalog_status" || command === "/catalog_report") {
     const db = database();
-    const run = await currentRun(db);
+    const previousRun = await currentRun(db);
     const { data: launch } = await db.from("chestny_catalog_launches").select("id")
       .eq("name", "local-catalog-1000-20261007").maybeSingle();
+    let goal: CatalogGoal | null = null;
     if (launch) {
-      const { data: unboundGoal, error: unboundGoalError } = await db.from("control_center_tasks")
-        .select("goal,state,progress,result,updated_at").eq("module_id", "chestny-prigon.catalog")
-        .contains("parameters", { launchId: launch.id }).is("external_ref", null)
-        .in("state", ["queued", "preparing", "ready", "running"]).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-      if (unboundGoalError) throw new Error("Could not read initial catalog goal status");
-      if (unboundGoal) return apiResponse("sendMessage", { chat_id: chatId,
-        text: `Цель: ${unboundGoal.goal}\nСостояние: ${unboundGoal.state}\nЭтап: ${String(unboundGoal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(unboundGoal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${unboundGoal.updated_at}${run ? `\nПредыдущий run: ${run.id} (${run.status}); его очередь не изменялась.` : ""}\nПубликация не запускается.` });
+      const { data, error } = await db.from("control_center_tasks")
+        .select("id,goal,state,progress,result,external_ref,updated_at").eq("module_id", "chestny-prigon.catalog")
+        .contains("parameters", { launchId: launch.id }).in("state", ["queued", "preparing", "ready", "running", "paused"])
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+      if (error) throw new Error("Could not read active catalog goal status");
+      goal = data as CatalogGoal | null;
     }
+
+    let run = previousRun;
+    if (goal?.external_ref) {
+      const { data, error } = await db.from("chestny_enrichment_runs")
+        .select("id,status,candidate_count,created_at,pause_reason").eq("id", goal.external_ref).maybeSingle();
+      if (error) throw new Error("Could not read the run linked to the active catalog goal");
+      if (data) run = data as Run;
+    }
+    const previousRunNote = previousRun && run && previousRun.id !== run.id
+      ? `\nПредыдущая волна: ${previousRun.id} (${previousRun.status}); её очередь сохранена без изменений.` : "";
+
+    if (goal && !goal.external_ref) return apiResponse("sendMessage", { chat_id: chatId,
+      text: `Цель: ${goal.goal}\nСостояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(goal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${goal.updated_at}${previousRunNote}\nПубликация не запускается.` });
     if (!run) {
-      const { data: goal, error } = await db.from("control_center_tasks").select("goal,state,progress,result,updated_at")
+      const { data: latestGoal, error } = await db.from("control_center_tasks").select("goal,state,progress,result,updated_at")
         .eq("module_id", "chestny-prigon.catalog").order("updated_at", { ascending: false }).limit(1).maybeSingle();
       if (error) throw new Error("Could not read catalog goal status");
-      return apiResponse("sendMessage", { chat_id: chatId, text: goal
-        ? `Цель: ${goal.goal}\nСостояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(goal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${goal.updated_at}\nПубликация не запускается.`
+      return apiResponse("sendMessage", { chat_id: chatId, text: latestGoal
+        ? `Цель: ${latestGoal.goal}\nСостояние: ${latestGoal.state}\nЭтап: ${String(latestGoal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(latestGoal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${latestGoal.updated_at}\nПубликация не запускается.`
         : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
     }
     const counts = await queueCounts(db, run.id);
     const decisions = await decisionCounts(db, run.id);
-    const { data: goal, error: goalError } = await db.from("control_center_tasks")
-      .select("id,goal,state,progress,result,updated_at")
-      .eq("module_id", "chestny-prigon.catalog").eq("external_ref", run.id)
-      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
-    if (goalError) throw new Error("Could not read catalog goal status");
     const processed = counts.succeeded + counts.unavailable + counts.failed;
     const pause = run.pause_reason ? `\nПричина паузы: ${JSON.stringify(run.pause_reason).slice(0, 500)}` : "";
     const phase = run.status === "approved" ? "ожидает команды на обработку"
@@ -195,7 +213,7 @@ async function handleMessage(update: TelegramUpdate) {
             : run.status === "cancelled" ? "отменён" : run.status;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\nЗадача обновлена: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}`,
+      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\nЗадача обновлена: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}${previousRunNote}`,
     });
   }
 
