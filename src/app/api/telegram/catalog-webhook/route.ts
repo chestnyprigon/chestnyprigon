@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { renderRunBrandProgress, summarizeRunBrandProgress, type RunQuota, type RunQueueRow } from "../../../../lib/catalog-telegram-run-report";
 
 type TelegramActor = { id: number };
 type TelegramChat = { id?: number; type?: string };
@@ -22,6 +23,9 @@ type Run = {
   status: string;
   candidate_count: number;
   created_at: string;
+  started_at: string | null;
+  source_file: string;
+  rules: Record<string, unknown> | null;
   pause_reason: unknown;
 };
 
@@ -58,12 +62,16 @@ const MENU_COMMANDS: Record<string, string> = {
 };
 
 
-function publicationState(goal: CatalogGoal | null) {
+function publicationState(goal: CatalogGoal | null, run?: Run | null) {
   const parameters = goal?.parameters ?? {};
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "whole_run") {
     return `Публикация цели: разрешена пакетно (до ${Number(parameters.publicationBatchLimit ?? parameters.maxItemsPerWave ?? 50)} карточек за волну); публикуются только одобренные screening карточки.`;
   }
+  if (!goal && run?.rules?.publication === "manual-after-screening-and-price-audit") {
+    return "Публикация: автоматического разрешения нет; после screening требуется отдельный аудит цен и ручное решение.";
+  }
+  if (!goal && run) return "Публикация: нет связанной цели Control Center; автоматическая публикация выключена.";
   return "Публикация цели: выключена; одобренные карточки не публикуются автоматически.";
 }
 
@@ -90,6 +98,13 @@ function pauseReasonLabel(value: unknown): string {
   if (!value || typeof value !== "object") return "Причина не указана.";
   const reason = value as Record<string, unknown>;
   const message = String(reason.message ?? "");
+  if (reason.source === "wave_limit") {
+    const limit = Number(reason.maxItems ?? 0);
+    return `Достигнут лимит волны${limit ? ` — ${limit} карточек` : ""}. Остаток очереди сохранён и может быть продолжен следующей волной.`;
+  }
+  if (reason.source === "owner_transfer_to_mac_mini") {
+    return "Безопасная передача worker между устройствами; очередь сохранена.";
+  }
   const known: Record<string, string> = {
     "At least half the batch failed; local enrichment paused": "Воркер остановил волну: не менее половины последних карточек завершились ошибкой. Перед продолжением нужно разобраться с причинами.",
     "Another Encar enrichment worker holds the global Supabase lock": "Поиск остановлен: другой Encar worker уже использует общую блокировку базы данных.",
@@ -123,13 +138,55 @@ function database() {
 }
 
 async function currentRun(db: ReturnType<typeof database>) {
+  const now = new Date().toISOString();
+  const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+    .select("run_id").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", now).maybeSingle();
+  if (lockError) throw new Error("Could not read current enrichment worker lock");
+  if (lock?.run_id) {
+    const active = await db.from("chestny_enrichment_runs")
+      .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason,project")
+      .eq("id", lock.run_id).maybeSingle();
+    if (active.error) throw new Error("Could not read run held by the active worker");
+    if (active.data?.project === "chestny-prigon") return active.data as Run;
+  }
+
+  const tasks = await db.from("control_center_tasks")
+    .select("state,progress,external_ref").eq("module_id", "chestny-prigon.catalog")
+    .in("state", ["queued", "preparing", "running", "ready"])
+    .order("updated_at", { ascending: false }).limit(10);
+  if (tasks.error) throw new Error("Could not read active catalog coordinator tasks");
+  for (const task of tasks.data ?? []) {
+    const stage = String((task.progress as Record<string, unknown> | null)?.stage ?? "");
+    const isNewGoalWaitingToStart = task.state === "ready" && !task.external_ref
+      && ["search_pending", "search_candidates", "start_worker", "owner_command"].includes(stage);
+    if (isNewGoalWaitingToStart) return null;
+    if (task.state === "running" && task.external_ref) {
+      const activeTaskRun = await db.from("chestny_enrichment_runs")
+        .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
+        .eq("id", task.external_ref).maybeSingle();
+      if (activeTaskRun.error) throw new Error("Could not read the run linked to the active coordinator task");
+      if (activeTaskRun.data) return activeTaskRun.data as Run;
+    }
+  }
+
+  // Ordinary local runs are not tied to a catalog-launch row. Prefer the most
+  // recently resumed such run after each 50-item wave, when no worker lock exists.
+  const localLive = await db.from("chestny_enrichment_runs")
+    .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
+    .eq("project", "chestny-prigon").eq("source_file", "local-live-encar-search")
+    .in("status", ["approved", "running", "paused", "completed"])
+    .order("started_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false })
+    .limit(1).maybeSingle();
+  if (localLive.error) throw new Error("Could not read the latest local Encar run");
+  if (localLive.data) return localLive.data as Run;
+
   const { data: launch, error: launchError } = await db.from("chestny_catalog_launches")
     .select("id").eq("name", "local-catalog-1000-20261007").maybeSingle();
   if (launchError) throw new Error("Could not read catalog launch");
   if (!launch) return null;
 
   const active = await db.from("chestny_enrichment_runs")
-    .select("id,status,candidate_count,created_at,pause_reason")
+    .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
     .in("status", ["approved", "running", "paused"])
     .contains("rules", { catalogLaunchId: launch.id })
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -137,7 +194,7 @@ async function currentRun(db: ReturnType<typeof database>) {
   if (active.data) return active.data as Run;
 
   const latest = await db.from("chestny_enrichment_runs")
-    .select("id,status,candidate_count,created_at,pause_reason")
+    .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
     .contains("rules", { catalogLaunchId: launch.id })
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (latest.error) throw new Error("Could not read latest catalog run");
@@ -269,32 +326,10 @@ async function handleMessage(update: TelegramUpdate) {
 
   if (command === "/catalog_status" || command === "/catalog_report") {
     const db = database();
-    const previousRun = await currentRun(db);
-    const { data: launch } = await db.from("chestny_catalog_launches").select("id")
-      .eq("name", "local-catalog-1000-20261007").maybeSingle();
-    let goal: CatalogGoal | null = null;
-    if (launch) {
-      const { data, error } = await db.from("control_center_tasks")
-        .select("id,goal,state,parameters,progress,result,external_ref,updated_at").eq("module_id", "chestny-prigon.catalog")
-        .contains("parameters", { launchId: launch.id }).in("state", ["queued", "preparing", "ready", "running", "paused"])
-        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
-      if (error) throw new Error("Could not read active catalog goal status");
-      goal = data as CatalogGoal | null;
-    }
-
-    let run = previousRun;
-    if (goal?.external_ref) {
-      const { data, error } = await db.from("chestny_enrichment_runs")
-        .select("id,status,candidate_count,created_at,pause_reason").eq("id", goal.external_ref).maybeSingle();
-      if (error) throw new Error("Could not read the run linked to the active catalog goal");
-      if (data) run = data as Run;
-    }
-    const previousRunNote = previousRun && run && previousRun.id !== run.id
-      ? `Предыдущий запуск: ${previousRun.id} — ${runStateLabel(previousRun.status)}; его очередь сохранена.` : "";
+    const run = await currentRun(db);
+    const goal = run ? await goalForRun(db, run.id) : null;
 
     const reportTitle = command === "/catalog_report" ? "🧾 Отчёт по каталогу" : "🚗 Статус каталога";
-    if (goal && !goal.external_ref) return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-      text: `${reportTitle}\n\n<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние:</b> ${goalStateLabel(goal.state)}\n${goalProgressLabel(goal)}\n${publicationState(goal)}\n<b>Обновлено:</b> ${formatDate(goal.updated_at)}${previousRunNote ? `\n${escapeHtml(previousRunNote)}` : ""}` });
     if (!run) {
       const { data: latestGoal, error } = await db.from("control_center_tasks").select("goal,state,parameters,progress,result,updated_at")
         .eq("module_id", "chestny-prigon.catalog").order("updated_at", { ascending: false }).limit(1).maybeSingle();
@@ -315,12 +350,37 @@ async function handleMessage(update: TelegramUpdate) {
     return apiResponse("sendMessage", {
       chat_id: chatId,
       parse_mode: "HTML",
-      text: `${title}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> опубликовано ${published} из ${target}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : ""}\n<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}${previousRunNote ? `\n\n${escapeHtml(previousRunNote)}` : ""}\n\n<b>Публикация:</b> ${publicationState(goal)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.created_at)}`,
+      text: `${title}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> опубликовано ${published} из ${target}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
     });
   }
 
   if (command === "/catalog_plan") {
     const db = database();
+    const run = await currentRun(db);
+    const runQuotas = Array.isArray(run?.rules?.brandQuotas) ? run.rules.brandQuotas.flatMap((item): RunQuota[] => {
+      if (!item || typeof item !== "object") return [];
+      const quota = item as Record<string, unknown>;
+      return typeof quota.manufacturer === "string" && Number.isFinite(Number(quota.candidates))
+        ? [{ manufacturer: quota.manufacturer, candidates: Number(quota.candidates) }] : [];
+    }) : [];
+    if (run && runQuotas.length) {
+      const queueRows: RunQueueRow[] = [];
+      for (let from = 0; ; from += 1_000) {
+        const { data, error } = await db.from("chestny_enrichment_queue")
+          .select("status,manufacturer:candidate_snapshot->>Manufacturer").eq("run_id", run.id)
+          .order("id").range(from, from + 999);
+        if (error) throw new Error("Could not read current run brand progress");
+        queueRows.push(...(data ?? []) as RunQueueRow[]);
+        if (!data || data.length < 1_000) break;
+      }
+      const progress = summarizeRunBrandProgress(runQuotas, queueRows);
+      return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML", text: renderRunBrandProgress({
+        runId: run.id,
+        plannedCandidates: runQuotas.reduce((sum, quota) => sum + quota.candidates, 0),
+        candidateCount: run.candidate_count,
+        progress,
+      }) });
+    }
     const { data: launch, error: launchError } = await db.from("chestny_catalog_launches")
       .select("id,status,name").eq("name", "local-catalog-1000-20261007").maybeSingle();
     if (launchError) throw new Error("Could not read catalog launch plan");
@@ -349,7 +409,7 @@ async function handleMessage(update: TelegramUpdate) {
     const goal = run ? await goalForRun(db, run.id) : null;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `${publicationState(goal)}\n${goal ? `Этап цели: ${goalStageLabel(goal.progress?.stage)}. Публикацией управляет координатор после завершения screening волны.` : "Для текущей волны не найдена связанная цель Control Center."}${run ? `\nТекущий run: ${run.id} (${run.status}).` : ""}`,
+      text: `${publicationState(goal, run)}\n${goal ? `Этап цели: ${goalStageLabel(goal.progress?.stage)}. Публикацией управляет координатор после завершения screening волны.` : "Для текущего run нет связанной цели Control Center."}${run ? `\nТекущий run: ${run.id} (${run.status}).` : ""}`,
     });
   }
 
