@@ -70,6 +70,22 @@ async function currentRun(db: ReturnType<typeof database>) {
   return latest.data as Run | null;
 }
 
+async function pilotGoalButton(db: ReturnType<typeof database>, chatId: number) {
+  const { data: launch, error } = await db.from("chestny_catalog_launches").select("id,name,status")
+    .eq("name", "local-catalog-1000-20261007").maybeSingle();
+  if (error) throw new Error("Could not read catalog launch plan");
+  if (!launch || !["prepared", "running"].includes(launch.status)) {
+    return apiResponse("sendMessage", { chat_id: chatId, text: launch
+      ? `План ${launch.name} имеет статус ${launch.status}; новую пилотную цель сейчас создать нельзя.`
+      : "План запуска каталога не найден; новую пилотную цель создать нельзя." });
+  }
+  return apiResponse("sendMessage", {
+    chat_id: chatId,
+    text: "Создать отдельную пилотную цель? Координатор выполнит поиск по недостающим квотам, сформирует новую очередь и проведёт обогащение со screening. Старый paused run и его очередь останутся без изменений. Публикация выключена.",
+    reply_markup: { inline_keyboard: [[{ text: "Создать пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
+  });
+}
+
 async function queueCounts(db: ReturnType<typeof database>, runId: string) {
   const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
   const entries = await Promise.all(statuses.map(async (status) => {
@@ -144,9 +160,32 @@ async function handleMessage(update: TelegramUpdate) {
   if (command === "/catalog_status" || command === "/catalog_report") {
     const db = database();
     const run = await currentRun(db);
-    if (!run) return apiResponse("sendMessage", { chat_id: chatId, text: "Run каталога пока не найден." });
+    const { data: launch } = await db.from("chestny_catalog_launches").select("id")
+      .eq("name", "local-catalog-1000-20261007").maybeSingle();
+    if (launch) {
+      const { data: unboundGoal, error: unboundGoalError } = await db.from("control_center_tasks")
+        .select("goal,state,progress,result,updated_at").eq("module_id", "chestny-prigon.catalog")
+        .contains("parameters", { launchId: launch.id }).is("external_ref", null)
+        .in("state", ["queued", "preparing", "ready", "running"]).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+      if (unboundGoalError) throw new Error("Could not read initial catalog goal status");
+      if (unboundGoal) return apiResponse("sendMessage", { chat_id: chatId,
+        text: `Цель: ${unboundGoal.goal}\nСостояние: ${unboundGoal.state}\nЭтап: ${String(unboundGoal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(unboundGoal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${unboundGoal.updated_at}${run ? `\nПредыдущий run: ${run.id} (${run.status}); его очередь не изменялась.` : ""}\nПубликация не запускается.` });
+    }
+    if (!run) {
+      const { data: goal, error } = await db.from("control_center_tasks").select("goal,state,progress,result,updated_at")
+        .eq("module_id", "chestny-prigon.catalog").order("updated_at", { ascending: false }).limit(1).maybeSingle();
+      if (error) throw new Error("Could not read catalog goal status");
+      return apiResponse("sendMessage", { chat_id: chatId, text: goal
+        ? `Цель: ${goal.goal}\nСостояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс: ${JSON.stringify(goal.progress ?? {}).slice(0, 500)}\nЗадача обновлена: ${goal.updated_at}\nПубликация не запускается.`
+        : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
+    }
     const counts = await queueCounts(db, run.id);
     const decisions = await decisionCounts(db, run.id);
+    const { data: goal, error: goalError } = await db.from("control_center_tasks")
+      .select("id,goal,state,progress,result,updated_at")
+      .eq("module_id", "chestny-prigon.catalog").eq("external_ref", run.id)
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    if (goalError) throw new Error("Could not read catalog goal status");
     const processed = counts.succeeded + counts.unavailable + counts.failed;
     const pause = run.pause_reason ? `\nПричина паузы: ${JSON.stringify(run.pause_reason).slice(0, 500)}` : "";
     const phase = run.status === "approved" ? "ожидает команды на обработку"
@@ -156,7 +195,7 @@ async function handleMessage(update: TelegramUpdate) {
             : run.status === "cancelled" ? "отменён" : run.status;
     return apiResponse("sendMessage", {
       chat_id: chatId,
-      text: `Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\nПоиск новых объявлений и публикация этой командой не выполняются.${pause}`,
+      text: `${goal ? `Цель: ${goal.goal}\nОбщее состояние: ${goal.state}\nЭтап: ${String(goal.progress?.stage ?? "подготовка")}\nПрогресс цели: ${JSON.stringify(goal.progress ?? {}).slice(0, 350)}\nЗадача обновлена: ${goal.updated_at}\n\n` : "Цель Control Center ещё не связана с этим run.\n\n"}Каталог — ${phase}\nRun: ${run.id}\nСтатус: ${run.status}\nНайдено кандидатов: ${run.candidate_count}\nОбработано всего: ${processed}\nОчередь: ${counts.queued}; сейчас обрабатывается: ${counts.leased}\nОбогащено: ${counts.succeeded}; недоступно: ${counts.unavailable}; ошибок: ${counts.failed}; отменено: ${counts.cancelled}\nScreening: допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}${goal?.result ? `\nРезультат/ожидание: ${JSON.stringify(goal.result).slice(0, 350)}` : ""}${pause}`,
     });
   }
 
@@ -187,13 +226,23 @@ async function handleMessage(update: TelegramUpdate) {
 
   const supported = command === "/catalog_start" || command === "/catalog_resume" || command === "/catalog_stop" || command === "/catalog_pause";
   if (!supported) return noOp();
-  const run = await currentRun(database());
-  if (!run) return apiResponse("sendMessage", { chat_id: chatId, text: "Run каталога не найден." });
+  const db = database();
+  const run = await currentRun(db);
+  if (!run) return command === "/catalog_start" ? pilotGoalButton(db, chatId)
+    : apiResponse("sendMessage", { chat_id: chatId, text: "Run каталога не найден." });
   if (command === "/catalog_start" && run.status !== "approved") {
     if (["completed", "cancelled", "paused"].includes(run.status)) {
       const counts = await queueCounts(database(), run.id);
       if (counts.queued + counts.leased > 0) {
-        return apiResponse("sendMessage", { chat_id: chatId, text: `В run ${run.id} ещё есть необработанные кандидаты (${counts.queued} в очереди, ${counts.leased} обрабатываются). Сначала продолжи или останови эту волну.` });
+        const { data: launch, error: launchError } = await db.from("chestny_catalog_launches").select("id")
+          .eq("name", "local-catalog-1000-20261007").maybeSingle();
+        if (launchError) throw new Error("Could not read catalog launch plan");
+        if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога не найден; отдельную пилотную цель создать нельзя." });
+        return apiResponse("sendMessage", {
+          chat_id: chatId,
+          text: `Старая волна ${run.id} остановлена: ${counts.queued} кандидатов остались в очереди. Можно оставить её как есть и создать отдельную пилотную цель; новый поиск не будет использовать этот run.`,
+          reply_markup: { inline_keyboard: [[{ text: "Создать отдельную пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
+        });
       }
       const callbackData = `catalog:confirm:start:${run.id}:50`;
       return apiResponse("sendMessage", {
@@ -259,10 +308,18 @@ async function handleCallback(update: TelegramUpdate) {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная команда", show_alert: true });
   }
   const [, , command, runId, itemLimit] = data;
-  if (!(command === "start" || command === "resume" || command === "stop") || !/^[0-9a-f-]{36}$/i.test(runId) || itemLimit !== "50") {
+  if (!(command === "start" || command === "resume" || command === "stop" || command === "goal") || !/^[0-9a-f-]{36}$/i.test(runId) || itemLimit !== "50") {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная команда", show_alert: true });
   }
   if (!Number.isSafeInteger(update.update_id) || !chatId) throw new Error("Telegram callback context is incomplete");
+  if (command === "goal") {
+    const db = database();
+    const { data, error } = await db.rpc("create_chestny_catalog_goal", { p_launch: runId, p_origin_update_id: update.update_id });
+    if (error) return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: `Не удалось создать цель: ${error.message.slice(0, 180)}`, show_alert: true });
+    const created = Boolean((data as Record<string, unknown> | null)?.created);
+    return apiResponse("answerCallbackQuery", { callback_query_id: callback.id,
+      text: created ? "Пилотная цель сохранена; координатор начнёт с поиска по квотам" : "Такая цель уже создана; координатор продолжит её", show_alert: false });
+  }
   const { data: run, error } = await database().from("chestny_enrichment_runs").select("status").eq("id", runId).maybeSingle();
   if (error || !run) return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Run не найден", show_alert: true });
   const expected = command === "start" ? ["approved", "completed", "cancelled", "paused"] : command === "resume" ? "paused" : ["approved", "running", "paused"];
