@@ -277,6 +277,50 @@ async function decisionCounts(db: ReturnType<typeof database>, runId: string) {
   return Object.fromEntries(entries) as Record<string, number>;
 }
 
+async function reportCounts(db: ReturnType<typeof database>, run: Run) {
+  const succeededIds: string[] = [];
+  for (let offset = 0; ; offset += 1_000) {
+    const { data, error } = await db.from("chestny_enrichment_queue")
+      .select("source_listing_id").eq("run_id", run.id).eq("status", "succeeded")
+      .order("source_listing_id").range(offset, offset + 999);
+    if (error) throw new Error("Could not read successful catalog IDs for report");
+    succeededIds.push(...(data ?? []).map((row) => String(row.source_listing_id)));
+    if (!data || data.length < 1_000) break;
+  }
+
+  let ready = 0;
+  let unavailable = 0;
+  let missing = 0;
+  for (let offset = 0; offset < succeededIds.length; offset += 100) {
+    const ids = succeededIds.slice(offset, offset + 100);
+    const { data, error } = await db.from("chestny_catalog_staging")
+      .select("source_listing_id,report_status,encar_payload")
+      .in("source_listing_id", ids);
+    if (error) throw new Error("Could not read report readiness for catalog run");
+    const rows = (data ?? []).filter((row) => row.encar_payload?.runId === run.id);
+    const found = new Set(rows.map((row) => String(row.source_listing_id)));
+    missing += ids.filter((id) => !found.has(id)).length;
+    ready += rows.filter((row) => row.report_status === "ready").length;
+    unavailable += rows.filter((row) => row.report_status === "unavailable").length;
+  }
+
+  const { data: batches, error } = await db.from("import_runs")
+    .select("cursor").contains("cursor", { runId: run.id });
+  if (error) throw new Error("Could not read publication batches for report");
+  const publishedIds = new Set((batches ?? []).flatMap((batch) =>
+    batch.cursor?.publish === true && Array.isArray(batch.cursor?.sourceListingIds)
+      ? batch.cursor.sourceListingIds.map(String) : []));
+  let published = 0;
+  const ids = [...publishedIds];
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const { data, error: vehicleError } = await db.from("vehicles")
+      .select("source_listing_id,is_public").in("source_listing_id", ids.slice(offset, offset + 200));
+    if (vehicleError) throw new Error("Could not reconcile published catalog vehicles");
+    published += (data ?? []).filter((vehicle) => vehicle.is_public).length;
+  }
+  return { ready, unavailable, missing, published };
+}
+
 async function enqueue(input: {
   updateId: number;
   actorId: number;
@@ -347,6 +391,11 @@ async function handleMessage(update: TelegramUpdate) {
     const decisions = await decisionCounts(db, run.id);
     const processed = counts.succeeded + counts.unavailable + counts.failed;
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
+    if (command === "/catalog_report") {
+      const reports = await reportCounts(db, run);
+      return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Успешно обогащено:</b> ${counts.succeeded}\n<b>Недоступно:</b> ${counts.unavailable}\n<b>Ошибок:</b> ${counts.failed}\n<b>В очереди:</b> ${counts.queued}; в работе: ${counts.leased}\n\n<b>Screening:</b> допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\n<b>Отчёты:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; данные не найдены ${reports.missing}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+    }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);
     const title = command === "/catalog_report" ? "🧾 Отчёт по каталогу" : "🚗 Статус каталога";
