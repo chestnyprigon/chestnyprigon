@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateEnrichmentIntegrity, validateExistingIdentityLinks, validateQueueIdentity, validateSnapshotAgainstDetail } from "./integrity";
+import { isVerifiedSameCanonicalRefreshSibling, validateEnrichmentIntegrity, validateExistingIdentityLinks, validateQueueIdentity, validateSnapshotAgainstDetail } from "./integrity";
 import type { EncarBundle } from "./types";
 
 const snapshot = {
@@ -93,6 +93,38 @@ test("blocks already-owned staging and catalog identifiers with provenance", () 
     "identity_source_identifier_already_linked",
   ]);
   assert.ok(issues.every((issue) => issue.source));
+});
+
+test("allows only an exact same-vehicle canonical sibling from the audited source run during targeted refresh", () => {
+  const reports = Object.fromEntries(["inspection", "diagnosis", "insurance"].map((endpoint) => [endpoint, {
+    state: "skipped",
+    reasonCode: `${endpoint}_not_requested_after_options_isolation`,
+  }]));
+  const sibling = {
+    sourceListingId: "canonical-900",
+    advertisedId: "canonical-900",
+    canonicalId: "canonical-900",
+    vehicleNo: "123가4567",
+    detailVehicleId: "canonical-900",
+    detailVehicleNo: "123가4567",
+    runId: "source-run",
+    enrichmentStatus: "succeeded",
+    endpointStatus: reports,
+    rawReports: { inspection: null, diagnosis: null, insurance: null },
+  };
+  assert.equal(isVerifiedSameCanonicalRefreshSibling({
+    advertisedId: "12345", canonicalId: "canonical-900", vehicleNo: "123가4567", sourceRunId: "source-run", sibling,
+  }), true);
+  assert.equal(isVerifiedSameCanonicalRefreshSibling({
+    advertisedId: "12345", canonicalId: "canonical-900", vehicleNo: "999가9999", sourceRunId: "source-run", sibling,
+  }), false);
+  assert.equal(isVerifiedSameCanonicalRefreshSibling({
+    advertisedId: "12345", canonicalId: "canonical-900", vehicleNo: "123가4567", sourceRunId: "another-run", sibling,
+  }), false);
+  assert.equal(isVerifiedSameCanonicalRefreshSibling({
+    advertisedId: "12345", canonicalId: "canonical-900", vehicleNo: "123가4567", sourceRunId: "source-run",
+    sibling: { ...sibling, endpointStatus: { ...reports, insurance: { state: "ok" } } },
+  }), false);
 });
 
 test("detects a source identifier mapped to a different catalog vehicle", () => {

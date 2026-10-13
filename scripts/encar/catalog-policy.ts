@@ -1,6 +1,6 @@
 /** Approved parameters for the local catalogue pipeline. Prices have no range filter. */
 export const CATALOG_POLICY = Object.freeze({
-  version: "2026-10-07.1",
+  version: "2026-10-10.1",
   minYear: 2016,
   maxMileageKm: 190_000,
   maxListingAgeDays: 180,

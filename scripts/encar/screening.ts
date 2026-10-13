@@ -1,4 +1,4 @@
-import type { EncarBundle, ScreeningResult } from "./types";
+import type { EncarBundle, EncarSearchListing, ScreeningResult } from "./types";
 import { CATALOG_POLICY, evidence } from "./catalog-policy";
 import { validateSnapshotAgainstDetail } from "./integrity";
 
@@ -118,8 +118,8 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   const mileage = asNumber(record(bundle.detail.spec).mileage ?? bundle.search.Mileage);
   const price = asNumber(advertisement.price ?? bundle.search.Price);
   const photos = Array.isArray(bundle.detail.photos)
-    ? bundle.detail.photos.filter((photo) => Boolean(photo.path))
-    : [];
+    ? new Set(bundle.detail.photos.map((photo) => typeof photo.path === "string" ? photo.path.trim() : "").filter(Boolean))
+    : new Set<string>();
   const status = advertisement.status;
   const seizing = (bundle.detail.condition as Record<string, unknown> | undefined)?.seizing;
   const seizingCount = nestedNumber(seizing, "seizingCount");
@@ -134,7 +134,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   else if (mileage > CATALOG_POLICY.maxMileageKm) reasons.push("mileage_above_maximum");
   if (price === null || price <= 0) reasons.push("invalid_price");
   if (!bundle.search.Manufacturer || !bundle.search.Model) reasons.push("missing_identity");
-  if (photos.length < CATALOG_POLICY.minImages) reasons.push("insufficient_photos");
+  if (photos.size < CATALOG_POLICY.minImages) reasons.push("insufficient_photos");
   if (!status) reasons.push("advertisement_status_missing");
   else if (!["ADVERTISE", "SALE"].includes(String(status))) reasons.push("not_advertised");
   if ((seizingCount ?? 0) > 0) reasons.push("seizure_record");
@@ -143,7 +143,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   const integrityIssues = validateSnapshotAgainstDetail(bundle.search, bundle).filter(issue => issue.severity !== "warning");
   reasons.push(...integrityIssues.map(issue => issue.code));
   const hardExclusion = isLease || isRental || isTaxi || isCommercial || powertrain.isUnsupportedPowertrain
-    || reasons.some(code => ["model_year_below_minimum", "mileage_above_maximum", "not_advertised"].includes(code));
+    || reasons.some(code => ["model_year_below_minimum", "mileage_above_maximum", "not_advertised", "insufficient_photos"].includes(code));
   const invalidData = reasons.some((reason) =>
     [
       "invalid_model_year",
@@ -157,7 +157,7 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
   );
   const needsReview = reasons.some((reason) => ["seizure_record", "pledge_record"].includes(reason));
   const isProblematic = invalidData || needsReview || integrityIssues.length > 0;
-  const observed = { year, minimumYear: CATALOG_POLICY.minYear, mileageKm: mileage, maximumMileageKm: CATALOG_POLICY.maxMileageKm, price: price, photoCount: photos.length, minimumPhotos: CATALOG_POLICY.minImages, advertisementStatus: status ?? null, seizingCount, pledgeCount, fuel: fuelText(bundle), matchedTerms: { lease: leaseTerms, rental: rentalTerms, taxi: taxiTerms, commercial: commercialTerms }, rentalPlate };
+  const observed = { year, minimumYear: CATALOG_POLICY.minYear, mileageKm: mileage, maximumMileageKm: CATALOG_POLICY.maxMileageKm, price: price, photoCount: photos.size, minimumPhotos: CATALOG_POLICY.minImages, advertisementStatus: status ?? null, seizingCount, pledgeCount, fuel: fuelText(bundle), matchedTerms: { lease: leaseTerms, rental: rentalTerms, taxi: taxiTerms, commercial: commercialTerms }, rentalPlate };
   const explanations: Record<string, string> = {
     lease_detected: "В типе продажи или комплектации подтверждён лизинг.", rental_detected: "В типе продажи или комплектации подтверждена аренда.", rental_plate_detected: "Регистрационный номер содержит корейскую отметку арендного автомобиля.", taxi_detected: "В характеристиках подтверждено использование в такси.", commercial_detected: "В характеристиках подтверждено коммерческое или специальное назначение.", electric_powertrain_excluded: "Чистые электромобили исключены правилами запуска.", hydrogen_powertrain_excluded: "Водородные автомобили исключены правилами запуска.", model_year_below_minimum: "Модельный год ниже согласованного порога 2016.", mileage_above_maximum: "Пробег превышает согласованный предел 190 000 км.", invalid_model_year: "Модельный год отсутствует или некорректен.", invalid_mileage: "Пробег отсутствует или некорректен.", invalid_price: "Для расчёта стоимости нужна положительная цена Encar.", missing_identity: "В исходном объявлении отсутствует марка или модель.", insufficient_photos: "В detail недостаточно фотографий для публикации.", not_advertised: "Источник подтвердил, что объявление больше не продаётся.", advertisement_status_missing: "Источник не подтвердил активность объявления.", seizure_record: "Обнаружен арест; допуск автоматически изолирован.", pledge_record: "Обнаружен залог; допуск автоматически изолирован.",
   };
@@ -185,4 +185,13 @@ export function screenListing(bundle: EncarBundle): ScreeningResult {
         : evidence(code, explanations[code] ?? code, observed, "encar.search + encar.detail.category/spec/advertisement/condition/photos");
     }),
   };
+}
+
+/** Search-stage exclusions use only fields actually returned by search. */
+export function searchExclusionReasons(search: EncarSearchListing) {
+  const result = screenListing({ fetchedAt: new Date().toISOString(), search,
+    detail: { spec: { mileage: search.Mileage, fuelName: search.FuelType }, photos: [] } as EncarBundle["detail"] });
+  const known = new Set(["lease_detected", "rental_detected", "taxi_detected", "commercial_detected",
+    "electric_powertrain_excluded", "hydrogen_powertrain_excluded", "model_year_below_minimum", "mileage_above_maximum"]);
+  return result.reasonCodes.filter(code => known.has(code));
 }

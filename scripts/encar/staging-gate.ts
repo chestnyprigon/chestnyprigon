@@ -21,8 +21,8 @@ export function stagingPublicationInput(row: Record<string, unknown>) {
     endpointStatus: obj(payload.endpointStatus), rawReports: obj(payload.rawReports), options: payload.choiceOptions };
 }
 
-export function screenStaging(row: Record<string, unknown>) {
+export function screenStaging(row: Record<string, unknown>, allowDocumentedOptionalSkips = false) {
   const input = stagingPublicationInput(row);
-  const result = publicationGate(input);
+  const result = publicationGate({ ...input, allowDocumentedOptionalSkips });
   return { ...result, input };
 }

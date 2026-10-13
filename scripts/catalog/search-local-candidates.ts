@@ -1,3 +1,4 @@
+import { searchExclusionReasons } from "../encar/screening";
 import { config } from "dotenv";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { fetchDirectSearchPage, createDomesticQuery } from "../encar/client";
@@ -6,6 +7,7 @@ import { primaryManufacturerAlias } from "../encar/manufacturer-aliases";
 import { planBrandSearch, type BrandSearchState } from "./resumable-search";
 import { withEnrichmentWorkerLock } from "../radar/enrichment-worker-lock";
 import { notifyCatalogOwner } from "../radar/telegram-catalog-notify";
+import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
 
 config({ path: ".env.local", quiet: true });
 
@@ -41,7 +43,7 @@ async function existingIdentifiers(client: SupabaseClient, ids: string[]) {
       client.from("vehicle_source_identifiers").select("source_identifier").in("source_identifier", chunk),
       client.from("encar_raw_listings").select("source_listing_id").in("source_listing_id", chunk),
       client.from("chestny_catalog_staging").select("source_listing_id").in("source_listing_id", chunk),
-      client.from("chestny_enrichment_queue").select("source_listing_id").in("source_listing_id", chunk),
+      client.from("chestny_discovery_reserved_queue").select("source_listing_id").in("source_listing_id", chunk),
     ]);
     for (const result of results) {
       if (result.error) throw new Error(result.error.message);
@@ -115,19 +117,31 @@ async function main() {
   }
 
   if (!plan.some((brand) => brand.candidatesToFind > 0)) {
-    console.log(JSON.stringify({ mode: "no_searchable_brands", launchId: launch.id, launchName: launch.name, runId: null, queued: 0, noSearchableBrands: true, brands: printable }, null, 2));
+    const linkedRunIds = [...new Set((rows ?? []).map((row: Record<string, unknown>) => row.run_id)
+      .filter((id: unknown): id is string => typeof id === "string"))];
+    const { data: activeRuns, error: activeRunError } = linkedRunIds.length
+      ? await client.from("chestny_enrichment_runs").select("id,status").in("id", linkedRunIds).in("status", ["approved", "running"])
+      : { data: [], error: null };
+    if (activeRunError) throw new Error(activeRunError.message);
+    const resumableRunId = activeRuns?.[0]?.id ?? null;
+    console.log(JSON.stringify({ mode: "no_searchable_brands", launchId: launch.id, launchName: launch.name,
+      runId: resumableRunId, queued: 0, noSearchableBrands: !resumableRunId, brands: printable }, null, 2));
     return;
   }
 
-  let runId = (rows ?? []).map((row: Record<string, unknown>) => row.run_id).find((id: unknown) => typeof id === "string") as string | undefined;
+  // Search requests on Mac mini use the dedicated Decodo account. Resolve this
+  // before creating a run or acquiring the Encar/search lock.
+  process.env.ENCAR_PROXY_URL = readEncarProxyUrlFromKeychain();
+
+  const linkedRunIds = [...new Set((rows ?? []).map((row: Record<string, unknown>) => row.run_id)
+    .filter((id: unknown): id is string => typeof id === "string"))];
+  let runId: string | undefined;
   let previousRunId: string | undefined;
-  if (runId) {
-    const { data: previousRun, error: previousRunError } = await client.from("chestny_enrichment_runs").select("id,status").eq("id", runId).single();
-    if (previousRunError) throw new Error(previousRunError.message);
-    if (["completed", "cancelled"].includes(previousRun.status)) {
-      previousRunId = runId;
-      runId = undefined;
-    }
+  if (linkedRunIds.length) {
+    const { data: linkedRuns, error: linkedRunsError } = await client.from("chestny_enrichment_runs").select("id,status").in("id", linkedRunIds);
+    if (linkedRunsError) throw new Error(linkedRunsError.message);
+    runId = (linkedRuns ?? []).find((row) => ["approved", "running"].includes(row.status))?.id;
+    previousRunId = linkedRunIds.find((id) => id !== runId);
   }
   if (!runId) {
     const { data: prior, error: priorError } = await client.from("chestny_enrichment_runs").select("id,status")
@@ -177,7 +191,7 @@ async function main() {
     while (found < brand.candidatesToFind && !exhausted && pages < maxPagesPerBrand) {
       let page: Awaited<ReturnType<typeof fetchDirectSearchPage>>;
       try {
-        page = await fetchDirectSearchPage({ offset, limit: pageSize, query, signal });
+        page = await fetchDirectSearchPage({ offset, limit: pageSize, query, signal, verifyAccess: false });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await client.rpc("record_chestny_catalog_search_error", { p_launch: launch.id, p_manufacturer: brand.manufacturer, p_message: message });
@@ -185,7 +199,7 @@ async function main() {
       }
       const candidates = page.listings.flatMap((listing) => {
         const id = String(listing.Id ?? "").trim();
-        if (!id) return [];
+        if (!id || searchExclusionReasons(listing).length) return [];
         const modelYear = toModelYear(listing.Year) ?? toModelYear(listing.FormYear);
         if (modelYear !== null && modelYear < CATALOG_POLICY.minYear) return [];
         const snapshot = {
@@ -220,7 +234,10 @@ async function main() {
     summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages, newCandidates: found, exhausted, targetReached: found >= brand.candidatesToFind });
     finishedBrands += 1;
     foundAcrossBrands += found;
-    if (finishedBrands % 5 === 0 || finishedBrands === searchable.length) {
+    // Report only at stable five-brand milestones. The control task reports the
+    // completed search and worker start, so a short pilot does not emit a
+    // redundant per-brand message just before enrichment begins.
+    if (finishedBrands % 5 === 0) {
       try {
         await notifyCatalogOwner(`Поиск квот: обработано марок ${finishedBrands}/${searchable.length}; найдено новых кандидатов ${foundAcrossBrands}. Последняя: ${brand.manufacturer}, offset ${offset}${exhausted ? " (выдача исчерпана)" : ""}.`);
       } catch (error) {

@@ -25,6 +25,7 @@ export type EndpointOutcome = {
   reasonCode: string;
   requestedCanonicalId?: string;
   requestedVehicleNo?: string;
+  errorMessage?: string;
 };
 
 type Probe = {
@@ -44,7 +45,7 @@ const object = (value: unknown): Record<string, unknown> =>
 
 function errorState(error: unknown): EndpointState {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/HTTP 401\b|auth|verification/i.test(message)) return "auth_error";
+  if (/HTTP (401|407)\b|auth|verification/i.test(message)) return "auth_error";
   if (/HTTP 403\b/i.test(message)) return "blocked";
   if (/HTTP 429\b/i.test(message)) return "rate_limited";
   if (/HTTP (404|410)\b/i.test(message)) return "not_found";
@@ -54,7 +55,8 @@ function errorState(error: unknown): EndpointState {
 
 export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
   const attempts = Math.max(1, Math.floor(probe.attempts ?? 1));
-  const httpStatus = probe.httpStatus ?? null;
+  const errorMessage = probe.error instanceof Error ? probe.error.message : probe.error == null ? undefined : String(probe.error);
+  const httpStatus = probe.httpStatus ?? (Number(errorMessage?.match(/HTTP (\d{3})\b/)?.[1]) || null);
   let state: EndpointState;
   let payload: unknown | null = probe.payload ?? null;
 
@@ -63,7 +65,6 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     payload = null;
   } else if (httpStatus !== null && httpStatus >= 400) {
     state = errorState(new Error(`HTTP ${httpStatus}`));
-    if (probe.endpoint === "options" && state === "not_found") state = "confirmed_empty";
     payload = null;
   } else {
     switch (probe.endpoint) {
@@ -112,7 +113,6 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     if ((returnedId !== undefined && probe.canonicalId && String(returnedId) !== probe.canonicalId)
       || (returnedNo !== undefined && probe.vehicleNo && String(returnedNo) !== probe.vehicleNo)) state = "identity_mismatch";
   }
-  if (probe.endpoint === "options" && state === "not_found") state = "confirmed_empty";
   const retryable = state === "transient_error";
   return {
     endpoint: probe.endpoint,
@@ -125,6 +125,7 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     reasonCode: `${probe.endpoint}_${state}`,
     requestedCanonicalId: probe.canonicalId,
     requestedVehicleNo: probe.vehicleNo,
+    ...(errorMessage ? { errorMessage } : {}),
   };
 }
 

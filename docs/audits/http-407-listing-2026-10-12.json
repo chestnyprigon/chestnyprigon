@@ -1,0 +1,90 @@
+{
+  "id": "f38e7366-49ba-444b-8553-3f6d4a723593",
+  "run_id": "26013f2d-c123-430b-987b-d3d370f40899",
+  "source_listing_id": "41702571",
+  "source_url": "https://www.encar.com/dc/dc_cardetailview.do?carid=41702571",
+  "candidate_snapshot": {
+    "Id": "41702571",
+    "Year": 202204,
+    "Badge": "가솔린 3.5 터보 AWD",
+    "Model": "G90 (RS4)",
+    "Photo": "/carpicture09/pic4169/41690679_",
+    "Price": 7499,
+    "Trust": [
+      "ExtendWarranty",
+      "HomeService"
+    ],
+    "model": "G90 (RS4)",
+    "Photos": [
+      {
+        "type": "001",
+        "location": "/carpicture09/pic4169/41690679_001.jpg",
+        "ordering": 1,
+        "updatedDate": "2026-03-20T05:17:43Z"
+      },
+      {
+        "type": "003",
+        "location": "/carpicture09/pic4169/41690679_003.jpg",
+        "ordering": 3,
+        "updatedDate": "2026-03-20T05:17:43Z"
+      },
+      {
+        "type": "004",
+        "location": "/carpicture09/pic4169/41690679_004.jpg",
+        "ordering": 4,
+        "updatedDate": "2026-03-20T05:17:43Z"
+      },
+      {
+        "type": "007",
+        "location": "/carpicture09/pic4169/41690679_007.jpg",
+        "ordering": 7,
+        "updatedDate": "2026-03-20T05:17:43Z"
+      }
+    ],
+    "BuyType": [
+      "Delivery"
+    ],
+    "Mileage": 66370,
+    "encarId": "41702571",
+    "FormYear": "2022",
+    "FuelType": "가솔린",
+    "SellType": "일반",
+    "priceKrw": 74990000,
+    "Condition": [
+      "Inspection",
+      "Record",
+      "Resume"
+    ],
+    "GreenType": "N",
+    "mileageKm": 66370,
+    "modelYear": 2022,
+    "Separation": [
+      "B"
+    ],
+    "BadgeDetail": "(세부등급 없음)",
+    "ServiceMark": [
+      "EncarMeetgo",
+      "EncarDiagnosisP1"
+    ],
+    "Manufacturer": "제네시스",
+    "manufacturer": "제네시스",
+    "ServiceCopyCar": "DUPLICATION",
+    "OfficeCityState": "경기",
+    "HomeServiceVerification": "Y"
+  },
+  "status": "failed",
+  "attempt_count": 1,
+  "lease_until": null,
+  "last_attempt_at": "2026-10-11T18:58:15.238805+00:00",
+  "last_error": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41702571&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+  "result": {
+    "reason": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41702571&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+    "retryable": false,
+    "advertisedId": "41702571",
+    "failureClass": "auth_error",
+    "retryExhausted": false
+  },
+  "completed_at": null,
+  "created_at": "2026-10-11T18:49:35.575645+00:00",
+  "updated_at": "2026-10-11T18:58:15.669946+00:00"
+}

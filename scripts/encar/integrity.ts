@@ -26,6 +26,59 @@ export type ExistingIdentityRows = {
   sourceIdentifiers: Array<{ source_identifier: string; vehicle_id: string; vehicle_source_listing_id?: string | null }>;
 };
 
+export type CanonicalSiblingStage = {
+  sourceListingId: string;
+  advertisedId?: string | null;
+  canonicalId?: string | null;
+  vehicleNo?: string | null;
+  detailVehicleId?: string | null;
+  detailVehicleNo?: string | null;
+  runId?: string | null;
+  enrichmentStatus?: string | null;
+  endpointStatus?: Record<string, unknown> | null;
+  rawReports?: Record<string, unknown> | null;
+};
+
+/**
+ * A narrowly verified sibling listing can share a canonical vehicle ID with a
+ * targeted refresh candidate. Ignore it only when the sibling is the same
+ * canonical-as-advertised row from the declared source run, the vehicle number
+ * and detail identity agree, and all requested reports were explicitly skipped
+ * by the old options isolation. This never permits a catalog/source-identifier
+ * collision or a different vehicle.
+ */
+export function isVerifiedSameCanonicalRefreshSibling(input: {
+  advertisedId: string;
+  canonicalId: string;
+  vehicleNo: string;
+  sourceRunId: string;
+  sibling: CanonicalSiblingStage;
+}): boolean {
+  const { advertisedId, canonicalId, vehicleNo, sourceRunId, sibling } = input;
+  if (!advertisedId || !canonicalId || !vehicleNo || !sourceRunId) return false;
+  if (sibling.sourceListingId !== canonicalId
+    || sibling.advertisedId !== canonicalId
+    || sibling.canonicalId !== canonicalId
+    || sibling.vehicleNo !== vehicleNo
+    || sibling.detailVehicleId !== canonicalId
+    || sibling.detailVehicleNo !== vehicleNo
+    || sibling.runId !== sourceRunId
+    || sibling.enrichmentStatus !== "succeeded") return false;
+
+  for (const endpoint of ["inspection", "diagnosis", "insurance"]) {
+    const state = sibling.endpointStatus?.[endpoint];
+    const status = state && typeof state === "object" && !Array.isArray(state)
+      ? state as Record<string, unknown>
+      : {};
+    if (status.state !== "skipped" || status.reasonCode !== `${endpoint}_not_requested_after_options_isolation`) return false;
+    const report = sibling.rawReports?.[endpoint];
+    if (report !== null && report !== undefined && !(typeof report === "object" && !Array.isArray(report) && Object.keys(report).length === 0)) return false;
+  }
+
+  // The target must be a distinct Encar advertisement sharing this canonical ID.
+  return advertisedId !== canonicalId;
+}
+
 const normalizedText = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
 const asNumber = (value: unknown) => {
   if (value === null || value === undefined || value === "") return null;

@@ -1,3 +1,5 @@
+import { encarFetch } from "./proxy";
+
 const API_ORIGIN = "https://api.encar.com";
 const VERIFY_IP_ENDPOINT = `${API_ORIGIN}/international/communication/validate-request-ip`;
 const VERIFY_ENDPOINT = `${API_ORIGIN}/pass/user/verify`;
@@ -42,7 +44,7 @@ export function encarHistoryHeaders() {
 }
 
 async function verifyRequestIp() {
-  const ipResponse = await fetch(VERIFY_IP_ENDPOINT, {
+  const ipResponse = await encarFetch(VERIFY_IP_ENDPOINT, {
     headers: encarHeaders(),
     signal: AbortSignal.timeout(20_000),
   });
@@ -53,7 +55,7 @@ async function verifyRequestIp() {
   } else if (ipResponse.status === 401) {
     // Encar's IP endpoint may require a browser-only bearer token even though
     // /pass/user/verify itself accepts the current egress IP and User-Agent.
-    const publicIpResponse = await fetch(PUBLIC_IP_ENDPOINT, {
+    const publicIpResponse = await encarFetch(PUBLIC_IP_ENDPOINT, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
@@ -68,7 +70,7 @@ async function verifyRequestIp() {
 
   if (!ipAddress) throw new Error("Encar IP validation did not return an IP address");
 
-  const verifyResponse = await fetch(VERIFY_ENDPOINT, {
+  const verifyResponse = await encarFetch(VERIFY_ENDPOINT, {
     method: "POST",
     headers: { ...browserVerificationHeaders, "Content-Type": "application/json" },
     body: JSON.stringify({

@@ -7,6 +7,8 @@ PROJECT_ROOT="${CHESTNY_PROJECT_ROOT:-/Users/koredigital/Developer/chestny-prigo
 STATE_DIR="${CHESTNY_WORKER_STATE_DIR:-/Users/koredigital/Library/Application Support/chestny-prigon}"
 LOG_DIR="${CHESTNY_WORKER_LOG_DIR:-/Users/koredigital/Library/Logs/chestny-prigon}"
 REQUEST_FILE="$STATE_DIR/active-run"
+WAVE_SIZE_FILE="$STATE_DIR/active-wave-size"
+MODE_FILE="$STATE_DIR/active-mode"
 LOG_FILE="$LOG_DIR/worker.log"
 
 /bin/mkdir -p "$STATE_DIR" "$LOG_DIR"
@@ -34,8 +36,26 @@ if ! /usr/bin/printf '%s' "$RUN_ID" | /usr/bin/grep -Eq '^[0-9a-fA-F]{8}-[0-9a-f
   exit 64
 fi
 
+MAX_ITEMS=50
+if [[ -s "$WAVE_SIZE_FILE" ]]; then
+  MAX_ITEMS=$(/bin/cat "$WAVE_SIZE_FILE" | /usr/bin/tr -d '\r\n')
+fi
+if ! /usr/bin/printf '%s' "$MAX_ITEMS" | /usr/bin/grep -Eq '^[0-9]{1,3}$' || (( MAX_ITEMS < 1 || MAX_ITEMS > 500 )); then
+  /usr/bin/printf '%s invalid wave size %s; refusing to start\n' "$(/bin/date -u +%FT%TZ)" "$MAX_ITEMS" >> "$LOG_FILE"
+  exit 64
+fi
+
+RUN_MODE=""
+if [[ -s "$MODE_FILE" ]]; then
+  RUN_MODE=$(/bin/cat "$MODE_FILE" | /usr/bin/tr -d '\r\n')
+  if [[ "$RUN_MODE" != "targeted_report_refresh" && "$RUN_MODE" != "saved_queue_until_complete" ]]; then
+    /usr/bin/printf '%s invalid active mode %s; refusing to start\n' "$(/bin/date -u +%FT%TZ)" "$RUN_MODE" >> "$LOG_FILE"
+    exit 64
+  fi
+fi
+
 rotate_log
-/usr/bin/printf '%s starting run %s\n' "$(/bin/date -u +%FT%TZ)" "$RUN_ID" >> "$LOG_FILE"
+/usr/bin/printf '%s starting run %s max-items=%s\n' "$(/bin/date -u +%FT%TZ)" "$RUN_ID" "$MAX_ITEMS" >> "$LOG_FILE"
 cd "$PROJECT_ROOT" || exit 72
 
 # The worker has its own global DB/file lock. Recheck here so a manual
@@ -45,7 +65,13 @@ if [[ -e /tmp/encar-coordination/chestny-catalog-enrichment.lock ]]; then
   exit 75
 fi
 
-/opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --max-items=50 >> "$LOG_FILE" 2>&1 &
+if [[ "$RUN_MODE" == "targeted_report_refresh" ]]; then
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &
+elif [[ "$RUN_MODE" == "saved_queue_until_complete" ]]; then
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --until-complete >> "$LOG_FILE" 2>&1 &
+else
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
+fi
 WORKER_PID=$!
 trap '/bin/kill -TERM "$WORKER_PID" 2>/dev/null || true; wait "$WORKER_PID" 2>/dev/null || true; exit 143' TERM INT
 wait "$WORKER_PID"
@@ -54,6 +80,10 @@ trap - TERM INT
 
 if (( STATUS == 0 )) && [[ -f "$REQUEST_FILE" ]] && [[ "$(/bin/cat "$REQUEST_FILE" | /usr/bin/tr -d '\r\n')" == "$RUN_ID" ]]; then
   /bin/rm "$REQUEST_FILE"
+  /bin/rm -f "$WAVE_SIZE_FILE"
+  if [[ -n "$RUN_MODE" ]] && [[ -f "$MODE_FILE" ]] && [[ "$(/bin/cat "$MODE_FILE" | /usr/bin/tr -d '\r\n')" == "$RUN_MODE" ]]; then
+    /bin/rm -f "$MODE_FILE"
+  fi
 fi
 /usr/bin/printf '%s worker exited status=%s run=%s\n' "$(/bin/date -u +%FT%TZ)" "$STATUS" "$RUN_ID" >> "$LOG_FILE"
 exit "$STATUS"

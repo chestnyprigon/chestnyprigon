@@ -1,10 +1,14 @@
 import { CATALOG_POLICY } from "../encar/catalog-policy";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
+import { appendOperationalFailure, isOperationalFailure, FAILURE_WINDOW_MIN_ERRORS, FAILURE_WINDOW_SIZE, shouldPauseForOperationalFailures } from "./enrichment-failure-policy";
 import { attemptedEnrichmentItems } from "./enrichment-run-state";
 import { notifyCatalogOwner } from "./telegram-catalog-notify";
+import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
 
 config({ path: ".env.local", quiet: true });
 
@@ -17,21 +21,34 @@ function required(name: string) {
 const runId = process.argv.find((argument) => argument.startsWith("--run-id="))?.slice("--run-id=".length);
 if (!runId || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--run-id must be a run UUID");
 
-const batchSize = 1;
+const untilComplete = process.argv.includes("--until-complete");
+const batchSize = 10;
 const maxItemsArgument = process.argv.find((argument) => argument.startsWith("--max-items="))?.slice("--max-items=".length);
-const maxItems = maxItemsArgument === undefined ? 50 : Number(maxItemsArgument);
-if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 500) throw new Error("--max-items must be 1..500");
-const delayMs = CATALOG_POLICY.requestDelayMs;
+const maxItems = maxItemsArgument === undefined ? (untilComplete ? 5_000 : 50) : Number(maxItemsArgument);
+if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > (untilComplete ? 5_000 : 500)) throw new Error("Invalid --max-items for this worker mode");
+const targetedDelayArgument = process.argv.find((argument) => argument.startsWith("--targeted-report-refresh-delay-ms="))?.slice("--targeted-report-refresh-delay-ms=".length);
+const requestedTargetedDelayMs = targetedDelayArgument === undefined ? undefined : Number(targetedDelayArgument);
+if (requestedTargetedDelayMs !== undefined && (!Number.isInteger(requestedTargetedDelayMs) || requestedTargetedDelayMs < 2_000 || requestedTargetedDelayMs > 30_000)) {
+  throw new Error("--targeted-report-refresh-delay-ms must be an integer from 2000 to 30000");
+}
+const targetedConcurrencyArgument = process.argv.find((argument) => argument.startsWith("--targeted-report-refresh-concurrency="))?.slice("--targeted-report-refresh-concurrency=".length);
+const requestedTargetedConcurrency = targetedConcurrencyArgument === undefined ? undefined : Number(targetedConcurrencyArgument);
+if (requestedTargetedConcurrency !== undefined && (!Number.isInteger(requestedTargetedConcurrency) || requestedTargetedConcurrency < 1 || requestedTargetedConcurrency > 3)) {
+  throw new Error("--targeted-report-refresh-concurrency must be an integer from 1 to 3");
+}
 const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false, autoRefreshToken: false },
 });
-
 type WorkerResult = {
   claimed: number;
+  pendingRetries?: number;
   succeeded: number;
   unavailable: number;
   failed: number;
-  results: Array<{ error?: string; failureClass?: string }>;
+  requestedJson?: number;
+  scheduledWaitMs?: number;
+  elapsedMs?: number;
+  results: Array<{ status?: string; error?: string; failureClass?: string }>;
 };
 
 async function queueCounts() {
@@ -47,17 +64,23 @@ async function queueCounts() {
   return counts;
 }
 
-async function runBatch(lockToken: string, signal: AbortSignal): Promise<WorkerResult> {
+async function runBatch(lockToken: string, signal: AbortSignal, limit: number, allowMatchingStagingRefresh: boolean, delayMs: number, encarProxyUrl: string): Promise<WorkerResult> {
   const output = await new Promise<string>((resolve, reject) => {
+    const activePath = join("/tmp/encar-coordination", `chestny-enrichment-active-${randomUUID()}.json`);
     const child = spawn("npm", ["run", "radar:vps-enrichment"], {
       env: {
         ...process.env,
-        CHESTNY_ENRICHMENT_DIRECT: "true",
+        CHESTNY_ENRICHMENT_DIRECT: "false",
+        ENCAR_PROXY_URL: encarProxyUrl,
+        CHESTNY_ENRICHMENT_STANDARD_RUN: String(untilComplete),
         CHESTNY_ENRICHMENT_RUN_ID: runId,
-        CHESTNY_ENRICHMENT_BATCH_SIZE: String(batchSize),
+        CHESTNY_ENRICHMENT_BATCH_SIZE: String(limit),
         CHESTNY_ENRICHMENT_DELAY_MS: String(delayMs),
         CHESTNY_ENRICHMENT_MAX_ATTEMPTS: "3",
+        CHESTNY_ENRICHMENT_SKIP_RETRIES: "false",
+        CHESTNY_ENRICHMENT_ALLOW_MATCHING_STAGING_REFRESH: String(allowMatchingStagingRefresh),
         CHESTNY_ENRICHMENT_LOCK_TOKEN: lockToken,
+        CHESTNY_ENRICHMENT_ACTIVE_PATH: activePath,
       },
       stdio: ["ignore", "pipe", "pipe"],
       signal,
@@ -77,10 +100,25 @@ async function runBatch(lockToken: string, signal: AbortSignal): Promise<WorkerR
   return JSON.parse(output.slice(jsonStart)) as WorkerResult;
 }
 
-async function screenCompletedItems() {
+function mergeWorkerResults(results: WorkerResult[]): WorkerResult {
+  return results.reduce<WorkerResult>((combined, item) => ({
+    claimed: combined.claimed + item.claimed,
+    pendingRetries: Math.max(combined.pendingRetries ?? 0, item.pendingRetries ?? 0),
+    succeeded: combined.succeeded + item.succeeded,
+    unavailable: combined.unavailable + item.unavailable,
+    failed: combined.failed + item.failed,
+    requestedJson: (combined.requestedJson ?? 0) + (item.requestedJson ?? 0),
+    scheduledWaitMs: (combined.scheduledWaitMs ?? 0) + (item.scheduledWaitMs ?? 0),
+    elapsedMs: Math.max(combined.elapsedMs ?? 0, item.elapsedMs ?? 0),
+    results: [...combined.results, ...item.results],
+  }), { claimed: 0, succeeded: 0, unavailable: 0, failed: 0, results: [] });
+}
+
+async function screenCompletedItems(full = false) {
   const output = await new Promise<string>((resolve, reject) => {
-    const child = spawn("npm", ["run", "radar:screen-vps-staging"], {
-      env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId },
+    const child = spawn(process.execPath, ["--import", "tsx", "scripts/radar/screen-vps-staging.ts", ...(full ? ["--full"] : [])], {
+      env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId,
+        CHESTNY_PUBLICATION_OUTPUT_PATH: `output/chestny-vps-publication-ready-${runId}.json` },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -93,19 +131,58 @@ async function screenCompletedItems() {
       else resolve(stdout);
     });
   });
+  const jsonStart = output.indexOf('{\n  "status"');
+  if (jsonStart < 0) throw new Error(`Screening did not return a JSON summary: ${output.trim()}`);
   try {
-    return JSON.parse(output) as { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
+    return JSON.parse(output.slice(jsonStart)) as { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
   } catch {
     throw new Error(`Screening did not return a summary: ${output.trim()}`);
   }
 }
 
+async function publicationDisposition(launchId: string | null) {
+  const { data: goal, error } = await client.from("control_center_tasks").select("parameters")
+    .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
+  if (error) return "Не удалось проверить разрешение публикации цели; фактический итог будет показан после проверки координатором.";
+  let matchedGoal = goal;
+  if (!matchedGoal && launchId) {
+    const { data, error: goalError } = await client.from("control_center_tasks").select("parameters")
+      .eq("module_id", "chestny-prigon.catalog").contains("parameters", { launchId })
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    if (goalError) return "Не удалось проверить разрешение публикации цели; фактический итог будет показан после проверки координатором.";
+    matchedGoal = data;
+  }
+  const parameters = (matchedGoal?.parameters ?? {}) as Record<string, unknown>;
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "whole_run") {
+    return "Публикация разрешена пакетно для одобренных карточек; координатор отдельно сообщит фактический итог.";
+  }
+  return "Публикация цели выключена; карточки не будут опубликованы автоматически.";
+}
+
 async function processLoop(lockToken: string, signal: AbortSignal) {
   let batch = 0;
   const { data: run, error: runError } = await client.from("chestny_enrichment_runs")
-    .select("status").eq("id", runId).single();
+    .select("status,candidate_count,rules").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
   if (!(run.status === "approved" || run.status === "running")) throw new Error(`Run status ${run.status} is not eligible for a worker`);
+  const refreshRequested = process.argv.includes("--allow-matching-staging-refresh");
+  if (refreshRequested && run.rules?.type !== "targeted_report_refresh") {
+    throw new Error("--allow-matching-staging-refresh requires a targeted_report_refresh run");
+  }
+  if (run.rules?.type === "targeted_report_refresh" && !refreshRequested) {
+    throw new Error("This targeted_report_refresh run requires --allow-matching-staging-refresh");
+  }
+  const targetedReportRefresh = run.rules?.type === "targeted_report_refresh";
+  if (requestedTargetedDelayMs !== undefined && !targetedReportRefresh) {
+    throw new Error("--targeted-report-refresh-delay-ms is only allowed for targeted_report_refresh runs");
+  }
+  if (requestedTargetedConcurrency !== undefined && !targetedReportRefresh) {
+    throw new Error("--targeted-report-refresh-concurrency is only allowed for targeted_report_refresh runs");
+  }
+  const effectiveDelayMs = targetedReportRefresh ? (requestedTargetedDelayMs ?? 2_000) : CATALOG_POLICY.requestDelayMs;
+  const effectiveConcurrency = targetedReportRefresh ? (requestedTargetedConcurrency ?? 2) : 1;
+  if (untilComplete && run.rules?.catalogLaunchId) throw new Error("--until-complete is reserved for ordinary runs without a catalog launch");
   const { data: abandoned, error: abandonedError } = await client.from("chestny_enrichment_queue")
     .select("id").eq("run_id", runId).eq("status", "leased");
   if (abandonedError) throw new Error(abandonedError.message);
@@ -124,12 +201,23 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
   };
   const processedBeforeWave = processed;
   let processedThisWave = 0;
-  await notify(`Началась новая волна run ${runId}. Обработано ранее ${processedBeforeWave}; лимит этой волны ${maxItems}; в очереди ${initialCounts.queued}.`);
+  let recentOperationalFailures: boolean[] = [];
+  let recoveryCooldowns = 0;
+  if (!run.rules?.catalogLaunchId) {
+    await notify(untilComplete
+      ? `🚗 Обработка сохранённой очереди запущена\n\nВсего: ${run.candidate_count}\nОбработано ранее: ${processedBeforeWave}\nОсталось: ${initialCounts.queued}\nРежим: до конца очереди, последовательно, паузы ${effectiveDelayMs / 1000} секунд.\nПубликация выключена.\nRun: ${runId}`
+      : `Началась новая волна run ${runId}. Обработано ранее ${processedBeforeWave}; лимит этой волны ${maxItems}; в очереди ${initialCounts.queued}.`);
+  }
   try {
+    const encarProxyUrl = readEncarProxyUrlFromKeychain();
     while (processedThisWave < maxItems) {
       const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
         .select("status").eq("id", runId).single();
       if (currentRunError) throw new Error(`Cannot refresh run control status: ${currentRunError.message}`);
+      if (currentRun.status === "completed") {
+        console.log(JSON.stringify({ runId, completedByWorker: true, processed, maxItems }));
+        break;
+      }
       if (currentRun.status === "paused" || currentRun.status === "cancelled") {
         console.log(JSON.stringify({ runId, stoppedByControl: currentRun.status, processed, maxItems }));
         break;
@@ -137,22 +225,58 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       if (!(currentRun.status === "approved" || currentRun.status === "running")) {
         throw new Error(`Run changed to unexpected status ${currentRun.status}`);
       }
-      const result = await runBatch(lockToken, signal);
+      const currentLimit = Math.min(batchSize, maxItems - processedThisWave);
+      const workerResults = targetedReportRefresh
+        ? await Promise.all(Array.from({ length: Math.min(effectiveConcurrency, currentLimit) }, () =>
+          runBatch(lockToken, signal, 1, refreshRequested, effectiveDelayMs, encarProxyUrl)))
+        : [await runBatch(lockToken, signal, currentLimit, refreshRequested, effectiveDelayMs, encarProxyUrl)];
+      const result = mergeWorkerResults(workerResults);
       batch += 1;
       processedThisWave += result.claimed;
       processed += result.claimed;
       const counts = await queueCounts();
-      console.log(JSON.stringify({ runId, batch, processedThisWave, processedTotal: processed, maxItems, recoveredLeases: recoveredIds.length, transport: "direct", ...counts }));
-      if (processedThisWave > 0 && processedThisWave % 10 === 0) await notify(`Прогресс run ${runId}: эта волна ${processedThisWave}/${maxItems}; всего обработано ${processed}. Успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}, осталось в очереди ${counts.queued}.`);
+      console.log(JSON.stringify({ runId, batch, processedThisWave, processedTotal: processed, maxItems, recoveredLeases: recoveredIds.length, transport: "decodo_proxy", delayMs: effectiveDelayMs, concurrentListings: effectiveConcurrency, ...counts }));
+      const progressInterval = untilComplete ? 50 : 10;
+      if (processedThisWave > 0 && processedThisWave % progressInterval === 0) {
+        const progressMessage = targetedReportRefresh
+          ? `Обновление данных Encar: run ${runId}. Обработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}; осталось ${counts.queued}. Публикация выключена.`
+          : `📈 Прогресс обработки\n\nОбработано: ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nОшибок: ${counts.failed}\nОсталось: ${counts.queued}\nПубликация выключена.\nRun: ${runId}`;
+        await notify(progressMessage);
+      }
       if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
-        || /^(endpoint_(transient_error|auth_error|blocked|rate_limited)|transient_request|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
+        || /^(endpoint_(auth_error|blocked|rate_limited)|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
         throw new Error("Encar access restriction detected; local enrichment paused");
       }
-      if (result.claimed > 0 && result.failed >= Math.ceil(result.claimed / 2)) {
-        throw new Error("At least half the batch failed; local enrichment paused");
+      for (const item of result.results) {
+        const operationalFailure = item.status === "failed" && isOperationalFailure(item.failureClass);
+        recentOperationalFailures = appendOperationalFailure(recentOperationalFailures, operationalFailure);
+      }
+      if (shouldPauseForOperationalFailures(recentOperationalFailures) && recoveryCooldowns === 0) {
+        recoveryCooldowns += 1;
+        await notify("⚠️ Серия временных сетевых ошибок. Делаю паузу на 5 минут, затем одну попытку продолжения. Очередь и частичные данные сохранены.");
+        for (let tick = 0; tick < 10; tick += 1) {
+          if (signal.aborted) throw signal.reason;
+          const control = await client.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
+          if (control.error) throw new Error(control.error.message);
+          if (["paused", "cancelled"].includes(control.data.status)) break;
+          await new Promise(resolve => setTimeout(resolve, 30_000));
+        }
+        recentOperationalFailures = [];
+        continue;
+      }
+      if (shouldPauseForOperationalFailures(recentOperationalFailures)) {
+        throw new Error(`At least ${FAILURE_WINDOW_MIN_ERRORS} of the last ${FAILURE_WINDOW_SIZE} candidates failed for technical reasons; local enrichment paused`);
+      }
+      if (result.pendingRetries && counts.queued === 0 && counts.leased === 0) {
+        // No Encar requests while waiting; refresh owner control on the next loop.
+        await new Promise(resolve => setTimeout(resolve, 30_000));
+        continue;
       }
       if (counts.queued === 0 && counts.leased === 0) break;
       if (processedThisWave >= maxItems) { console.log(JSON.stringify({ runId, stoppedAtLimit: true, processedThisWave, processedTotal: processed, maxItems, ...counts })); break; }
+      const controlAfterBatch = await client.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
+      if (controlAfterBatch.error) throw new Error(controlAfterBatch.error.message);
+      if (["paused", "cancelled"].includes(controlAfterBatch.data.status)) break;
       if (result.claimed === 0) throw new Error("Queue has pending or leased items but the worker claimed none");
     }
     const finalCounts = await queueCounts();
@@ -163,9 +287,10 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       }).eq("id", runId).in("status", ["approved", "running"]);
       if (error) throw new Error(`Could not pause run at wave limit: ${error.message}`);
     }
-    const screening = await screenCompletedItems();
+    const screening = await screenCompletedItems(finalCounts.queued + finalCounts.leased === 0);
     console.log(JSON.stringify({ runId, screening, ...finalCounts }));
-    await notify(`Волна run ${runId} завершена: обработано в этой волне ${processedThisWave}/${maxItems}, всего ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось в очереди ${finalCounts.queued}. Screening: допущено ${screening.decisions?.approved ?? 0}, отклонено ${screening.decisions?.rejected ?? 0}, изолировано ${screening.decisions?.isolated ?? 0}; готово к публикации ${screening.readyForPublication ?? 0}. Публикация не выполнялась.`);
+    const publication = await publicationDisposition(run.rules?.catalogLaunchId ? String(run.rules.catalogLaunchId) : null);
+    await notify(`Волна run ${runId} завершена: обработано ${processedThisWave}/${maxItems}, всего ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось ${finalCounts.queued}. Screening: допущено ${screening.decisions?.approved ?? 0}, отклонено ${screening.decisions?.rejected ?? 0}, изолировано ${screening.decisions?.isolated ?? 0}; готово к публикации по screening ${screening.readyForPublication ?? 0}. ${publication}`);
   } catch (error) {
     if (!signal.aborted) {
       const { error: pauseError } = await client.from("chestny_enrichment_runs").update({

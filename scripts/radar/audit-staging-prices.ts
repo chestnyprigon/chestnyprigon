@@ -53,7 +53,9 @@ async function main() {
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const readyReport = JSON.parse(await fs.readFile(path.resolve("output/chestny-vps-publication-ready.json"), "utf8")) as {
+  const reportPath = process.argv.find((arg) => arg.startsWith("--publication-report="))?.slice("--publication-report=".length)
+    ?? "output/chestny-vps-publication-ready.json";
+  const readyReport = JSON.parse(await fs.readFile(path.resolve(reportPath), "utf8")) as {
     runId: string;
     ready: Array<{ sourceListingId: string }>;
   };
@@ -163,7 +165,7 @@ async function main() {
     }, {}),
     results,
   };
-  const outputPath = path.resolve(`output/chestny-price-audit-${runId}.json`);
+  const outputPath = path.resolve(process.env.CHESTNY_PRICE_AUDIT_OUTPUT_PATH?.trim() || `output/chestny-price-audit-${runId}.json`);
   await fs.writeFile(outputPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
   console.log(JSON.stringify({ ...summary, results: undefined, sampleFlags: results.filter((row) => row.priceFlag !== "no_extreme_low_price_signal").slice(0, 30), outputPath: path.relative(process.cwd(), outputPath) }, null, 2));
 }

@@ -1,17 +1,21 @@
+import { normalizeListing } from "../encar/normalize";
+import { resolveEquipment } from "../encar/equipment-resolution";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { get as httpsGet } from "node:https";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { accidentSummary, inspectionSummary } from "../encar/enrich";
 import { encarHistoryHeaders, ensureEncarVerified } from "../encar/auth";
 import { classifyEndpointProbe, isEndpointCircuitBreaker, shouldRetryEndpoint, type EncarEndpoint, type EndpointOutcome } from "../encar/endpoint-outcomes";
-import { validateEnrichmentIntegrity, validateExistingIdentityLinks, validateQueueIdentity, validateSnapshotAgainstDetail } from "../encar/integrity";
+import { isVerifiedSameCanonicalRefreshSibling, validateEnrichmentIntegrity, validateExistingIdentityLinks, validateQueueIdentity, validateSnapshotAgainstDetail } from "../encar/integrity";
 import { requestEndpointWithRetry } from "../encar/endpoint-retry";
 import { screenListing } from "../encar/screening";
-import { integrityEvidence, isolate, publicationGate } from "../encar/publication-gate";
+import { integrityEvidence, isolate, publicationGate, validateGallery } from "../encar/publication-gate";
 import { CATALOG_POLICY, evidence } from "../encar/catalog-policy";
 import type { EncarBundle, EncarSearchListing } from "../encar/types";
 import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
+import { appendOperationalFailure, isOperationalFailure, shouldPauseForOperationalFailures } from "./enrichment-failure-policy";
 import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
 
 config({ path: ".env", quiet: true });
@@ -33,17 +37,21 @@ function boundedNumber(name: string, fallback: number, minimum: number, maximum:
 }
 
 const runId = required("CHESTNY_ENRICHMENT_RUN_ID");
-const batchSize = boundedNumber("CHESTNY_ENRICHMENT_BATCH_SIZE", direct ? 1 : 50, 1, direct ? 1 : 50);
-const delayMs = boundedNumber("CHESTNY_ENRICHMENT_DELAY_MS", CATALOG_POLICY.requestDelayMs, CATALOG_POLICY.requestDelayMs, 30_000);
+const standardLocalRun = process.env.CHESTNY_ENRICHMENT_STANDARD_RUN === "true";
+const batchSize = boundedNumber("CHESTNY_ENRICHMENT_BATCH_SIZE", direct ? 1 : 50, 1, direct ? 10 : 50);
+const delayMs = boundedNumber("CHESTNY_ENRICHMENT_DELAY_MS", CATALOG_POLICY.requestDelayMs, 1_000, 30_000);
 const maxAttempts = boundedNumber("CHESTNY_ENRICHMENT_MAX_ATTEMPTS", CATALOG_POLICY.maxEndpointAttempts, 1, CATALOG_POLICY.maxEndpointAttempts);
 const skipRetryRequeue = process.env.CHESTNY_ENRICHMENT_SKIP_RETRIES !== "false";
 const preserveRunStatus = process.env.CHESTNY_ENRICHMENT_PRESERVE_RUN_STATUS === "true";
 const proxyUrl = direct ? null : required("ENCAR_PROXY_URL");
 const coordinationDirectory = process.env.ENCAR_COORDINATION_DIR?.trim() || "/tmp/encar-coordination";
-const activePath = `${coordinationDirectory}/chestny-enrichment-active.json`;
+const activePath = process.env.CHESTNY_ENRICHMENT_ACTIVE_PATH?.trim() || `${coordinationDirectory}/chestny-enrichment-active.json`;
 const radarPath = `${coordinationDirectory}/radar-priority.json`;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const startedAt = Date.now();
+let requestedJson = 0;
+let scheduledWaitMs = 0;
+const sleep = (ms: number) => { scheduledWaitMs += ms; return new Promise((resolve) => setTimeout(resolve, ms)); };
 const text = (value: unknown) => {
   if (typeof value === "string" && value.trim()) return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
@@ -58,6 +66,7 @@ type Row = {
   source_listing_id: string;
   source_url: string | null;
   candidate_snapshot: Record<string, unknown>;
+  attempt_count?: number;
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- The generated Supabase schema does not include the worker tables yet.
 type Db = ReturnType<typeof createClient<any>>;
@@ -77,21 +86,50 @@ async function radarHasPriority() {
 }
 
 function isRetryableFailure(error: string | null) {
-  return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|5\d\d)|endpoint_(options|inspection|insurance)_transient_error|detail_missing_canonical_identifier|identity_lookup_failed/i.test(error));
+  return Boolean(error && /detail_empty_response|fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|5\d\d)|endpoint_(options|inspection|insurance)_transient_error|detail_missing_canonical_identifier|identity_lookup_failed/i.test(error));
 }
 
 function failureClass(error: string) {
-  if (/HTTP 401/i.test(error)) return "auth_error";
+  if (/HTTP (401|407)/i.test(error)) return "auth_error";
   if (/HTTP 403/i.test(error)) return "blocked";
   if (/HTTP 429/i.test(error)) return "rate_limited";
   if (/incomplete_gallery/i.test(error)) return "incomplete_gallery";
   if (/detail_missing_canonical_identifier/i.test(error)) return "canonical_identifier_missing";
   if (/HTTP (404|410)/i.test(error)) return "source_unavailable";
-  if (/HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
+  if (/detail_empty_response|HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
   return "enrichment_error";
 }
 
 async function requestJson(agent: ProxyAgent | null, endpoint: string, headers?: Record<string, string>, lockSignal?: AbortSignal) {
+  requestedJson += 1;
+  // Use the native HTTPS client for direct requests; preserve source HTTP
+  // statuses instead of Fetch's opaque network error on HTTP 407.
+  if (!agent) {
+    return await new Promise<unknown>((resolve, reject) => {
+      const signal = lockSignal ? AbortSignal.any([AbortSignal.timeout(25_000), lockSignal]) : AbortSignal.timeout(25_000);
+      const request = httpsGet(endpoint, { headers: headers ?? { Accept: "application/json" }, signal }, (response) => {
+        const status = response.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          response.resume();
+          reject(new EncarRequestError(status, endpoint));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > 10 * 1024 * 1024) { response.destroy(new Error("JSON response exceeds 10 MB")); return; }
+          chunks.push(chunk);
+        });
+        response.on("error", reject);
+        response.on("end", () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+          catch (error) { reject(error); }
+        });
+      });
+      request.on("error", reject);
+    });
+  }
   const response = await undiciFetch(endpoint, {
     headers: headers ?? {
       Accept: "application/json, text/plain, */*",
@@ -156,6 +194,7 @@ function endpointStatus(outcome: EndpointOutcome | { endpoint: EncarEndpoint; st
     reasonCode: outcome.reasonCode,
     requestedCanonicalId: "requestedCanonicalId" in outcome ? outcome.requestedCanonicalId : null,
     requestedVehicleNo: "requestedVehicleNo" in outcome ? outcome.requestedVehicleNo : null,
+    errorMessage: "errorMessage" in outcome ? outcome.errorMessage : null,
   };
 }
 
@@ -166,7 +205,7 @@ async function requeueRetryableFailures(db: Db) {
     .eq("status", "failed")
     .lt("attempt_count", maxAttempts);
   if (error) throw new Error(error.message);
-  const ids = ((data ?? []) as Array<{ id: string; last_error: string | null; result?: Record<string, unknown> }>).filter((row) => row.result?.retryExhausted !== true && isRetryableFailure(row.last_error)).map((row) => row.id);
+  const ids = ((data ?? []) as Array<{ id: string; last_error: string | null; result?: Record<string, unknown> }>).filter((row) => (row.result?.retryable === true || (row.result?.retryExhausted !== true && isRetryableFailure(row.last_error))) && (!row.result?.retryAfter || Date.parse(String(row.result.retryAfter)) <= Date.now())).map((row) => row.id);
   if (!ids.length) return 0;
   const { error: updateError } = await db.from("chestny_enrichment_queue")
     .update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() })
@@ -213,8 +252,16 @@ function choiceOptions(payload: unknown) {
   });
 }
 
+async function pendingRetries(db: Db) {
+  if (skipRetryRequeue) return 0;
+  const { data, error } = await db.from("chestny_enrichment_queue").select("id,result")
+    .eq("run_id", runId).eq("status", "failed").lt("attempt_count", maxAttempts);
+  if (error) throw new Error(error.message);
+  return (data ?? []).filter((row: { result?: Record<string, unknown> }) => row.result?.retryable === true).length;
+}
+
 async function maybeFinishRun(db: Db) {
-  if (await hasPendingEnrichment(db, runId)) return false;
+  if (await hasPendingEnrichment(db, runId) || await pendingRetries(db)) return false;
   const { error: updateError } = await db.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId).in("status", ["approved", "running"]);
   if (updateError) throw new Error(updateError.message);
   return true;
@@ -225,8 +272,24 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
     console.log(JSON.stringify({ runId, deferred: "radar_priority" }));
     return;
   }
-  const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status,candidate_count").eq("id", runId).single();
+  const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status,candidate_count,rules").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
+  if (standardLocalRun && run.rules?.catalogLaunchId) throw new Error("Ordinary local batching cannot process a separate catalog launch");
+  const allowMatchingStagingRefresh = process.env.CHESTNY_ENRICHMENT_ALLOW_MATCHING_STAGING_REFRESH === "true";
+  if (allowMatchingStagingRefresh && run.rules?.type !== "targeted_report_refresh") {
+    throw new Error("Matching staging refresh is only allowed for a targeted_report_refresh run");
+  }
+  const allowVerifiedCanonicalSibling = allowMatchingStagingRefresh
+    && run.rules?.allowVerifiedCanonicalSibling === true
+    && typeof run.rules?.sourceRunId === "string";
+  if (run.rules?.allowVerifiedCanonicalSibling === true && !allowVerifiedCanonicalSibling) {
+    throw new Error("Verified canonical sibling handling requires a targeted report refresh and sourceRunId");
+  }
+  const targetedRefreshPacing = allowMatchingStagingRefresh && run.rules?.type === "targeted_report_refresh";
+  const minimumDelayMs = targetedRefreshPacing ? 2_000 : CATALOG_POLICY.requestDelayMs;
+  if (delayMs < minimumDelayMs) {
+    throw new Error(`CHESTNY_ENRICHMENT_DELAY_MS must be at least ${minimumDelayMs}ms for this run`);
+  }
   if (isTerminalRun(run.status)) {
     console.log(JSON.stringify({ runId, status: run.status, skipped: "terminal_run" }));
     process.exitCode = TERMINAL_RUN_EXIT_CODE;
@@ -252,12 +315,17 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
   const agent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
   const results: Array<Record<string, unknown>> = [];
   let pauseAfterCurrent = false;
+  let operationalSamples: boolean[] = [];
+  let pauseMessage = "";
   try {
     for (const [index, row] of (rows ?? []).entries() as Iterable<[number, Row]>) {
       if (lockSignal.aborted) {
         await db.from("chestny_enrichment_queue").update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() }).eq("id", row.id).eq("status", "leased");
         throw lockSignal.reason;
       }
+      const control = await db.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
+      if (control.error) throw new Error(`Cannot read run control: ${control.error.message}`);
+      if (["paused", "cancelled"].includes(control.data.status)) pauseAfterCurrent = true;
       if (pauseAfterCurrent) {
         const remaining = (rows as Row[]).slice(index).map((item) => item.id);
         if (remaining.length) {
@@ -274,6 +342,16 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         break;
       }
       const advertisedId = row.source_listing_id;
+      const saved = await db.from("chestny_enrichment_queue").select("result,attempt_count").eq("id", row.id).single();
+      if (saved.error) throw new Error(saved.error.message);
+      const previousResult = obj(saved.data.result);
+      const checkpoint = obj(previousResult.checkpoint);
+      row.attempt_count = saved.data.attempt_count;
+      let checkpointData: Record<string, unknown> = checkpoint;
+      const saveCheckpoint = async () => {
+        const savedCheckpoint = await db.from("chestny_enrichment_queue").update({ result: { ...previousResult, checkpoint: checkpointData } }).eq("id", row.id).eq("status", "leased");
+        if (savedCheckpoint.error) throw new Error(savedCheckpoint.error.message);
+      };
       try {
         const queueIssues = validateQueueIdentity({
           queueSourceListingId: row.source_listing_id,
@@ -288,6 +366,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         }
         // Resolve the canonical ID from detail before calling any other endpoint.
         const detailResponse = await requestJsonWithRetry(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS`, lockSignal);
+        if (Array.isArray(detailResponse) && detailResponse.length === 0) throw new Error("detail_empty_response");
         if (Array.isArray(detailResponse) && detailResponse.length !== 1) {
           const issue = {
             code: "identity_detail_response_cardinality",
@@ -356,7 +435,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         const enrichedBundle: EncarBundle = { ...detailBundle, search: currentSearch };
         const identityIds = [...new Set([advertisedId, canonicalId])];
         const [stagingResult, vehicleResult, identifierResult] = await Promise.all([
-          db.from("chestny_catalog_staging").select("source_listing_id,encar_payload").in("source_listing_id", identityIds),
+          db.from("chestny_catalog_staging").select("source_listing_id,enrichment_status,encar_payload").in("source_listing_id", identityIds),
           db.from("vehicles").select("id,source_listing_id").in("source_listing_id", identityIds),
           db.from("vehicle_source_identifiers").select("source_identifier,vehicle_id").in("source_identifier", identityIds),
         ]);
@@ -370,8 +449,56 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           : { data: [], error: null };
         if (linkedVehiclesResult.error) throw new Error(`identity_lookup_failed:${linkedVehiclesResult.error.message}`);
         const sourceIdByVehicleId = new Map((linkedVehiclesResult.data ?? []).map((item: { id: string; source_listing_id: string }) => [item.id, item.source_listing_id]));
+        const verifiedCanonicalSiblings: Array<{ sourceListingId: string; advertisedId: string; canonicalId: string }> = [];
+        const identityStagingRows = (stagingResult.data ?? []).filter((item: { source_listing_id: string; enrichment_status: string; encar_payload: Record<string, unknown> | null }) => {
+            const payload = obj(item.encar_payload);
+            if (payload.runId === runId) return false;
+            if (allowMatchingStagingRefresh && item.source_listing_id === advertisedId) {
+              const identifiers = obj(payload.identifiers);
+              if (String(identifiers.advertisedId ?? "") === advertisedId && String(identifiers.canonicalId ?? "") === canonicalId) return false;
+            }
+            if (allowVerifiedCanonicalSibling) {
+              const identifiers = obj(payload.identifiers);
+              const detail = obj(payload.detail);
+              if (isVerifiedSameCanonicalRefreshSibling({
+                advertisedId,
+                canonicalId,
+                vehicleNo,
+                sourceRunId: String(run.rules.sourceRunId),
+                sibling: {
+                  sourceListingId: String(item.source_listing_id),
+                  advertisedId: text(identifiers.advertisedId),
+                  canonicalId: text(identifiers.canonicalId),
+                  vehicleNo: text(identifiers.vehicleNo),
+                  detailVehicleId: text(detail.vehicleId),
+                  detailVehicleNo: text(detail.vehicleNo),
+                  runId: text(payload.runId),
+                  enrichmentStatus: item.enrichment_status,
+                  endpointStatus: obj(payload.endpointStatus),
+                  rawReports: obj(payload.rawReports),
+                },
+              })) {
+                const siblingIds = obj(payload.identifiers);
+                verifiedCanonicalSiblings.push({
+                  sourceListingId: String(item.source_listing_id),
+                  advertisedId: String(siblingIds.advertisedId),
+                  canonicalId: String(siblingIds.canonicalId),
+                });
+                return false;
+              }
+            }
+            return true;
+          });
+        const siblingWarnings = verifiedCanonicalSiblings.map((sibling) => ({
+          code: "identity_verified_same_canonical_sibling",
+          field: "chestny_catalog_staging.source_listing_id",
+          expected: { advertisedId, canonicalId, vehicleNo },
+          actual: sibling,
+          source: "supabase.chestny_catalog_staging",
+          severity: "warning" as const,
+        }));
         const existingIssues = validateExistingIdentityLinks(advertisedId, canonicalId, {
-          staging: (stagingResult.data ?? []).filter((item: { encar_payload: Record<string, unknown> | null }) => obj(item.encar_payload).runId !== runId).map((item: { source_listing_id: string; encar_payload: Record<string, unknown> | null }) => {
+          staging: identityStagingRows.map((item: { source_listing_id: string; encar_payload: Record<string, unknown> | null }) => {
             const payload = obj(item.encar_payload);
             const identifiers = obj(payload.identifiers);
             return {
@@ -401,7 +528,37 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           await sleep(delayMs);
           continue;
         }
-        const preliminaryScreening = screenListing(enrichedBundle);
+        // Canonical aliases can be discovered only after detail. Avoid repeated reports.
+        const priorCanonical = await db.from("chestny_enrichment_queue").select("source_listing_id")
+          .eq("run_id", runId).eq("status", "succeeded").eq("result->>canonicalId", canonicalId)
+          .neq("id", row.id).limit(1);
+        const plateLinks = await db.from("vehicle_source_identifiers").select("source_identifier,vehicle_id")
+          .eq("source_identifier", vehicleNo).limit(2);
+        if (priorCanonical.error || plateLinks.error) throw new Error(`identity_lookup_failed:${priorCanonical.error?.message ?? plateLinks.error?.message}`);
+        if (priorCanonical.data?.length || plateLinks.data?.length) {
+          const issues = [{ code: priorCanonical.data?.length ? "identity_run_canonical_duplicate" : "identity_source_identifier_already_linked",
+            field: priorCanonical.data?.length ? "queue.result.canonicalId" : "vehicle_source_identifiers.source_identifier",
+            expected: "new unlinked vehicle", actual: { canonicalId, vehicleNo, prior: priorCanonical.data, links: plateLinks.data },
+            source: "supabase.queue / vehicle_source_identifiers" }];
+          await complete(db, row, "failed", { advertisedId, canonicalId, vehicleNo, failureClass: "identity_integrity",
+            retryable: false, integrityIssues: issues, reasonCodes: issues.map(issue => issue.code), supplementalRequests: 0 });
+          results.push({ sourceListingId: advertisedId, status: "failed", failureClass: "identity_integrity", reasonCodes: issues.map(issue => issue.code) });
+          await sleep(delayMs);
+          continue;
+        }
+        let preliminaryScreening = screenListing(enrichedBundle);
+        if (preliminaryScreening.decision === "approved") {
+          const earlyReasons = validateGallery(enrichedBundle, images);
+          const modifiedAt = Date.parse(String(obj(detail.manage).modifyDateTime ?? ""));
+          if (!Number.isFinite(modifiedAt)) earlyReasons.push(evidence("listing_freshness_unconfirmed", "Источник не передал дату актуальности.", {}, "encar.detail.manage"));
+          else if (Date.now() - modifiedAt > CATALOG_POLICY.maxListingAgeDays * 86400000) {
+            const reason = evidence("stale_listing", "Объявление старше согласованных 180 дней.", { modifiedAt }, "encar.detail.manage");
+            preliminaryScreening = { ...preliminaryScreening, decision: "rejected", reasonCodes: [...preliminaryScreening.reasonCodes, reason.code], reasonEvidence: [...preliminaryScreening.reasonEvidence, reason] };
+          }
+          const normalized = normalizeListing(enrichedBundle);
+          if (!normalized.engineCc || !normalized.fuelType || normalized.fuelType === "Не указано") earlyReasons.push(evidence("pricing_characteristics_missing", "Нет обязательных характеристик для расчёта стоимости.", { engineCc: normalized.engineCc, fuelType: normalized.fuelType }, "encar.detail.spec/category"));
+          if (earlyReasons.length) preliminaryScreening = isolate(preliminaryScreening, earlyReasons);
+        }
         if (preliminaryScreening.decision !== "approved") {
           const skipped = "skipped_pre_screen";
           const spec = obj(detail.spec);
@@ -409,7 +566,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             runId,
             detail,
             search: currentSearch,
-            integrityWarnings: integrityIssues.filter((issue) => issue.severity === "warning"),
+            integrityWarnings: [...integrityIssues.filter((issue) => issue.severity === "warning"), ...siblingWarnings],
             choiceOptions: [],
             inspectionSummary: {},
             accidentSummary: {},
@@ -434,55 +591,39 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           await sleep(delayMs);
           continue;
         }
+        // Revalidate current detail and identity before reusing recent endpoint results.
+        if (checkpoint.canonicalId !== canonicalId || checkpoint.vehicleNo !== vehicleNo
+          || Date.now() - Date.parse(String(checkpoint.savedAt ?? "")) > 30 * 60_000
+          || !Number.isFinite(Date.parse(String(checkpoint.savedAt ?? "")))) {
+          checkpointData = { canonicalId, vehicleNo, savedAt: new Date().toISOString(), outcomes: {} };
+        }
+        checkpointData = { ...checkpointData, detail, images };
+        await saveCheckpoint();
+        const endpoint = async (name: EncarEndpoint, url: string, id?: string, headers?: Record<string, string>, signal?: AbortSignal) => {
+          const outcomes = obj(checkpointData.outcomes);
+          const cached = outcomes[name] as EndpointOutcome | undefined;
+          if (cached && ["ok", "confirmed_empty", "confirmed_unavailable", "not_found"].includes(cached.state)) return cached;
+          const outcome = await requestEndpoint(agent, name, url, id, headers, signal);
+          checkpointData = { ...checkpointData, outcomes: { ...outcomes, [name]: outcome } };
+          await saveCheckpoint();
+          return outcome;
+        };
         // Encar is the only source. Keep supplemental calls serialized and
         // spaced just like candidate detail requests; do not burst four APIs.
         if (images.length < 5) throw new Error(`incomplete_gallery:${images.length}`);
         await sleep(delayMs);
-        const optionsResult = await requestEndpoint(agent, "options", `https://api.encar.com/v1/readside/vehicles/car/${encodeURIComponent(canonicalId)}/options/choice`, canonicalId, undefined, lockSignal);
+        const optionsResult = await endpoint("options", `https://api.encar.com/v1/readside/vehicles/car/${encodeURIComponent(canonicalId)}/options/choice`, canonicalId, undefined, lockSignal);
         assertEndpointNotBlocked(optionsResult);
-        if (optionsResult.state === "confirmed_empty") {
-          const spec = obj(detail.spec);
-          const isolatedScreening = isolate(preliminaryScreening, [evidence("options_confirmed_empty", "Encar подтвердил отсутствие обязательных опций.", { state: optionsResult.state }, "encar.options")]);
-          const skipped = (endpoint: EncarEndpoint) => ({ endpoint, state: "skipped" as const, reasonCode: `${endpoint}_not_requested_after_options_isolation` });
-          const payload = {
-            runId,
-            detail,
-            search: currentSearch,
-            integrityWarnings: integrityIssues.filter((issue) => issue.severity === "warning"),
-            choiceOptions: [],
-            inspectionSummary: {},
-            accidentSummary: {},
-            rawReports: { inspection: null, diagnosis: null, insurance: null, history: null },
-            identifiers: { advertisedId, canonicalId, vehicleNo },
-            screening: isolatedScreening,
-            endpointStatus: {
-              options: endpointStatus(optionsResult),
-              inspection: endpointStatus(skipped("inspection")),
-              diagnosis: endpointStatus(skipped("diagnosis")),
-              insurance: endpointStatus(skipped("insurance")),
-              history: endpointStatus(skipped("history")),
-            },
-            fetchedAt: new Date().toISOString(),
-          };
-          await complete(db, row, "succeeded", {
-            advertisedId, canonicalId, vehicleNo, reportReady: false,
-            reportState: "not_attempted", screeningDecision: "isolated",
-            reasonEvidence: isolatedScreening.reasonEvidence, reasonCodes: isolatedScreening.reasonCodes, galleryImages: images.length,
-          }, payload, text(spec.fuelName), text(spec.colorName), images);
-          results.push({ sourceListingId: advertisedId, status: "succeeded", canonicalId, screenedOut: "isolated", reasonCodes: isolatedScreening.reasonCodes, optionsState: optionsResult.state, supplementalRequests: 1 });
-          await sleep(delayMs);
-          continue;
-        }
-        if (optionsResult.state !== "ok") throw new EndpointEnrichmentError(optionsResult);
+        if (!["ok", "confirmed_empty", "not_found"].includes(optionsResult.state)) throw new EndpointEnrichmentError(optionsResult);
         await sleep(delayMs);
-        const inspectionResult = await requestEndpoint(agent, "inspection", `https://api.encar.com/v1/readside/inspection/vehicle/${encodeURIComponent(canonicalId)}`, canonicalId, undefined, lockSignal);
+        const inspectionResult = await endpoint("inspection", `https://api.encar.com/v1/readside/inspection/vehicle/${encodeURIComponent(canonicalId)}`, canonicalId, undefined, lockSignal);
         assertEndpointNotBlocked(inspectionResult);
         await sleep(delayMs);
-        const diagnosisResult = await requestEndpoint(agent, "diagnosis", `https://api.encar.com/v1/readside/diagnosis/vehicle/${encodeURIComponent(canonicalId)}`, canonicalId, undefined, lockSignal);
+        const diagnosisResult = await endpoint("diagnosis", `https://api.encar.com/v1/readside/diagnosis/vehicle/${encodeURIComponent(canonicalId)}`, canonicalId, undefined, lockSignal);
         assertEndpointNotBlocked(diagnosisResult);
         if (!["ok", "not_found", "confirmed_unavailable"].includes(diagnosisResult.state)) throw new EndpointEnrichmentError(diagnosisResult);
         await sleep(delayMs);
-        const insuranceResult = await requestEndpoint(agent, "insurance", `https://api.encar.com/v1/readside/record/vehicle/${encodeURIComponent(canonicalId)}/open?vehicleNo=${encodeURIComponent(vehicleNo)}`, canonicalId, undefined, lockSignal);
+        const insuranceResult = await endpoint("insurance", `https://api.encar.com/v1/readside/record/vehicle/${encodeURIComponent(canonicalId)}/open?vehicleNo=${encodeURIComponent(vehicleNo)}`, canonicalId, undefined, lockSignal);
         assertEndpointNotBlocked(insuranceResult);
         await sleep(delayMs);
         let historyResult: EndpointOutcome = {
@@ -521,7 +662,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           }
         }
 
-        if (optionsResult.state !== "ok" && optionsResult.state !== "confirmed_empty") {
+        if (!["ok", "confirmed_empty", "not_found"].includes(optionsResult.state)) {
           throw new EndpointEnrichmentError(optionsResult);
         }
         if ([inspectionResult, insuranceResult].some((result) => !["ok", "not_found", "confirmed_unavailable"].includes(result.state))) {
@@ -548,8 +689,9 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           runId,
           detail,
           search: currentSearch,
-          integrityWarnings: integrityIssues.filter((issue) => issue.severity === "warning"),
+          integrityWarnings: [...integrityIssues.filter((issue) => issue.severity === "warning"), ...siblingWarnings],
           choiceOptions: choiceOptions(optionsPayload),
+          equipment: resolveEquipment(detail, optionsPayload),
           inspectionSummary: inspectionData,
           accidentSummary: accidents,
           rawReports: { inspection, diagnosis, insurance, history },
@@ -588,14 +730,14 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         const unavailable = error instanceof EncarRequestError && [404, 410].includes(error.status);
         const kind = failureClass(message);
         const endpointOutcome = error instanceof EndpointEnrichmentError ? error.outcome : null;
-        const retryExhausted = endpointOutcome ? endpointOutcome.retryable && endpointOutcome.attempts >= maxAttempts : kind === "transient_request";
-        const retryable = !unavailable && !retryExhausted && (endpointOutcome?.retryable ?? isRetryableFailure(message));
+        const temporary = !unavailable && (endpointOutcome?.retryable ?? isRetryableFailure(message));
+        const retryExhausted = temporary && Number(row.attempt_count ?? maxAttempts) >= maxAttempts;
+        const retryable = temporary && !retryExhausted;
         const finalIsolation = endpointOutcome && ["identity_mismatch", "invalid_payload", "http_error"].includes(endpointOutcome.state);
         const stopState = (endpointOutcome && (isEndpointCircuitBreaker(endpointOutcome)
-          || endpointOutcome.state === "transient_error"
           || endpointOutcome.state === "auth_error"))
-          || ["transient_request", "auth_error", "blocked", "rate_limited"].includes(kind);
-        if (stopState) pauseAfterCurrent = true;
+          || ["auth_error", "blocked", "rate_limited"].includes(kind);
+        if (stopState) { pauseAfterCurrent = true; pauseMessage = "Источник или прокси ограничил доступ. Требуется проверка подключения; очередь сохранена."; }
         const reportedError = endpointOutcome?.httpStatus ? `HTTP ${endpointOutcome.httpStatus}` : endpointOutcome?.reasonCode ?? message;
         await complete(db, row, unavailable ? "unavailable" : "failed", {
           advertisedId,
@@ -603,18 +745,29 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           reason: endpointOutcome?.reasonCode ?? message,
           ...(endpointOutcome ? { endpointStatus: endpointStatus(endpointOutcome), reasonCodes: [endpointOutcome.reasonCode] } : {}),
           failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind,
+          checkpoint: checkpointData,
           retryable, retryExhausted,
+          ...(retryable ? { retryAfter: new Date(Date.now() + 5 * 60_000).toISOString(), retryState: "retry_pending" } : {}),
+          networkCause: error instanceof Error && error.cause && typeof error.cause === "object"
+            ? { code: obj(error.cause).code ?? null, name: obj(error.cause).name ?? null } : null,
         }, undefined, undefined, undefined, [], unavailable ? undefined : (endpointOutcome?.reasonCode ?? message));
         results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: reportedError, reasonCode: endpointOutcome?.reasonCode, failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind, retryable });
+      }
+      operationalSamples = appendOperationalFailure(operationalSamples,
+        results.at(-1)?.status === "failed" && isOperationalFailure(String(results.at(-1)?.failureClass ?? "")));
+      // The local loop owns the cross-batch window; standalone workers use the same policy.
+      if (!process.env.CHESTNY_ENRICHMENT_LOCK_TOKEN && shouldPauseForOperationalFailures(operationalSamples)) {
+        pauseAfterCurrent = true;
+        pauseMessage = "Серия сетевых ошибок: не менее 5 из последних 10 карточек. Очередь и частичные данные сохранены.";
       }
       await sleep(delayMs);
     }
     if (pauseAfterCurrent && !preserveRunStatus) {
-      const paused = await db.from("chestny_enrichment_runs").update({ status: "paused", pause_reason: { lastResult: results.at(-1), observedAt: new Date().toISOString() } }).eq("id", runId);
+      const paused = await db.from("chestny_enrichment_runs").update({ status: "paused", pause_reason: { source: "worker_transport", message: pauseMessage || "Выполнение приостановлено владельцем", lastResult: results.at(-1), observedAt: new Date().toISOString() } }).eq("id", runId).in("status", ["approved", "running"]);
       if (paused.error) throw Error(paused.error.message);
     }
     const completed = preserveRunStatus || pauseAfterCurrent ? false : await maybeFinishRun(db);
-    console.log(JSON.stringify({ runId, transport: direct ? "direct" : "proxy", batchSize, retriesScheduled, claimed: rows?.length ?? 0, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
+    console.log(JSON.stringify({ runId, transport: direct ? "direct" : "proxy", requestedJson, scheduledWaitMs, delayMs, elapsedMs: Date.now() - startedAt, batchSize, retriesScheduled, pendingRetries: await pendingRetries(db), reserved: rows?.length ?? 0, claimed: results.length, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
   } finally {
     await agent?.close();
     await rm(activePath, { force: true });

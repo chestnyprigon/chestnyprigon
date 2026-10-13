@@ -1,3 +1,4 @@
+import { resolveEquipment } from "./equipment-resolution";
 import type { EncarBundle, EncarSearchListing, NormalizedVehicle, ScreeningResult } from "./types";
 import { CATALOG_POLICY, evidence, type DecisionEvidence } from "./catalog-policy";
 import { validateQueueIdentity, validateSnapshotAgainstDetail, type IntegrityIssue } from "./integrity";
@@ -56,6 +57,7 @@ export type PublicationInput = {
   options?: unknown;
   expectedVehicle?: Partial<NormalizedVehicle>;
   queueId?: string;
+  allowDocumentedOptionalSkips?: boolean;
 };
 
 /** Re-evaluates the source, never trusts a saved "approved" or overwritten search ID. */
@@ -80,36 +82,6 @@ export function publicationGate(input: PublicationInput) {
   }
   const statuses = input.endpointStatus ?? {};
   const reports = input.rawReports ?? {};
-  const resultStates: Record<string, string> = {};
-  for (const name of ["options", "inspection", "diagnosis", "insurance", "history"] as EncarEndpoint[]) {
-    const stored = statuses[name];
-    let state = typeof stored === "string" ? stored : String(obj(stored).state ?? "not_attempted");
-    const payload = name === "options" ? input.options : reports[name];
-    const provenance = obj(stored);
-    if (screening.decision !== "rejected" && name !== "history" && provenance.requestedCanonicalId !== canonicalId) reasons.push(evidence(`${name}_provenance_unconfirmed`,
-      "Не подтверждён canonical ID, для которого запрашивался этот блок.", { expected: canonicalId, actual: provenance.requestedCanonicalId ?? null }, `endpointStatus.${name}`));
-    if (screening.decision !== "rejected" && name === "insurance" && provenance.requestedVehicleNo !== bundle.detail.vehicleNo) reasons.push(evidence("insurance_vehicle_number_unconfirmed",
-      "Страховой запрос не связан с регистрационным номером исходной карточки.", { expected: bundle.detail.vehicleNo, actual: provenance.requestedVehicleNo ?? null }, "endpointStatus.insurance"));
-    if (payload !== null && payload !== undefined) {
-      const actual = classifyEndpointProbe({ endpoint: name, httpStatus: 200, payload, canonicalId, vehicleNo: bundle.detail.vehicleNo });
-      state = actual.state;
-    } else if (state === "ok") state = "invalid_payload";
-    resultStates[name] = state;
-    const acceptable = name === "options" ? ["ok"] : ["ok", "not_found", "confirmed_unavailable", "confirmed_empty"];
-    // Resume history is supplementary, but its ID can never conflict.
-    if (state === "identity_mismatch" || (screening.decision !== "rejected" && name !== "history" && !acceptable.includes(state))) reasons.push(evidence(`${name}_${state}`,
-      state === "confirmed_empty" ? "Источник подтвердил отсутствие обязательных опций." : "Блок обогащения не получен достоверно; публикация изолирована до автоматического повтора.",
-      { endpoint: name, state, storedStatus: stored ?? null }, `encar.${name}`));
-    if (["not_found", "confirmed_unavailable", "confirmed_empty"].includes(state) && name !== "options") {
-      screening.reasonEvidence.push(evidence(`${name}_${state}`, "Источник подтвердил отсутствие необязательного отчёта; это не отказ.", { endpoint: name, state }, `encar.${name}`));
-    }
-  }
-  const normalized = normalizeListing(bundle);
-  if (!normalized.engineCc || !normalized.fuelType || normalized.fuelType === "Не указано") reasons.push(evidence("pricing_characteristics_missing", "Нет обязательных характеристик для расчёта стоимости.", { engineCc: normalized.engineCc, fuelType: normalized.fuelType }, "encar.detail.spec/category"));
-  if (input.expectedVehicle) for (const [key, actual] of Object.entries(input.expectedVehicle)) {
-    const expected = normalized[key as keyof NormalizedVehicle];
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) reasons.push(evidence("normalized_field_mismatch", "Сохранённая карточка расходится с исходными данными.", { field: key, expected, actual }, "normalized vehicle ↔ Encar payload"));
-  }
   const inspection = obj(reports.inspection);
   const changes = obj(obj(inspection.master).detail).usageChangeTypes ?? inspection.usageChangeTypes;
   const usage = Array.isArray(changes) ? changes.map(value => typeof value === "string" ? value : String(obj(value).title ?? "")).join(" ") : "";
@@ -117,9 +89,47 @@ export function publicationGate(input: PublicationInput) {
     const r = evidence("inspection_usage_excluded", "Инспекционный отчёт подтвердил запрещённое использование.", { usage }, "encar.inspection.usageChangeTypes");
     screening = { ...screening, decision: "rejected", reasonCodes: [...screening.reasonCodes, r.code], reasonEvidence: [...screening.reasonEvidence, r] };
   }
+  const resultStates: Record<string, string> = {};
+  for (const name of ["options", "inspection", "diagnosis", "insurance", "history"] as EncarEndpoint[]) {
+    const stored = statuses[name];
+    let state = typeof stored === "string" ? stored : String(obj(stored).state ?? "not_attempted");
+    const payload = name === "options" ? input.options : reports[name];
+    const provenance = obj(stored);
+    const optionalSkip = input.allowDocumentedOptionalSkips === true && !CATALOG_POLICY.reportsRequired
+      && state === "skipped" && provenance.reasonCode === `${name}_not_requested_after_options_isolation`;
+    if (screening.decision !== "rejected" && name !== "history" && !optionalSkip && provenance.requestedCanonicalId !== canonicalId) reasons.push(evidence(`${name}_provenance_unconfirmed`,
+      "Не подтверждён canonical ID, для которого запрашивался этот блок.", { expected: canonicalId, actual: provenance.requestedCanonicalId ?? null }, `endpointStatus.${name}`));
+    if (screening.decision !== "rejected" && name === "insurance" && !optionalSkip && provenance.requestedVehicleNo !== bundle.detail.vehicleNo) reasons.push(evidence("insurance_vehicle_number_unconfirmed",
+      "Страховой запрос не связан с регистрационным номером исходной карточки.", { expected: bundle.detail.vehicleNo, actual: provenance.requestedVehicleNo ?? null }, "endpointStatus.insurance"));
+    if (payload !== null && payload !== undefined) {
+      const actual = classifyEndpointProbe({ endpoint: name, httpStatus: 200, payload, canonicalId, vehicleNo: bundle.detail.vehicleNo });
+      state = actual.state;
+    } else if (state === "ok") state = "invalid_payload";
+    resultStates[name] = state;
+    const equipment = name === "options" ? resolveEquipment(bundle.detail, input.options) : null;
+    const acceptable = name === "options" ? (equipment?.confirmed ? ["ok", "confirmed_empty", "not_found"] : ["ok"])
+      : ["ok", "not_found", "confirmed_unavailable", "confirmed_empty", ...(optionalSkip ? ["skipped"] : [])];
+    // Resume history is supplementary, but its ID can never conflict.
+    if (state === "identity_mismatch" || (screening.decision !== "rejected" && name !== "history" && !acceptable.includes(state))) reasons.push(evidence(`${name}_${state}`,
+      state === "confirmed_empty" ? "Дополнительные опции пусты, стандартное оборудование не подтверждено." : "Блок обогащения не получен достоверно; публикация изолирована до автоматического повтора.",
+      { endpoint: name, state, storedStatus: stored ?? null }, `encar.${name}`));
+    if (optionalSkip) screening.reasonEvidence.push(evidence(`${name}_optional_report_not_requested`, "Отчёт не запрашивался из-за прежнего gate комплектации; отсутствие необязательного отчёта не блокирует допуск.", { endpoint: name, reasonCode: provenance.reasonCode }, `staging.endpointStatus.${name}`));
+    if (["not_found", "confirmed_unavailable", "confirmed_empty"].includes(state) && name !== "options") {
+      screening.reasonEvidence.push(evidence(`${name}_${state}`, "Источник подтвердил отсутствие необязательного отчёта; это не отказ.", { endpoint: name, state }, `encar.${name}`));
+    }
+  }
+  if (screening.decision !== "rejected" && !resolveEquipment(bundle.detail, input.options).confirmed) reasons.push(evidence("equipment_unconfirmed", "Источник не подтвердил стандартное оборудование или дополнительные опции.", {}, "encar.detail.options.standard / encar.options.choice"));
+  const normalized = normalizeListing(bundle);
+  if (!normalized.engineCc || !normalized.fuelType || normalized.fuelType === "Не указано") reasons.push(evidence("pricing_characteristics_missing", "Нет обязательных характеристик для расчёта стоимости.", { engineCc: normalized.engineCc, fuelType: normalized.fuelType }, "encar.detail.spec/category"));
+  if (input.expectedVehicle) for (const [key, actual] of Object.entries(input.expectedVehicle)) {
+    const expected = normalized[key as keyof NormalizedVehicle];
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) reasons.push(evidence("normalized_field_mismatch", "Сохранённая карточка расходится с исходными данными.", { field: key, expected, actual }, "normalized vehicle ↔ Encar payload"));
+  }
   if (reasons.length) screening = isolate(screening, reasons);
   const reportStatus = ["inspection", "insurance"].every(name => resultStates[name] === "ok") ? "ready" :
-    ["inspection", "insurance"].every(name => ["ok", "not_found", "confirmed_unavailable"].includes(resultStates[name])) ? "unavailable" : null;
+    ["inspection", "insurance"].every(name => ["ok", "not_found", "confirmed_unavailable"].includes(resultStates[name])
+      || (input.allowDocumentedOptionalSkips === true && resultStates[name] === "skipped"
+        && obj(statuses[name]).reasonCode === `${name}_not_requested_after_options_isolation`)) ? "unavailable" : null;
   return { screening, normalized, reportStatus, proof: { validated: screening.decision === "approved", version: CATALOG_POLICY.version,
     advertisedId: String(bundle.search.Id), canonicalId, checkedAt: new Date().toISOString(), endpointStates: resultStates,
     normalized: { manufacturer: normalized.manufacturer, model: normalized.model, modelYear: normalized.modelYear, mileageKm: normalized.mileageKm,

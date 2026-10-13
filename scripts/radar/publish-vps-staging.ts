@@ -1,3 +1,4 @@
+import { resolveEquipment } from "../encar/equipment-resolution";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
@@ -14,9 +15,10 @@ import type { EncarBundle, EncarSearchListing, PilotItem } from "../encar/types"
 
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
-const limit = Math.min(1_500, Math.max(1, Number(process.argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1] ?? 1_000)));
+const limit = Math.min(5_000, Math.max(1, Number(process.argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1] ?? 5_000)));
 const offsetStart = Math.max(0, Number(process.argv.find((arg) => arg.startsWith("--offset="))?.split("=")[1] ?? 0));
 const sourceIdsArgument = process.argv.find((arg) => arg.startsWith("--source-ids="))?.slice("--source-ids=".length);
+const allowPausedOwnerScreenedSet = process.argv.includes("--allow-paused-owner-screened-set");
 const runId = process.env.CHESTNY_ENRICHMENT_RUN_ID ?? "vps-staging";
 
 function required(name: string) {
@@ -44,23 +46,86 @@ function searchFromSnapshot(sourceId: string, snapshot: Record<string, unknown>)
   };
 }
 
+type PublicationReport = {
+  status?: string;
+  runId?: string;
+  ready?: Array<{ sourceListingId: string }>;
+  readyForPublication?: number;
+  screeningReadyForPublication?: number;
+  identityConflicts?: { sourceListingIds?: string[]; count?: number };
+};
+
 async function main() {
-  const selectedIds = sourceIdsArgument
-    ? [...new Set(sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean))]
-    : (JSON.parse(await fs.readFile(path.resolve(process.cwd(), "output/chestny-vps-publication-ready.json"), "utf8")) as {
-        ready: Array<{ sourceListingId: string }>;
-      }).ready.slice(offsetStart, offsetStart + limit).map((item) => item.sourceListingId);
+  let selectedIds: string[];
+  let publicationInput: PublicationReport | null = null;
+  if (sourceIdsArgument !== undefined) {
+    selectedIds = [...new Set(sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean))];
+  } else {
+    const outputPath = process.env.CHESTNY_PUBLICATION_OUTPUT_PATH?.trim() || "output/chestny-vps-publication-ready.json";
+    publicationInput = JSON.parse(await fs.readFile(path.resolve(process.cwd(), outputPath), "utf8")) as PublicationReport;
+    if (runId !== "vps-staging" && publicationInput?.runId !== runId) {
+      throw new Error(`Publication input belongs to run ${publicationInput?.runId ?? "unknown"}, expected ${runId}`);
+    }
+    selectedIds = (publicationInput?.ready ?? []).slice(offsetStart, offsetStart + limit).map((item) => item.sourceListingId);
+  }
+  if (allowPausedOwnerScreenedSet && (sourceIdsArgument !== undefined || !publicationInput
+    || offsetStart !== 0 || selectedIds.length !== publicationInput.ready?.length)) {
+    throw new Error("Paused-run publication requires the complete, unmodified ready set from its run-specific screening report");
+  }
   if (sourceIdsArgument && selectedIds.length !== sourceIdsArgument.split(",").map((value) => value.trim()).filter(Boolean).length) {
     throw new Error("Publication input contains duplicate --source-ids");
   }
-  if (!selectedIds.length) throw new Error("No publication-ready staging IDs");
+  if (!selectedIds.length) {
+    if (sourceIdsArgument !== undefined) throw new Error("Explicit publication input contains no source IDs");
+    console.log(JSON.stringify({ runId, selected: 0, unique: 0, acceptedCount: 0, errorCount: 0, published: false, skipped: "no_approved_candidates" }));
+    return;
+  }
 
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const launch = await client.from("chestny_catalog_launches").select("id,status,rules").eq("name", "local-catalog-1000-20261007").single();
-  if (launch.error) throw Error(launch.error.message);
-  if (!["prepared", "running"].includes(launch.data.status)) throw Error("Local catalogue launch is not active");
+  if (runId === "vps-staging") throw new Error("Specify CHESTNY_ENRICHMENT_RUN_ID for a single audited run");
+  const run = await client.from("chestny_enrichment_runs").select("status,pause_reason,rules").eq("id", runId).single();
+  if (run.error) throw new Error(run.error.message);
+  const catalogLaunchId = run.data.rules?.catalogLaunchId ?? null;
+  if (!catalogLaunchId && run.data.status !== "completed") {
+    const ownerPausedRun = run.data.status === "paused" && record(run.data.pause_reason).source === "owner_requested";
+    if (!allowPausedOwnerScreenedSet || !ownerPausedRun || publicationInput?.status !== "completed"
+      || publicationInput.runId !== runId || publicationInput.readyForPublication !== selectedIds.length
+      || publicationInput.screeningReadyForPublication !== 303
+      || publicationInput.identityConflicts?.count !== 7
+      || publicationInput.identityConflicts.sourceListingIds?.length !== 7) {
+      throw new Error("Publication requires a completed run, or the exact owner-paused screened set with explicit authorization");
+    }
+    const [workerLock, leased, task] = await Promise.all([
+      client.from("chestny_enrichment_worker_lock").select("run_id,expires_at")
+        .eq("lock_name", "chestny-catalog-enrichment").maybeSingle(),
+      client.from("chestny_enrichment_queue").select("id", { count: "exact", head: true })
+        .eq("run_id", runId).eq("status", "leased"),
+      client.from("control_center_tasks").select("state")
+        .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle(),
+    ]);
+    if (workerLock.error) throw new Error(`Could not verify worker lock: ${workerLock.error.message}`);
+    if (leased.error) throw new Error(`Could not verify in-flight queue items: ${leased.error.message}`);
+    if (task.error) throw new Error(`Could not verify paused catalog task: ${task.error.message}`);
+    if (workerLock.data && Date.parse(workerLock.data.expires_at) > Date.now()) throw new Error("Publication blocked while an enrichment worker holds the global lock");
+    if ((leased.count ?? 0) > 0) throw new Error("Publication blocked while queue items are leased");
+    if (!task.data || task.data.state !== "paused") throw new Error("Publication requires the linked Control Center task to remain paused");
+    const conflictIds = publicationInput.identityConflicts.sourceListingIds!;
+    const { data: conflictDecisions, error: conflictError } = await client.from("chestny_catalog_decisions")
+      .select("source_listing_id,run_id,decision,evidence").in("source_listing_id", conflictIds);
+    if (conflictError) throw new Error(`Could not verify isolated identity conflicts: ${conflictError.message}`);
+    if (conflictDecisions?.length !== conflictIds.length || conflictDecisions.some((decision) =>
+      decision.run_id !== runId || decision.decision !== "isolated"
+      || !Array.isArray(decision.evidence) || !decision.evidence.some((item: Record<string, unknown>) => item.code === "identity_source_identifier_collision"))) {
+      throw new Error("Publication blocked: every excluded identity conflict must have a persisted isolated decision");
+    }
+  }
+  if (catalogLaunchId) {
+    const launch = await client.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
+    if (launch.error) throw new Error(launch.error.message);
+    if (!["prepared", "running"].includes(launch.data.status)) throw new Error("Catalogue launch is not active");
+  }
   const rows: Array<Record<string, unknown>> = [];
   // Staging rows contain full Encar payloads; small reads avoid statement
   // timeouts when publishing larger audited runs.
@@ -121,7 +186,29 @@ async function main() {
   if (uniqueItems.length !== items.length) {
     throw new Error(`Publication input contains duplicate canonical IDs: selected=${items.length}, unique=${uniqueItems.length}`);
   }
-  const canonicalIds = uniqueItems.map((item) => String(item.normalized!.sourceListingId));
+  let brandTargets = new Map<string, number>(
+    (Array.isArray(run.data.rules?.brandQuotas) ? run.data.rules.brandQuotas : [])
+      .filter((quota: Record<string, unknown>) => typeof quota.manufacturer === "string" && Number.isInteger(quota.publicationTarget))
+      .map((quota: Record<string, unknown>) => [String(quota.manufacturer), Number(quota.publicationTarget)]),
+  );
+  if (catalogLaunchId) {
+    const { data: quotaRows, error: quotaError } = await client.from("chestny_catalog_brand_search_status")
+      .select("manufacturer,remaining_quota").eq("launch_id", catalogLaunchId);
+    if (quotaError) throw new Error(`Could not load remaining publication quotas: ${quotaError.message}`);
+    brandTargets = new Map((quotaRows ?? []).map((quota) => [String(quota.manufacturer), Number(quota.remaining_quota)]));
+  }
+  const publishedByBrand: Record<string, number> = {};
+  let excludedByBrandQuota = 0;
+  const quotaCappedItems = brandTargets.size ? uniqueItems.filter((item) => {
+    const brand = String(item.normalized!.manufacturer);
+    const target = brandTargets.get(brand);
+    if (target === undefined) throw new Error(`No approved publication quota for ${brand}`);
+    const current = publishedByBrand[brand] ?? 0;
+    if (current >= target) { excludedByBrandQuota += 1; return false; }
+    publishedByBrand[brand] = current + 1;
+    return true;
+  }) : uniqueItems;
+  const canonicalIds = quotaCappedItems.map((item) => String(item.normalized!.sourceListingId));
   for (let offset = 0; offset < canonicalIds.length; offset += 200) {
     const chunk = canonicalIds.slice(offset, offset + 200);
     const [vehicles, identifiers] = await Promise.all([
@@ -135,13 +222,13 @@ async function main() {
     }
   }
   const totals = { fetchedCount: 0, acceptedCount: 0, rejectedCount: 0, errorCount: 0, reportRows: 0, batches: 0 };
-  for (let offset = 0; offset < uniqueItems.length; offset += 100) {
-    const batch = uniqueItems.slice(offset, offset + 100);
+  for (let offset = 0; offset < quotaCappedItems.length; offset += 100) {
+    const batch = quotaCappedItems.slice(offset, offset + 100);
     // Encar's advertised listing ID can differ from the canonical vehicle ID
     // returned in the detail payload. Persistence uses the canonical ID as the
     // vehicle source key, so use that key when resolving stored vehicles.
     const batchIds = batch.map((item) => String(item.normalized!.sourceListingId));
-    const result = await persistPilot(batch, true, { source: "chestny-local-staging", runId, catalogLaunchId: launch.data.id, requested: batch.length, offset, publish: true });
+    const result = await persistPilot(batch, true, { source: "chestny-local-staging", runId, catalogLaunchId: catalogLaunchId ?? "", requested: batch.length, offset, publish: true });
     totals.fetchedCount += result.fetchedCount;
     totals.acceptedCount += result.publishedCount;
     totals.rejectedCount += result.rejectedCount;
@@ -160,7 +247,7 @@ async function main() {
       return [{
         vehicle_id: vehicleId,
         canonical_vehicle_id: String(detail.vehicleId ?? sourceId),
-        options: payload.choiceOptions ?? [],
+        options: resolveEquipment(detail, payload.choiceOptions).display,
         inspection_summary: payload.inspectionSummary ?? {},
         accident_summary: accidentSummary(record(payload.rawReports).insurance, record(payload.rawReports).history),
         report_status: screenStaging(row).reportStatus,
@@ -175,7 +262,8 @@ async function main() {
     totals.batches += 1;
     console.log(JSON.stringify({ batch: totals.batches, offset, requested: batch.length, published: result.acceptedCount }));
   }
-  console.log(JSON.stringify({ ...totals, selected: selectedIds.length, unique: uniqueItems.length, published: true }, null, 2));
+  console.log(JSON.stringify({ ...totals, selected: selectedIds.length, unique: uniqueItems.length,
+    excludedByBrandQuota, publishedByBrand, published: true }, null, 2));
 }
 
 main().catch((error) => {

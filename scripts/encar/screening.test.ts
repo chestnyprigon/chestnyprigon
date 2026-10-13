@@ -62,11 +62,20 @@ test("rejects taxi and commercial keywords", () => {
   assert.equal(commercial.decision, "rejected");
 });
 
-test("isolates incomplete listings with explicit reasons but accepts Encar technical copies", () => {
+test("rejects listings with fewer than five distinct photos and accepts Encar technical copies", () => {
   const incomplete = screenListing(bundle({ photos: 2 }));
-  assert.equal(incomplete.decision, "isolated");
+  assert.equal(incomplete.decision, "rejected");
   assert.deepEqual(incomplete.reasonCodes, ["insufficient_photos"]);
   assert.equal(screenListing(bundle({ serviceCopyCar: "DUPLICATION" })).decision, "approved");
+});
+
+test("counts distinct photos instead of duplicate photo records", () => {
+  const listing = bundle();
+  listing.detail.photos = Array.from({ length: 8 }, () => ({ path: "/same-photo.jpg" }));
+  const result = screenListing(listing);
+  assert.equal(result.decision, "rejected");
+  assert.deepEqual(result.reasonCodes, ["insufficient_photos"]);
+  assert.equal(result.reasonEvidence[0]?.values.photoCount, 1);
 });
 
 test("does not reject seller financing text or a negated usage history", () => {

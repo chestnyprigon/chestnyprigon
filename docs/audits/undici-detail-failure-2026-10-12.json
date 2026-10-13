@@ -1,0 +1,85 @@
+{
+  "id": "87fc277b-af6e-4e99-b6c9-0caf9dc77c01",
+  "run_id": "26013f2d-c123-430b-987b-d3d370f40899",
+  "source_listing_id": "41623236",
+  "source_url": "https://www.encar.com/dc/dc_cardetailview.do?carid=41623236",
+  "candidate_snapshot": {
+    "Id": "41623236",
+    "Year": 202506,
+    "Badge": "M5 세단",
+    "Model": "M5 (G90)",
+    "Photo": "/carpicture02/pic4162/41623236_",
+    "Price": 15450,
+    "Trust": [
+      "Warranty"
+    ],
+    "model": "M5 (G90)",
+    "EvType": "플러그인 하이브리드",
+    "Photos": [
+      {
+        "type": "001",
+        "location": "/carpicture02/pic4162/41623236_001.jpg",
+        "ordering": 1,
+        "updatedDate": "2026-03-17T08:29:33Z"
+      },
+      {
+        "type": "003",
+        "location": "/carpicture02/pic4162/41623236_003.jpg",
+        "ordering": 3,
+        "updatedDate": "2026-03-17T08:29:33Z"
+      },
+      {
+        "type": "004",
+        "location": "/carpicture02/pic4162/41623236_004.jpg",
+        "ordering": 4,
+        "updatedDate": "2026-03-17T08:29:33Z"
+      },
+      {
+        "type": "007",
+        "location": "/carpicture02/pic4162/41623236_007.jpg",
+        "ordering": 7,
+        "updatedDate": "2026-03-17T08:29:33Z"
+      }
+    ],
+    "BuyType": [],
+    "Mileage": 5370,
+    "encarId": "41623236",
+    "FormYear": "2025",
+    "FuelType": "가솔린+전기",
+    "SellType": "일반",
+    "priceKrw": 154500000,
+    "Condition": [
+      "Inspection",
+      "Record",
+      "Resume"
+    ],
+    "GreenType": "Y",
+    "mileageKm": 5370,
+    "modelYear": 2025,
+    "Separation": [
+      "B"
+    ],
+    "ServiceMark": [
+      "EncarDiagnosisP1"
+    ],
+    "Manufacturer": "BMW",
+    "manufacturer": "BMW",
+    "ServiceCopyCar": "ORIGINAL",
+    "OfficeCityState": "경남"
+  },
+  "status": "failed",
+  "attempt_count": 2,
+  "lease_until": null,
+  "last_attempt_at": "2026-10-11T18:56:56.479115+00:00",
+  "last_error": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41623236&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+  "result": {
+    "reason": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41623236&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+    "retryable": false,
+    "advertisedId": "41623236",
+    "failureClass": "auth_error",
+    "retryExhausted": false
+  },
+  "completed_at": null,
+  "created_at": "2026-10-11T18:49:35.575645+00:00",
+  "updated_at": "2026-10-11T18:56:56.899583+00:00"
+}

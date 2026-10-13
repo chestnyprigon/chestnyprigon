@@ -1,0 +1,99 @@
+{
+  "id": "cb6005b1-38c7-4fb9-b11d-66962de8fec4",
+  "run_id": "26013f2d-c123-430b-987b-d3d370f40899",
+  "source_listing_id": "41438766",
+  "source_url": "https://www.encar.com/dc/dc_cardetailview.do?carid=41438766",
+  "candidate_snapshot": {
+    "Id": "41438766",
+    "Year": 202504,
+    "Badge": "M850i xDrive 그란쿠페",
+    "Model": "8시리즈 (G15)",
+    "Photo": "/carpicture03/pic4143/41432028_",
+    "Price": 10600,
+    "Trust": [
+      "HomeService"
+    ],
+    "model": "8시리즈 (G15)",
+    "Photos": [
+      {
+        "type": "001",
+        "location": "/carpicture03/pic4143/41432028_001.jpg",
+        "ordering": 1,
+        "updatedDate": "2026-01-30T05:40:40Z"
+      },
+      {
+        "type": "003",
+        "location": "/carpicture03/pic4143/41432028_003.jpg",
+        "ordering": 3,
+        "updatedDate": "2026-01-30T05:40:40Z"
+      },
+      {
+        "type": "004",
+        "location": "/carpicture03/pic4143/41432028_004.jpg",
+        "ordering": 4,
+        "updatedDate": "2026-01-30T05:40:40Z"
+      },
+      {
+        "type": "007",
+        "location": "/carpicture03/pic4143/41432028_007.jpg",
+        "ordering": 7,
+        "updatedDate": "2026-01-30T05:40:40Z"
+      }
+    ],
+    "BuyType": [
+      "Delivery"
+    ],
+    "Mileage": 8248,
+    "encarId": "41438766",
+    "FormYear": "2025",
+    "FuelType": "가솔린",
+    "SellType": "일반",
+    "priceKrw": 106000000,
+    "Condition": [
+      "Inspection",
+      "Record"
+    ],
+    "GreenType": "N",
+    "mileageKm": 8248,
+    "modelYear": 2025,
+    "Separation": [
+      "B"
+    ],
+    "ServiceMark": [
+      "EncarMeetgo",
+      "EncarDiagnosisP1"
+    ],
+    "Manufacturer": "BMW",
+    "manufacturer": "BMW",
+    "ServiceCopyCar": "DUPLICATION",
+    "OfficeCityState": "부산",
+    "HomeServiceVerification": "Y"
+  },
+  "status": "failed",
+  "attempt_count": 1,
+  "lease_until": null,
+  "last_attempt_at": "2026-10-11T18:50:28.197662+00:00",
+  "last_error": "diagnosis_transient_error",
+  "result": {
+    "reason": "diagnosis_transient_error",
+    "retryable": false,
+    "reasonCodes": [
+      "diagnosis_transient_error"
+    ],
+    "advertisedId": "41438766",
+    "failureClass": "endpoint_transient_error",
+    "endpointStatus": {
+      "state": "transient_error",
+      "attempts": 3,
+      "retryable": true,
+      "httpStatus": null,
+      "observedAt": "2026-10-11T18:51:29.709Z",
+      "reasonCode": "diagnosis_transient_error",
+      "requestedCanonicalId": "41432028"
+    },
+    "retryExhausted": true
+  },
+  "completed_at": null,
+  "created_at": "2026-10-11T18:49:35.575645+00:00",
+  "updated_at": "2026-10-11T18:51:29.801901+00:00"
+}

@@ -1,0 +1,89 @@
+{
+  "id": "e4d47b12-e384-43b1-861a-9b872ccbe9c6",
+  "run_id": "26013f2d-c123-430b-987b-d3d370f40899",
+  "source_listing_id": "41509131",
+  "source_url": "https://www.encar.com/dc/dc_cardetailview.do?carid=41509131",
+  "candidate_snapshot": {
+    "Id": "41509131",
+    "Year": 202004,
+    "Badge": "CLS450 4MATIC AMG Line",
+    "Model": "CLS-클래스 C257",
+    "Photo": "/carpicture10/pic4150/41505866_",
+    "Price": 4050,
+    "Trust": [
+      "ExtendWarranty",
+      "HomeService"
+    ],
+    "model": "CLS-클래스 C257",
+    "Photos": [
+      {
+        "type": "001",
+        "location": "/carpicture10/pic4150/41505866_001.jpg",
+        "ordering": 1,
+        "updatedDate": "2026-02-12T02:17:40Z"
+      },
+      {
+        "type": "003",
+        "location": "/carpicture10/pic4150/41505866_003.jpg",
+        "ordering": 3,
+        "updatedDate": "2026-02-12T02:17:40Z"
+      },
+      {
+        "type": "004",
+        "location": "/carpicture10/pic4150/41505866_004.jpg",
+        "ordering": 4,
+        "updatedDate": "2026-02-12T02:17:40Z"
+      },
+      {
+        "type": "007",
+        "location": "/carpicture10/pic4150/41505866_007.jpg",
+        "ordering": 7,
+        "updatedDate": "2026-02-12T02:17:40Z"
+      }
+    ],
+    "BuyType": [
+      "Delivery"
+    ],
+    "Mileage": 89738,
+    "encarId": "41509131",
+    "FormYear": "2020",
+    "FuelType": "가솔린",
+    "SellType": "일반",
+    "priceKrw": 40500000,
+    "Condition": [
+      "Inspection",
+      "Record",
+      "Resume"
+    ],
+    "GreenType": "N",
+    "mileageKm": 89738,
+    "modelYear": 2020,
+    "Separation": [
+      "B"
+    ],
+    "ServiceMark": [
+      "EncarMeetgo",
+      "EncarDiagnosisP1"
+    ],
+    "Manufacturer": "벤츠",
+    "manufacturer": "벤츠",
+    "ServiceCopyCar": "DUPLICATION",
+    "OfficeCityState": "서울",
+    "HomeServiceVerification": "Y"
+  },
+  "status": "failed",
+  "attempt_count": 1,
+  "lease_until": null,
+  "last_attempt_at": "2026-10-11T18:55:34.335671+00:00",
+  "last_error": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41509131&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+  "result": {
+    "reason": "HTTP 407 for https://api.encar.com/v1/readside/vehicles?vehicleIds=41509131&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS",
+    "retryable": false,
+    "advertisedId": "41509131",
+    "failureClass": "auth_error",
+    "retryExhausted": false
+  },
+  "completed_at": null,
+  "created_at": "2026-10-11T18:49:35.575645+00:00",
+  "updated_at": "2026-10-11T18:55:34.768418+00:00"
+}

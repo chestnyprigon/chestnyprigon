@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { readTelegramBotToken } from "./telegram-keychain";
+import { ControlTaskRepository } from "../control-center/task-repository";
+import { ControlTaskService } from "../control-center/task-service";
+import { ControlTaskCoordinator } from "../control-center/coordinator";
+import { ModuleRegistry } from "../control-center/registry";
+import { createChestnyPrigonRuntime } from "../control-center/modules/chestny-prigon-runtime";
 
 config({ path: ".env.local", quiet: true });
 
@@ -20,6 +25,7 @@ const botToken = readTelegramBotToken();
 const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
 const stateDir = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const activeRunFile = join(stateDir, "active-run");
+const activeWaveSizeFile = join(stateDir, "active-wave-size");
 
 type Command = {
   id: string;
@@ -39,6 +45,42 @@ async function sendTelegram(chatId: number, text: string) {
   if (!response.ok) throw new Error(`Telegram sendMessage returned HTTP ${response.status}`);
 }
 
+async function publicationPolicy(runId: string) {
+  const { data: matchedGoal, error } = await db.from("control_center_tasks").select("parameters")
+    .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
+  if (error) throw new Error(`Could not read publication policy for run ${runId}: ${error.message}`);
+  let goal = matchedGoal;
+  if (!goal) {
+    const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("rules").eq("id", runId).maybeSingle();
+    if (runError) throw new Error(`Could not read catalog launch for run ${runId}: ${runError.message}`);
+    const launchId = String(run?.rules?.catalogLaunchId ?? "");
+    if (launchId) {
+      const { data, error: goalError } = await db.from("control_center_tasks").select("parameters")
+        .eq("module_id", "chestny-prigon.catalog").contains("parameters", { launchId })
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+      if (goalError) throw new Error(`Could not read catalog launch publication policy: ${goalError.message}`);
+      goal = data;
+    }
+  }
+  const parameters = (goal?.parameters ?? {}) as Record<string, unknown>;
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "whole_run") {
+    return "Цель разрешает пакетную публикацию только допущенных screening карточек после завершения волны.";
+  }
+  return "Автопубликация цели выключена; карточки останутся в каталоге кандидатов.";
+}
+
+function publicationReport(result: Record<string, unknown>) {
+  const selected = Number(result.selected ?? 0);
+  const accepted = Number(result.acceptedCount ?? 0);
+  const errors = Number(result.errorCount ?? 0);
+  const runId = String(result.runId ?? "текущей волны");
+  if (result.skipped === "no_approved_candidates" || (selected === 0 && accepted === 0 && errors === 0)) {
+    return `Пакетная публикация завершена для run ${runId}: screening не допустил карточек, опубликовано 0.`;
+  }
+  return `Пакетная публикация run ${runId}: проверено ${selected}, опубликовано ${accepted}, ошибок публикации ${errors}.`;
+}
+
 async function setRunStatus(runId: string, status: string, allowed: string[]) {
   const { data, error } = await db.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
   if (error) throw new Error(`Cannot read run: ${error.message}`);
@@ -53,10 +95,29 @@ async function setRunStatus(runId: string, status: string, allowed: string[]) {
 }
 
 async function startWorker(command: Command) {
+  if (!Number.isInteger(command.max_items) || command.max_items < 1 || command.max_items > 500) {
+    throw new Error(`Invalid worker wave size ${command.max_items}; expected 1–500`);
+  }
   const existing = await readFile(activeRunFile, "utf8").catch(() => "");
-  if (existing.trim() && existing.trim() !== command.run_id) throw new Error(`Another run ${existing.trim()} is already marked active`);
+  const existingRunId = existing.trim();
+  if (existingRunId && existingRunId !== command.run_id) {
+    const { data: markedRun, error } = await db.from("chestny_enrichment_runs").select("status").eq("id", existingRunId).maybeSingle();
+    if (error) throw new Error(`Could not inspect previously marked run ${existingRunId}: ${error.message}`);
+    if (markedRun && ["approved", "running"].includes(markedRun.status)) {
+      throw new Error(`Another run ${existingRunId} is still ${markedRun.status}; refusing to start a second worker`);
+    }
+  }
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
-  if (!existing.trim()) await writeFile(activeRunFile, command.run_id, { mode: 0o600, flag: "wx" });
+  const modeRun = await db.from("chestny_enrichment_runs").select("rules").eq("id", command.run_id).single();
+  if (modeRun.error) throw new Error(`Could not inspect worker mode: ${modeRun.error.message}`);
+  if (modeRun.data.rules?.type === "saved_queue_remainder") {
+    await writeFile(join(stateDir, "active-mode"), "saved_queue_until_complete", { mode: 0o600 });
+  } else if (modeRun.data.rules?.type !== "targeted_report_refresh") {
+    await unlink(join(stateDir, "active-mode")).catch(() => undefined);
+  }
+  if (existingRunId && existingRunId !== command.run_id) await writeFile(activeRunFile, command.run_id, { mode: 0o600 });
+  else if (!existingRunId) await writeFile(activeRunFile, command.run_id, { mode: 0o600, flag: "wx" });
+  await writeFile(activeWaveSizeFile, String(command.max_items), { mode: 0o600 });
   try {
     const uid = process.getuid?.();
     if (uid === undefined) throw new Error("Could not determine macOS GUI user id");
@@ -64,15 +125,16 @@ async function startWorker(command: Command) {
     if (kick.status !== 0) throw new Error(`Could not start worker LaunchAgent (exit ${kick.status ?? "unknown"})`);
   } catch (error) {
     if (!existing.trim()) await unlink(activeRunFile).catch(() => undefined);
+    await unlink(activeWaveSizeFile).catch(() => undefined);
     throw error;
   }
 }
 
-async function searchNextWave() {
+async function searchNextWave(launchId?: string) {
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--pilot-candidates=50"], {
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, ...(launchId ? { CHESTNY_CATALOG_LAUNCH_ID: launchId } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -93,20 +155,55 @@ async function searchNextWave() {
 }
 
 async function startPreparedRun(command: Command) {
-  await setRunStatus(command.run_id, "running", ["approved"]);
+  const { data: current, error } = await db.from("chestny_enrichment_runs").select("status").eq("id", command.run_id).single();
+  if (error) throw new Error(`Cannot read run before worker start: ${error.message}`);
+  const transitioned = current.status === "approved";
+  if (transitioned) await setRunStatus(command.run_id, "running", ["approved"]);
+  else if (current.status !== "running") throw new Error(`Run ${command.run_id} has status ${current.status}; worker can start only from approved or running`);
   try {
     await startWorker(command);
   } catch (error) {
     const marker = await readFile(activeRunFile, "utf8").catch(() => "");
     if (marker.trim() === command.run_id) await unlink(activeRunFile).catch(() => undefined);
-    await setRunStatus(command.run_id, "approved", ["running"]).catch(() => undefined);
+    if (transitioned) await setRunStatus(command.run_id, "approved", ["running"]).catch(() => undefined);
     throw error;
   }
 }
 
+async function startInitialWave(task: { id: string; parameters: Record<string, unknown> }) {
+  const launchId = String(task.parameters.launchId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(launchId)) throw new Error("Pilot task has an invalid catalog launch id");
+  await sendTelegram(Number(ownerId), "Пилотная цель принята. Начинаю последовательный поиск по квотам; прежний paused run и его очередь не меняю. После поиска запущу обогащение и screening. Публикация выключена.").catch(() => undefined);
+  const search = await searchNextWave(launchId);
+  if (!search.runId) {
+    const summary = "Поиск завершён: новых кандидатов для пилотной волны не найдено. Публикация не выполнялась.";
+    await sendTelegram(Number(ownerId), summary).catch(() => undefined);
+    return { runId: null, queued: 0, summary };
+  }
+  const { count, error } = await db.from("chestny_enrichment_queue")
+    .select("id", { count: "exact", head: true }).eq("run_id", search.runId).in("status", ["queued", "leased"]);
+  if (error) throw new Error(`Could not count pilot candidates: ${error.message}`);
+  const queued = count ?? 0;
+  if (!queued) {
+    const { data: discoveredRun, error: runError } = await db.from("chestny_enrichment_runs").select("status").eq("id", search.runId).single();
+    if (runError) throw new Error(`Could not inspect the discovered pilot run: ${runError.message}`);
+    if (discoveredRun.status === "approved") {
+      await setRunStatus(search.runId, "completed", ["approved"]);
+      const summary = "Поиск завершён: новых кандидатов для пилотной волны не найдено. Offset и статусы марок сохранены; публикация не выполнялась.";
+      await sendTelegram(Number(ownerId), summary).catch(() => undefined);
+      return { runId: null, queued: 0, summary };
+    }
+    if (discoveredRun.status !== "running") throw new Error(`Discovered pilot run has unexpected status ${discoveredRun.status}`);
+  }
+  await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 50 });
+  await sendTelegram(Number(ownerId), `Пилот запущен: поиск нашёл ${queued} кандидатов; начались обогащение и screening. Публикация выключена.`).catch(() => undefined);
+  return { runId: search.runId, queued,
+    summary: `Пилотный поиск завершён: ${queued} кандидатов в run ${search.runId}. Worker запущен; далее обогащение и screening. Публикация выключена.` };
+}
+
 async function processCommand(command: Command) {
   if (String(command.telegram_user_id) !== ownerId) throw new Error("Command owner does not match the configured Telegram owner");
-  if (command.max_items < 1 || command.max_items > 50) throw new Error("Command exceeds the approved 50-item wave limit");
+  if (command.max_items < 1 || command.max_items > 500) throw new Error("Command exceeds the approved 500-item wave maximum");
 
   switch (command.command) {
     case "start":
@@ -119,7 +216,8 @@ async function processCommand(command: Command) {
           if (queueError) throw new Error(`Cannot verify previous queue: ${queueError.message}`);
           if ((queued ?? 0) > 0) throw new Error("Previous wave still has queued or leased candidates; resume it or stop it before starting a new search");
 
-          await sendTelegram(command.telegram_chat_id, "Ищу следующую волну по незакрытым квотам. Поиск идёт последовательно, offset сохраняется после каждой страницы; после поиска начнутся обогащение и screening. Публикация отключена.").catch(() => undefined);
+          const policy = await publicationPolicy(command.run_id);
+          await sendTelegram(command.telegram_chat_id, `Ищу следующую волну по незакрытым квотам. Поиск идёт последовательно; offset сохраняется после каждой страницы. Затем начнутся обогащение и screening. ${policy}`).catch(() => undefined);
           const search = await searchNextWave();
           if (!search.runId) {
             return "Поиск завершён: новых кандидатов для следующей волны пока нет. Состояние и offset по маркам сохранены; публикация не выполнялась.";
@@ -132,13 +230,26 @@ async function processCommand(command: Command) {
             return `Поиск завершён, но новых кандидатов не найдено. Позиции марок сохранены; следующий поиск начнётся с них. Публикации нет.`;
           }
           await startPreparedRun({ ...command, run_id: search.runId });
-          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Worker запущен; после обогащения выполнится screening. Публикации нет.`;
+          const newRunPolicy = await publicationPolicy(search.runId);
+          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Worker запущен; после обогащения выполнится screening. ${newRunPolicy}`;
         }
         if (current.status !== "approved") throw new Error(`Run ${command.run_id} has status ${current.status}; it is not ready to start`);
         await startPreparedRun(command);
-        return `Начата обработка подготовленной волны run ${command.run_id}, лимит ${command.max_items}. Новые объявления не ищутся; публикации нет.`;
+        return `Начата обработка подготовленной волны run ${command.run_id}, лимит ${command.max_items}. Новые объявления не ищутся. ${await publicationPolicy(command.run_id)}`;
       }
-    case "resume":
+    case "resume": {
+      const { data: current, error } = await db.from("chestny_enrichment_runs")
+        .select("status,pause_reason").eq("id", command.run_id).single();
+      if (error) throw new Error(`Cannot read run before resume: ${error.message}`);
+      const { data: workerLock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+        .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment").maybeSingle();
+      if (lockError) throw new Error(`Cannot check Encar worker lock: ${lockError.message}`);
+      if (workerLock && Date.parse(workerLock.expires_at) > Date.now()) {
+        throw new Error(`Another Encar worker still holds the global lock for run ${workerLock.run_id}; resume was not started`);
+      }
+      if (current.status === "running" && current.pause_reason?.source === "wave_limit") {
+        await setRunStatus(command.run_id, "paused", ["running"]);
+      }
       await setRunStatus(command.run_id, "running", ["paused"]);
       try {
         await startWorker(command);
@@ -148,7 +259,8 @@ async function processCommand(command: Command) {
         await setRunStatus(command.run_id, "paused", ["running"]).catch(() => undefined);
         throw error;
       }
-      return `Волна run ${command.run_id} возобновлена; лимит — ${command.max_items}. После обработки автоматически выполняется screening. Публикация не запускается.`;
+      return `Волна run ${command.run_id} возобновлена; лимит — ${command.max_items}. После обработки автоматически выполняется screening. ${await publicationPolicy(command.run_id)}`;
+    }
     case "pause":
       await setRunStatus(command.run_id, "paused", ["approved", "running"]);
       return `Run ${command.run_id} приостановлен. Текущая карточка завершится перед остановкой.`;
@@ -194,6 +306,41 @@ async function acquireSingleton(path: string, token: string) {
   return null;
 }
 
+const taskRepository = new ControlTaskRepository(db);
+const catalogModule = createChestnyPrigonRuntime({
+  db, ownerId, chatId: Number(ownerId), executeLegacyCommand: processCommand, startInitialWave,
+});
+const moduleRegistry = new ModuleRegistry();
+moduleRegistry.register(catalogModule);
+const taskService = new ControlTaskService(taskRepository, moduleRegistry);
+const taskCoordinator = new ControlTaskCoordinator(taskRepository, moduleRegistry, taskService);
+
+async function controlTaskForCommand(command: Command) {
+  let task = await taskRepository.findByExternalRef("chestny-prigon.catalog", command.run_id);
+  if (task) return task;
+  if (command.command !== "start") throw new Error(`No active Control Center goal is linked to run ${command.run_id}`);
+  const { data: run, error } = await db.from("chestny_enrichment_runs").select("status,rules").eq("id", command.run_id).single();
+  if (error) throw new Error(`Cannot bind control task to run: ${error.message}`);
+  const launchId = String(run.rules?.catalogLaunchId ?? "");
+  if (!launchId) throw new Error("Run is not attached to a catalog launch; refusing to create a goal task");
+  const activeGoal = await taskRepository.findActiveForLaunch(launchId);
+  if (activeGoal) return activeGoal;
+  const initialState = run.status === "running" ? "running" : run.status === "paused" ? "paused"
+    : run.status === "cancelled" ? "cancelled" : run.status === "completed" ? "ready" : "ready";
+  task = await taskRepository.create({
+    moduleId: "chestny-prigon.catalog", product: "chestny-prigon", source: "encar",
+    goal: "Найти, обработать и подготовить к публикации 1 000 новых автомобилей по утверждённым квотам",
+    externalRef: command.run_id, state: initialState,
+    parameters: { launchId, targetPublications: 1_000, pilotApproved: false, publishAuthorized: false, maxItemsPerWave: 50 },
+    progress: { stage: "queued", intent: command.command, currentRunId: command.run_id, waveNumber: 0 },
+  });
+  return task;
+}
+
+function moduleAction(command: Command["command"]) {
+  return command === "start" ? "run" : command === "resume" ? "resume" : command;
+}
+
 async function main() {
   const lockDirectory = "/tmp/encar-coordination";
   await mkdir(lockDirectory, { recursive: true });
@@ -211,7 +358,14 @@ async function main() {
       const command = data as Command;
       let resultMessage: string;
       try {
-        resultMessage = await processCommand(command);
+        const task = await controlTaskForCommand(command);
+        if (task) {
+          await taskRepository.update(task.id, { progress: { ...task.progress, intent: command.command, stage: "owner_command", currentRunId: command.run_id } });
+          const dispatched = await taskService.invoke(moduleAction(command.command), task.id);
+          resultMessage = dispatched.result.summary;
+        } else {
+          resultMessage = await processCommand(command);
+        }
         await finish(command.id, leaseToken, resultMessage, null);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -220,6 +374,21 @@ async function main() {
       }
       try { await sendTelegram(command.telegram_chat_id, resultMessage); }
       catch (error) { console.error(`Could not send command notification: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    const coordinated = await taskCoordinator.tick(3);
+    for (const item of coordinated) {
+      if (item.error) {
+        const message = `⚠️ Задача каталога приостановлена. Этап: ${item.stage}. Причина: ${item.error.slice(0, 700)}`;
+        try { await sendTelegram(Number(ownerId), message); }
+        catch (error) { console.error(`Could not report coordinator progress: ${error instanceof Error ? error.message : String(error)}`); }
+      } else if (item.action === "run" && item.stage === "publish_wave") {
+        try {
+          const task = await taskRepository.get(item.taskId);
+          await sendTelegram(Number(ownerId), publicationReport(task.result ?? {}));
+        } catch (error) {
+          console.error(`Could not report publication outcome: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     }
   } finally {
     await handle.close();
