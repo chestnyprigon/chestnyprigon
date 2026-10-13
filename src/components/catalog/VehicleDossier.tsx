@@ -32,6 +32,43 @@ type BodyMark = { code: "X" | "W" | "C" | "A" | "U" | "T"; label: string; x: num
 type GalleryGroup = "Все фото" | "Кузов" | "Салон" | "Детали" | "Другие фото";
 const galleryGroupOrder: GalleryGroup[] = ["Все фото", "Кузов", "Салон", "Детали", "Другие фото"];
 
+const hasHangul = (value: string) => /[\uac00-\ud7af]/u.test(value);
+
+function bodyFindingTitle(code: string | null, sourceTitle: string) {
+  const title = sourceTitle.trim();
+  const byCode = code ? bodyPartPositions[code]?.label : null;
+  if (byCode) return byCode;
+  const koreanTitles: Array<[RegExp, string]> = [
+    [/트렁크\s*리드/u, "Крышка багажника"],
+    [/쿼터\s*패널\s*\(우\)/u, "Задняя правая боковая панель"],
+    [/쿼터\s*패널\s*\(좌\)/u, "Задняя левая боковая панель"],
+    [/트렁크\s*플로어/u, "Пол багажника"],
+    [/리어\s*패널/u, "Задняя панель кузова"],
+  ];
+  const translated = koreanTitles.find(([pattern]) => pattern.test(title))?.[1];
+  return translated ?? (hasHangul(title) ? "Элемент кузова" : title);
+}
+
+function bodyStatusTitle(code: string | null, sourceTitle: string) {
+  const title = sourceTitle.trim();
+  const byCode: Record<string, string> = {
+    X: "Замена", REPLACEMENT: "Замена", W: "Ремонт", REPAIR: "Ремонт",
+    C: "Коррозия", CORROSION: "Коррозия", A: "Царапина", SCRATCH: "Царапина",
+    U: "Деформация", DEFORMATION: "Деформация", T: "Повреждение", DAMAGE: "Повреждение",
+    NORMAL: "Без повреждений",
+  };
+  const translated = (code ? byCode[code.toUpperCase()] : null) ?? byCode[title] ?? (
+    /교환|교체/u.test(title) ? "Замена"
+      : /판금|용접/u.test(title) ? "Ремонт"
+        : /부식/u.test(title) ? "Коррозия"
+          : /스크래치/u.test(title) ? "Царапина"
+            : /굴곡/u.test(title) ? "Деформация"
+              : /손상/u.test(title) ? "Повреждение"
+                : /정상/u.test(title) ? "Без повреждений" : null
+  );
+  return translated ?? (hasHangul(title) ? "Повреждение" : title);
+}
+
 const bodyPartPositions: Record<string, { label: string; x: number; y: number }> = {
   P011: { label: "Передний бампер", x: 50, y: 7 }, P012: { label: "Задний бампер", x: 50, y: 93 },
   P021: { label: "Переднее левое крыло", x: 12, y: 19 }, P022: { label: "Переднее правое крыло", x: 88, y: 19 },
@@ -58,9 +95,12 @@ function BodyConditionMap({ findings, diagnosisAvailable, notes }: { findings: I
     const part = finding.code ? bodyPartPositions[finding.code] : null;
     if (!part) return [];
     const statuses = finding.statuses.length ? finding.statuses : [{ code: null, title: "Повреждение" }];
-    return statuses.map((status) => ({ code: bodyMarkCode(status.code, status.title), label: `${part.label}: ${status.title}`, x: part.x, y: part.y }));
+    return statuses.map((status) => {
+      const statusTitle = bodyStatusTitle(status.code, status.title);
+      return { code: bodyMarkCode(status.code, statusTitle), label: `${part.label}: ${statusTitle}`, x: part.x, y: part.y };
+    });
   });
-  return <div className="dossier-body-map"><div className="dossier-body-canvases"><div className="dossier-body-canvas"><Image src="/assets/body-condition-top.png" alt="Схема кузова автомобиля" fill sizes="(max-width: 700px) 100vw, 420px" />{marks.map((mark, index) => <span className={`dossier-body-mark is-${mark.code}`} style={{ left: `${mark.x}%`, top: `${mark.y}%` }} title={mark.label} key={`${mark.label}-${index}`}>{mark.code}</span>)}</div><div className="dossier-body-canvas"><Image src="/assets/body-condition-bottom.png" alt="Схема днища автомобиля" fill sizes="(max-width: 700px) 100vw, 420px" /></div></div><div className="dossier-body-legend">{bodyLegend.map(([code, label]) => <span key={code}><b className={`is-${code}`}>{code}</b>{label}</span>)}</div><p className={marks.length || diagnosisAvailable !== true ? "is-alert" : ""}>{marks.length ? `${marks.length} отметок кузова по отчёту Encar` : diagnosisAvailable === true ? "По отчёту Encar отметок по кузовным элементам нет" : diagnosisAvailable === false ? "Отдельный отчёт диагностики кузова Encar недоступен" : "Подробная диагностика кузова Encar не получена"}</p>{findings.length ? <ul className="dossier-body-findings">{findings.map((finding) => <li key={finding.code}>{finding.title}: {finding.statuses.map((status) => status.title).join(", ")}</li>)}</ul> : null}{notes.map((note) => <p className="dossier-body-note" key={note}>{note}</p>)}</div>;
+  return <div className="dossier-body-map"><div className="dossier-body-canvases"><div className="dossier-body-canvas"><Image src="/assets/body-condition-top.png" alt="Схема кузова автомобиля" fill sizes="(max-width: 700px) 100vw, 420px" />{marks.map((mark, index) => <span className={`dossier-body-mark is-${mark.code}`} style={{ left: `${mark.x}%`, top: `${mark.y}%` }} title={mark.label} key={`${mark.label}-${index}`}>{mark.code}</span>)}</div><div className="dossier-body-canvas"><Image src="/assets/body-condition-bottom.png" alt="Схема днища автомобиля" fill sizes="(max-width: 700px) 100vw, 420px" /></div></div><div className="dossier-body-legend">{bodyLegend.map(([code, label]) => <span key={code}><b className={`is-${code}`}>{code}</b>{label}</span>)}</div><p className={marks.length || diagnosisAvailable !== true ? "is-alert" : ""}>{marks.length ? `${marks.length} отметок кузова по отчёту Encar` : diagnosisAvailable === true ? "По отчёту Encar отметок по кузовным элементам нет" : diagnosisAvailable === false ? "Отдельный отчёт диагностики кузова Encar недоступен" : "Подробная диагностика кузова Encar не получена"}</p>{findings.length ? <ul className="dossier-body-findings">{findings.map((finding) => <li key={finding.code}>{bodyFindingTitle(finding.code, finding.title)}: {finding.statuses.map((status) => bodyStatusTitle(status.code, status.title)).join(", ")}</li>)}</ul> : null}{notes.map((note) => <p className="dossier-body-note" key={note}>{hasHangul(note) ? "Дополнительное примечание Encar недоступно на русском языке." : note}</p>)}</div>;
 }
 
 function InsuranceBreakdown({ events, krwPerUsd }: { events: AccidentSummary["insuranceEvents"]; krwPerUsd: number }) {
