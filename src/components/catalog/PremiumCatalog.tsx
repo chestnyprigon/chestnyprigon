@@ -25,7 +25,7 @@ import {
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
-import { formatUsdWithByn } from "@/lib/pricing/display";
+import { formatKrwAsUsd, formatUsdWithByn } from "@/lib/pricing/display";
 import { trackMetrikaGoal } from "@/lib/analytics/metrika";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
@@ -54,7 +54,7 @@ function historyText(car: CatalogCar) {
   const accidents = car.accidents;
   if (accidents?.accidentCount) {
     const payouts = accidents.ownAccidentCostKrw + accidents.otherAccidentCostKrw;
-    return `Страховые случаи: ${accidents.accidentCount} · выплаты ${distance.format(payouts)} ₩`;
+    return `Страховые случаи: ${accidents.accidentCount} · выплаты ${formatKrwAsUsd(payouts, car.calculation.krwPerUsd)}`;
   }
   if (accidents?.available) return "Без ДТП по отчёту Encar · страховых выплат нет";
   return "Нет данных по страховым случаям";
