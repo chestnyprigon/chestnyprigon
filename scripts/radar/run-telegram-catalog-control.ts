@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
@@ -26,6 +26,7 @@ const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE
 const stateDir = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const activeRunFile = join(stateDir, "active-run");
 const activeWaveSizeFile = join(stateDir, "active-wave-size");
+const telegramProgressFile = join(stateDir, "telegram-progress.json");
 
 type Command = {
   id: string;
@@ -79,6 +80,131 @@ function publicationReport(result: Record<string, unknown>) {
     return `Пакетная публикация завершена для run ${runId}: screening не допустил карточек, опубликовано 0.`;
   }
   return `Пакетная публикация run ${runId}: проверено ${selected}, опубликовано ${accepted}, ошибок публикации ${errors}.`;
+}
+
+type ProgressRun = {
+  id: string;
+  status: string;
+  candidate_count: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  pause_reason: unknown;
+  rules: Record<string, unknown> | null;
+};
+
+type ProgressSnapshot = { runId: string; processed: number; status: string };
+
+async function latestCatalogRun(statuses: string[]): Promise<ProgressRun | null> {
+  const columns = "id,status,candidate_count,created_at,started_at,completed_at,pause_reason,rules";
+  const mainRun = (run: ProgressRun) => run.rules?.type !== "targeted_report_refresh";
+  const now = new Date().toISOString();
+  const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+    .select("run_id").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", now).maybeSingle();
+  if (lockError) throw new Error(`Could not read active catalog worker lock: ${lockError.message}`);
+  if (lock?.run_id) {
+    const { data, error } = await db.from("chestny_enrichment_runs").select(columns)
+      .eq("id", lock.run_id).maybeSingle();
+    if (error) throw new Error(`Could not read the run held by the catalog worker: ${error.message}`);
+    if (data) return data as ProgressRun;
+  }
+
+  const { data: tasks, error: taskError } = await db.from("control_center_tasks")
+    .select("state,external_ref").eq("module_id", "chestny-prigon.catalog")
+    .in("state", ["queued", "preparing", "running", "ready"])
+    .order("updated_at", { ascending: false }).limit(10);
+  if (taskError) throw new Error(`Could not read active catalog coordinator tasks: ${taskError.message}`);
+  const task = (tasks ?? []).find((item) => item.state === "running" && item.external_ref);
+  if (task?.external_ref) {
+    const { data, error } = await db.from("chestny_enrichment_runs").select(columns)
+      .eq("id", task.external_ref).maybeSingle();
+    if (error) throw new Error(`Could not read the run linked to the catalog task: ${error.message}`);
+    if (data) return data as ProgressRun;
+  }
+
+  const { data: localLive, error: localError } = await db.from("chestny_enrichment_runs")
+    .select(columns).eq("project", "chestny-prigon").like("source_file", "local-live-encar-search%")
+    .in("status", ["approved", "running", "paused", "completed"])
+    .order("started_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false })
+    .limit(1).maybeSingle();
+  if (localError) throw new Error(`Could not read the latest local Encar run: ${localError.message}`);
+  if (localLive) return localLive as ProgressRun;
+
+  const { data, error } = await db.from("chestny_enrichment_runs").select(columns)
+    .order("started_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false }).limit(100);
+  if (error) throw new Error(`Could not find catalog runs: ${error.message}`);
+  const allRuns = (data ?? []) as ProgressRun[];
+  const runs = allRuns.filter(mainRun);
+  // Never let an old row with a stale "running" status outrank the current
+  // worker lock, coordinator task, or most recent local Encar run.
+  return runs[0] ?? allRuns[0] ?? null;
+}
+
+async function progressCounts(runId: string) {
+  const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
+  const values = await Promise.all(statuses.map(async (status) => {
+    const { count, error } = await db.from("chestny_enrichment_queue")
+      .select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", status);
+    if (error) throw new Error(`Could not read ${status} count for progress notifications: ${error.message}`);
+    return [status, count ?? 0] as const;
+  }));
+  return Object.fromEntries(values) as Record<string, number>;
+}
+
+async function isLocalWorkerActive(runId: string) {
+  const marker = (await readFile(activeRunFile, "utf8").catch(() => "")).trim();
+  if (marker !== runId) return false;
+  try {
+    const lock = JSON.parse(await readFile("/tmp/encar-coordination/chestny-catalog-enrichment.lock", "utf8")) as {
+      pid?: number; host?: string;
+    };
+    if (!Number.isInteger(lock.pid) || lock.host !== hostname()) return false;
+    process.kill(Number(lock.pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function monitorCatalogProgress() {
+  let snapshot: ProgressSnapshot | null = null;
+  try { snapshot = JSON.parse(await readFile(telegramProgressFile, "utf8")) as ProgressSnapshot; }
+  catch { /* No prior notification snapshot; announce the active run once. */ }
+
+  const active = await latestCatalogRun([]);
+  let run = active;
+  if (!run && snapshot?.runId) {
+    const { data, error } = await db.from("chestny_enrichment_runs")
+      .select("id,status,candidate_count,created_at,started_at,completed_at,pause_reason,rules")
+      .eq("id", snapshot.runId).maybeSingle();
+    if (error) throw new Error(`Could not read monitored catalog run: ${error.message}`);
+    run = data as ProgressRun | null;
+  }
+  if (!run) return;
+
+  const counts = await progressCounts(run.id);
+  const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+  const previous = snapshot?.runId === run.id ? snapshot : null;
+  const locallyMonitored = await isLocalWorkerActive(run.id);
+  const terminal = ["completed", "cancelled", "failed"].includes(run.status);
+  let message: string | null = null;
+
+  if (previous && terminal && previous.status !== run.status && !locallyMonitored) {
+    message = `🏁 Run каталога ${run.id} ${run.status === "completed" ? "завершён" : run.status === "cancelled" ? "отменён" : "остановлен с ошибкой"}.\nОбработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}; осталось ${counts.queued}.`;
+  } else if (previous && run.status === "paused" && previous.status !== "paused") {
+    message = `⏸ Run каталога ${run.id} приостановлен.\nОбработано ${processed}/${run.candidate_count}; очередь ${counts.queued}; в работе ${counts.leased}.${run.pause_reason ? `\nПричина: ${JSON.stringify(run.pause_reason).slice(0, 350)}` : ""}`;
+  } else if (previous && processed - previous.processed >= 50 && !locallyMonitored) {
+    message = `📈 Прогресс каталога\n\nОбработано ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nОшибок: ${counts.failed}\nВ очереди: ${counts.queued}; в работе: ${counts.leased}\nRun: ${run.id}`;
+  } else if (!previous && !terminal && !locallyMonitored) {
+    message = `🚗 Контроль каталога подключён к текущему run ${run.id}.\nСостояние: ${run.status}; обработано ${processed}/${run.candidate_count}; очередь ${counts.queued}, в работе ${counts.leased}.`;
+  }
+
+  if (message) await sendTelegram(Number(ownerId), message);
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  const lastReportedProcessed = message || locallyMonitored ? processed : previous?.processed ?? processed;
+  await writeFile(telegramProgressFile, JSON.stringify({ runId: run.id, processed: lastReportedProcessed,
+    status: run.status } satisfies ProgressSnapshot), { mode: 0o600 });
 }
 
 async function setRunStatus(runId: string, status: string, allowed: string[]) {
@@ -353,7 +479,10 @@ async function main() {
     const leaseToken = randomUUID();
     for (let count = 0; count < 20; count += 1) {
       const { data, error } = await db.rpc("claim_chestny_catalog_worker_command", { p_token: leaseToken, p_lease_seconds: 90 });
-      if (error) throw new Error(`Cannot claim Telegram command: ${error.message}`);
+      if (error) {
+        console.error(`Cannot claim Telegram command; continue progress monitoring: ${error.message}`);
+        break;
+      }
       if (!data || typeof data !== "object") break;
       const command = data as Command;
       let resultMessage: string;
@@ -375,7 +504,9 @@ async function main() {
       try { await sendTelegram(command.telegram_chat_id, resultMessage); }
       catch (error) { console.error(`Could not send command notification: ${error instanceof Error ? error.message : String(error)}`); }
     }
-    const coordinated = await taskCoordinator.tick(3);
+    let coordinated: Awaited<ReturnType<typeof taskCoordinator.tick>> = [];
+    try { coordinated = await taskCoordinator.tick(3); }
+    catch (error) { console.error(`Could not tick catalog coordinator: ${error instanceof Error ? error.message : String(error)}`); }
     for (const item of coordinated) {
       if (item.error) {
         const message = `⚠️ Задача каталога приостановлена. Этап: ${item.stage}. Причина: ${item.error.slice(0, 700)}`;
@@ -390,6 +521,8 @@ async function main() {
         }
       }
     }
+    try { await monitorCatalogProgress(); }
+    catch (error) { console.error(`Could not notify catalog progress: ${error instanceof Error ? error.message : String(error)}`); }
   } finally {
     await handle.close();
     const current = await readFile(singletonPath, "utf8").catch(() => "");
