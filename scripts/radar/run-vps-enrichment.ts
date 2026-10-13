@@ -15,7 +15,6 @@ import { integrityEvidence, isolate, publicationGate, validateGallery } from "..
 import { CATALOG_POLICY, evidence } from "../encar/catalog-policy";
 import type { EncarBundle, EncarSearchListing } from "../encar/types";
 import { hasPendingEnrichment, isTerminalRun, TERMINAL_RUN_EXIT_CODE } from "./enrichment-run-state";
-import { appendOperationalFailure, isOperationalFailure, shouldPauseForOperationalFailures } from "./enrichment-failure-policy";
 import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
 
 config({ path: ".env", quiet: true });
@@ -86,7 +85,7 @@ async function radarHasPriority() {
 }
 
 function isRetryableFailure(error: string | null) {
-  return Boolean(error && /detail_empty_response|fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|5\d\d)|endpoint_(options|inspection|insurance)_transient_error|detail_missing_canonical_identifier|identity_lookup_failed/i.test(error));
+  return Boolean(error && /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|5\d\d)|endpoint_(options|inspection|insurance)_transient_error|detail_missing_canonical_identifier|identity_lookup_failed/i.test(error));
 }
 
 function failureClass(error: string) {
@@ -95,8 +94,9 @@ function failureClass(error: string) {
   if (/HTTP 429/i.test(error)) return "rate_limited";
   if (/incomplete_gallery/i.test(error)) return "incomplete_gallery";
   if (/detail_missing_canonical_identifier/i.test(error)) return "canonical_identifier_missing";
+  if (/detail_empty_response/i.test(error)) return "source_unavailable";
   if (/HTTP (404|410)/i.test(error)) return "source_unavailable";
-  if (/detail_empty_response|HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
+  if (/HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
   return "enrichment_error";
 }
 
@@ -205,7 +205,7 @@ async function requeueRetryableFailures(db: Db) {
     .eq("status", "failed")
     .lt("attempt_count", maxAttempts);
   if (error) throw new Error(error.message);
-  const ids = ((data ?? []) as Array<{ id: string; last_error: string | null; result?: Record<string, unknown> }>).filter((row) => (row.result?.retryable === true || (row.result?.retryExhausted !== true && isRetryableFailure(row.last_error))) && (!row.result?.retryAfter || Date.parse(String(row.result.retryAfter)) <= Date.now())).map((row) => row.id);
+  const ids = ((data ?? []) as Array<{ id: string; last_error: string | null; result?: Record<string, unknown> }>).filter((row) => row.last_error !== "detail_empty_response" && (row.result?.retryable === true || (row.result?.retryExhausted !== true && isRetryableFailure(row.last_error))) && (!row.result?.retryAfter || Date.parse(String(row.result.retryAfter)) <= Date.now())).map((row) => row.id);
   if (!ids.length) return 0;
   const { error: updateError } = await db.from("chestny_enrichment_queue")
     .update({ status: "queued", lease_until: null, updated_at: new Date().toISOString() })
@@ -315,7 +315,6 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
   const agent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
   const results: Array<Record<string, unknown>> = [];
   let pauseAfterCurrent = false;
-  let operationalSamples: boolean[] = [];
   let pauseMessage = "";
   try {
     for (const [index, row] of (rows ?? []).entries() as Iterable<[number, Row]>) {
@@ -727,7 +726,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           throw lockSignal.reason ?? error;
         }
         const message = error instanceof Error ? error.message : String(error);
-        const unavailable = error instanceof EncarRequestError && [404, 410].includes(error.status);
+        const unavailable = (error instanceof EncarRequestError && [404, 410].includes(error.status)) || message === "detail_empty_response";
         const kind = failureClass(message);
         const endpointOutcome = error instanceof EndpointEnrichmentError ? error.outcome : null;
         const temporary = !unavailable && (endpointOutcome?.retryable ?? isRetryableFailure(message));
@@ -752,13 +751,6 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             ? { code: obj(error.cause).code ?? null, name: obj(error.cause).name ?? null } : null,
         }, undefined, undefined, undefined, [], unavailable ? undefined : (endpointOutcome?.reasonCode ?? message));
         results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: reportedError, reasonCode: endpointOutcome?.reasonCode, failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind, retryable });
-      }
-      operationalSamples = appendOperationalFailure(operationalSamples,
-        results.at(-1)?.status === "failed" && isOperationalFailure(String(results.at(-1)?.failureClass ?? "")));
-      // The local loop owns the cross-batch window; standalone workers use the same policy.
-      if (!process.env.CHESTNY_ENRICHMENT_LOCK_TOKEN && shouldPauseForOperationalFailures(operationalSamples)) {
-        pauseAfterCurrent = true;
-        pauseMessage = "Серия сетевых ошибок: не менее 5 из последних 10 карточек. Очередь и частичные данные сохранены.";
       }
       await sleep(delayMs);
     }

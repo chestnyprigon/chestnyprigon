@@ -5,7 +5,6 @@ import { spawn } from "node:child_process";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
-import { appendOperationalFailure, isOperationalFailure, FAILURE_WINDOW_MIN_ERRORS, FAILURE_WINDOW_SIZE, shouldPauseForOperationalFailures } from "./enrichment-failure-policy";
 import { attemptedEnrichmentItems } from "./enrichment-run-state";
 import { notifyCatalogOwner } from "./telegram-catalog-notify";
 import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
@@ -201,8 +200,6 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
   };
   const processedBeforeWave = processed;
   let processedThisWave = 0;
-  let recentOperationalFailures: boolean[] = [];
-  let recoveryCooldowns = 0;
   if (!run.rules?.catalogLaunchId) {
     await notify(untilComplete
       ? `🚗 Обработка сохранённой очереди запущена\n\nВсего: ${run.candidate_count}\nОбработано ранее: ${processedBeforeWave}\nОсталось: ${initialCounts.queued}\nРежим: до конца очереди, последовательно, паузы ${effectiveDelayMs / 1000} секунд.\nПубликация выключена.\nRun: ${runId}`
@@ -246,26 +243,6 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
         || /^(endpoint_(auth_error|blocked|rate_limited)|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
         throw new Error("Encar access restriction detected; local enrichment paused");
-      }
-      for (const item of result.results) {
-        const operationalFailure = item.status === "failed" && isOperationalFailure(item.failureClass);
-        recentOperationalFailures = appendOperationalFailure(recentOperationalFailures, operationalFailure);
-      }
-      if (shouldPauseForOperationalFailures(recentOperationalFailures) && recoveryCooldowns === 0) {
-        recoveryCooldowns += 1;
-        await notify("⚠️ Серия временных сетевых ошибок. Делаю паузу на 5 минут, затем одну попытку продолжения. Очередь и частичные данные сохранены.");
-        for (let tick = 0; tick < 10; tick += 1) {
-          if (signal.aborted) throw signal.reason;
-          const control = await client.from("chestny_enrichment_runs").select("status").eq("id", runId).single();
-          if (control.error) throw new Error(control.error.message);
-          if (["paused", "cancelled"].includes(control.data.status)) break;
-          await new Promise(resolve => setTimeout(resolve, 30_000));
-        }
-        recentOperationalFailures = [];
-        continue;
-      }
-      if (shouldPauseForOperationalFailures(recentOperationalFailures)) {
-        throw new Error(`At least ${FAILURE_WINDOW_MIN_ERRORS} of the last ${FAILURE_WINDOW_SIZE} candidates failed for technical reasons; local enrichment paused`);
       }
       if (result.pendingRetries && counts.queued === 0 && counts.leased === 0) {
         // No Encar requests while waiting; refresh owner control on the next loop.
