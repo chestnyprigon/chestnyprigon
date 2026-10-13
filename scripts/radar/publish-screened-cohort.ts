@@ -49,7 +49,8 @@ async function main() {
   const manifest = JSON.parse(await fs.readFile(path.resolve(process.cwd(), manifestPath), "utf8")) as Manifest;
   const ids = manifest.sourceListingIds;
   const idsHash = createHash("sha256").update(ids.join("\n")).digest("hex");
-  const isOriginal368 = manifest.runId === FIRST_COHORT_RUN_ID;
+  const isOriginal368 = manifest.runId === FIRST_COHORT_RUN_ID
+    && path.resolve(manifestPath) === path.resolve(DEFAULT_MANIFEST);
   if (manifest.status !== "prepared" || !manifest.runId || !Array.isArray(ids) || !ids.length
     || manifest.selectedCount !== ids.length || idsHash !== manifest.selectedSourceIdsSha256 || new Set(ids).size !== ids.length
     || (isOriginal368 && (ids.length !== FIRST_COHORT_SIZE || idsHash !== FIRST_COHORT_IDS_SHA256))) {
