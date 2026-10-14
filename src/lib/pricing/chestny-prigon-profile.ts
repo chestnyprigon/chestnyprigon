@@ -32,6 +32,8 @@ const PERSONAL_IMPORT_UTILIZATION_FEE_BYN = {
   overThreeYears: 1_282.02,
 } as const;
 
+const PARKING_FEE_KRW = 440_000;
+
 // Used only when the official daily cache cannot be read. It is deliberately
 // labelled as a fallback in the UI and is replaced by the NBRB cache server-side.
 export const FALLBACK_EXCHANGE_RATES: ExchangeRates = {
@@ -60,8 +62,10 @@ export type BelarusPriceCalculation = {
   calculationAvailable: boolean;
   unavailableReason: string | null;
   sourcePriceKrw: number;
+  parkingFeeKrw: number;
   krwPerUsd: number;
   sourcePriceUsd: number;
+  parkingFeeUsd: number;
   sourcePriceEur: number;
   deliveryUsd: number;
   commissionUsd: number;
@@ -153,9 +157,10 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
   const ageBand = vehicleAgeBand(input.firstRegistrationDate, now);
   const eurPerUsd = rates.eurByn / rates.usdByn;
   const sourcePriceUsd = Math.round(input.priceKrw / profile.krwPerUsd);
+  const parkingFeeUsd = Math.round(PARKING_FEE_KRW / profile.krwPerUsd);
   const sourcePriceEur = Math.round(sourcePriceUsd / eurPerUsd);
   const commissionUsd = Math.round((sourcePriceUsd + profile.deliveryUsd) * profile.commissionRate);
-  const firstPaymentUsd = sourcePriceUsd + profile.deliveryUsd + commissionUsd;
+  const firstPaymentUsd = sourcePriceUsd + parkingFeeUsd + profile.deliveryUsd + commissionUsd;
   const unavailableReason = !input.firstRegistrationDate
     ? "Не указана дата первой регистрации"
     : isElectricOrNonStandardFuel(input.fuelType)
@@ -181,8 +186,10 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
     calculationAvailable: totalUsd !== null,
     unavailableReason,
     sourcePriceKrw: input.priceKrw,
+    parkingFeeKrw: PARKING_FEE_KRW,
     krwPerUsd: profile.krwPerUsd,
     sourcePriceUsd,
+    parkingFeeUsd,
     sourcePriceEur,
     deliveryUsd: profile.deliveryUsd,
     commissionUsd,

@@ -14,9 +14,12 @@ test("reproduces the approved client delivery and commission first payment", () 
 
   assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v3-preferential-default");
   assert.equal(result.sourcePriceUsd, 36_106);
+  assert.equal(result.parkingFeeKrw, 440_000);
+  assert.equal(result.parkingFeeUsd, Math.round(440_000 / CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd));
   assert.equal(result.deliveryUsd, 4_900);
   assert.equal(result.commissionUsd, 820);
-  assert.equal(result.firstPaymentUsd, 41_826);
+  assert.equal(result.firstPaymentUsd, 41_826 + result.parkingFeeUsd);
+  assert.equal(result.customsDutyEur, 2_550);
 });
 
 test("converts arrival costs from EUR to USD by multiplying the USD-per-EUR rate", () => {
