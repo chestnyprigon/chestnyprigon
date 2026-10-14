@@ -132,9 +132,9 @@ function ClientPriceTable({
       </button>
       {refreshError ? <p className="dossier-price-refresh-error">{refreshError}</p> : null}
       <p><span>Цена авто (KRW)</span><b>{krw(calculation.sourcePriceKrw)}</b></p>
+      <p><span>Стояночные</span><b>{krw(calculation.parkingFeeKrw)}</b></p>
       <p><span>Рабочий курс KRW/USD</span><b>₩{number.format(calculation.krwPerUsd)}</b></p>
-      <p className="is-emphasis"><span>Стоимость в Корее</span><b>{dollar(calculation.sourcePriceUsd)}</b></p>
-      <p><span>Стояночные ({krw(calculation.parkingFeeKrw)})</span><b>{dollar(calculation.parkingFeeUsd)}</b></p>
+      <p className="is-emphasis"><span>Стоимость в Корее</span><b>{dollar(calculation.costInKoreaUsd)}</b></p>
       <p><span>Доставка до Минска</span><b>{dollar(calculation.deliveryUsd)}</b></p>
       <p><span>Комиссия 2 %</span><b>{dollar(calculation.commissionUsd)}</b></p>
       <p className="is-emphasis"><span>Первый платёж</span><b>{dollar(calculation.firstPaymentUsd)}</b></p>
