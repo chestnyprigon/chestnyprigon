@@ -13,7 +13,7 @@ async function main() {
   const name="local-catalog-1000-20261007";
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
-  if (!launch.data && process.argv.includes("--apply")) {
+  if (process.argv.includes("--apply")) {
     const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_QUOTAS,p_rules:CATALOG_POLICY});
     if (prepared.error) throw Error(prepared.error.message);
     launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
