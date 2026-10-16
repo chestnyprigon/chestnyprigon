@@ -259,7 +259,7 @@ async function main() {
   if (WAVE_ID && !process.argv.includes("--read-only-audit")) {
     const now = new Date().toISOString();
     const { error: waveError } = await client.from("chestny_enrichment_waves").update({
-      status: "ready", screening_completed_at: now, completed_at: now, updated_at: now,
+      status: "ready", last_error: null, screening_completed_at: now, completed_at: now, updated_at: now,
     }).eq("id", WAVE_ID).eq("run_id", RUN_ID).in("status", ["enriched", "screening", "ready"]);
     if (waveError) throw new Error(`Could not checkpoint screened wave ${WAVE_ID}: ${waveError.message}`);
   }

@@ -275,11 +275,11 @@ async function processPersistedWaves(input: {
     const now = new Date().toISOString();
     if (!["enriched", "screening"].includes(currentWave.status)) {
       const { error } = await client.from("chestny_enrichment_waves").update({
-        status: "enriched", enrichment_completed_at: now, updated_at: now,
+        status: "enriched", last_error: null, enrichment_completed_at: now, updated_at: now,
       }).eq("id", currentWave.id).eq("run_id", runId).in("status", ["queued", "enriching", "paused"]);
       if (error) throw new Error(`Could not checkpoint enriched wave ${currentWave.wave_number}: ${error.message}`);
     }
-    const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", updated_at: now })
+    const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", last_error: null, updated_at: now })
       .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening"]);
     if (screeningError) throw new Error(`Could not start screening checkpoint for wave ${currentWave.wave_number}: ${screeningError.message}`);
     await notify(`✅ Обогащение волны ${currentWave.wave_number}/${waves.length} завершено. Запустил её скрининг в отдельном процессе и продолжаю следующую волну. Публикация не выполняется. Run: ${runId}`);
