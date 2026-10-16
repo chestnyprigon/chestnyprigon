@@ -286,10 +286,10 @@ async function processPersistedWaves(input: {
     screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
   }
 
+  await Promise.all(screeningJobs);
   const { data: controlAtEnd, error: controlAtEndError } = await client.from("chestny_enrichment_runs")
     .select("status").eq("id", runId).single();
   if (controlAtEndError) throw new Error(`Could not read final run state: ${controlAtEndError.message}`);
-  await Promise.all(screeningJobs);
   if (["paused", "cancelled"].includes(controlAtEnd.status)) return;
 
   const { data: finalWaves, error: finalWavesError } = await client.from("chestny_enrichment_waves")
