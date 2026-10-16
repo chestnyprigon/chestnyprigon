@@ -114,8 +114,34 @@ async function main() {
   }
 
   const canonicalIds = items.map((item) => String(item.normalized?.sourceListingId ?? ""));
+  const canonicalIdSet = new Set(canonicalIds);
   if (canonicalIds.some((id) => !id) || new Set(canonicalIds).size !== ids.length) {
     throw new Error("Cohort contains missing or duplicate canonical vehicle IDs");
+  }
+  const canonicalBySource = new Map(ids.map((sourceId, index) => [sourceId, canonicalIds[index]]));
+  const existingManifestResult = await db.from("chestny_catalog_publication_manifests")
+    .select("id,status,selected_count,source_cohort_sha256")
+    .eq("run_id", manifest.runId).eq("selected_source_ids_sha256", idsHash).maybeSingle();
+  if (existingManifestResult.error) throw new Error(`Could not read saved publication manifest: ${existingManifestResult.error.message}`);
+  const existingManifest = existingManifestResult.data as null | {
+    id: string; status: string; selected_count: number; source_cohort_sha256: string | null;
+  };
+  const existingManifestItems = new Map<string, { canonical_id: string; status: string }>();
+  const existingManifestCanonicalIds = new Set<string>();
+  if (existingManifest) {
+    const savedItems = await db.from("chestny_catalog_publication_manifest_items")
+      .select("source_listing_id,canonical_id,status")
+      .eq("manifest_id", existingManifest.id);
+    if (savedItems.error) throw new Error(`Could not read saved publication roster: ${savedItems.error.message}`);
+    for (const item of savedItems.data ?? []) {
+      existingManifestItems.set(item.source_listing_id, { canonical_id: item.canonical_id, status: item.status });
+      existingManifestCanonicalIds.add(item.canonical_id);
+    }
+    if (existingManifest.selected_count !== ids.length || existingManifest.source_cohort_sha256 !== (manifest.sourceCohortSha256 ?? null)
+      || existingManifestItems.size !== ids.length
+      || ids.some((id) => existingManifestItems.get(id)?.canonical_id !== canonicalBySource.get(id))) {
+      throw new Error("Saved publication manifest does not match the selected source IDs and canonical IDs");
+    }
   }
   for (const group of chunks(canonicalIds, 200)) {
     const [vehicles, identifiers] = await Promise.all([
@@ -124,8 +150,13 @@ async function main() {
     ]);
     if (vehicles.error) throw new Error(`Could not check catalogue duplicates: ${vehicles.error.message}`);
     if (identifiers.error) throw new Error(`Could not check identity duplicates: ${identifiers.error.message}`);
-    if ((vehicles.data?.length ?? 0) || (identifiers.data?.length ?? 0)) {
-      throw new Error("A cohort ID is already in the catalogue; publication stopped before writes");
+    const unexpectedVehicles = (vehicles.data ?? []).filter((vehicle) =>
+      !existingManifestCanonicalIds.has(vehicle.source_listing_id));
+    const unexpectedIdentifiers = (identifiers.data ?? []).filter((identifier) =>
+      !canonicalIdSet.has(identifier.source_identifier)
+      || !existingManifestCanonicalIds.has(String(identifier.source_identifier)));
+    if (unexpectedVehicles.length || unexpectedIdentifiers.length) {
+      throw new Error("A cohort ID is already in the catalogue outside this saved publication manifest; publication stopped before writes");
     }
   }
 
@@ -149,15 +180,23 @@ async function main() {
   const unattributedPriorBatches = priorBatchRows.filter((row) => row.cursor?.publish === true
     && !Array.isArray(row.cursor?.sourceListingIds) && Number(row.accepted_count ?? 0) > 0);
   const previouslyPublishedByBrand: Record<string, number> = {};
+  const alreadyPublishedInCohortByBrand: Record<string, number> = {};
   for (const group of chunks(priorSourceIds, 200)) {
     const result = await db.from("vehicles").select("source_listing_id,manufacturer,is_public").in("source_listing_id", group);
     if (result.error) throw new Error(`Could not reconcile previous published IDs: ${result.error.message}`);
     for (const vehicle of result.data ?? []) {
-      if (vehicle.is_public) previouslyPublishedByBrand[vehicle.manufacturer] = (previouslyPublishedByBrand[vehicle.manufacturer] ?? 0) + 1;
+      if (vehicle.is_public) {
+        previouslyPublishedByBrand[vehicle.manufacturer] = (previouslyPublishedByBrand[vehicle.manufacturer] ?? 0) + 1;
+        if (canonicalIdSet.has(vehicle.source_listing_id)) {
+          alreadyPublishedInCohortByBrand[vehicle.manufacturer] = (alreadyPublishedInCohortByBrand[vehicle.manufacturer] ?? 0) + 1;
+        }
+      }
     }
   }
+  const remainingToPublishByBrand = Object.fromEntries(Object.entries(selectedByBrand).map(([brand, count]) =>
+    [brand, Math.max(0, count - (alreadyPublishedInCohortByBrand[brand] ?? 0))]));
   const projectedByBrand: Record<string, number> = { ...previouslyPublishedByBrand };
-  for (const [brand, count] of Object.entries(selectedByBrand)) projectedByBrand[brand] = (projectedByBrand[brand] ?? 0) + count;
+  for (const [brand, count] of Object.entries(remainingToPublishByBrand)) projectedByBrand[brand] = (projectedByBrand[brand] ?? 0) + count;
   const quotaAdvisories = Object.entries(projectedByBrand).flatMap(([manufacturer, count]) => {
     const target = brandTargets.get(manufacturer);
     return target !== undefined && count > target
@@ -174,7 +213,7 @@ async function main() {
       .eq("launch_id", catalogLaunchId);
     if (quotas.error) throw new Error(`Could not read hard launch quotas: ${quotas.error.message}`);
     const remaining = new Map((quotas.data ?? []).map((row) => [String(row.manufacturer), Number(row.remaining_quota)]));
-    hardQuotaOverages = Object.entries(selectedByBrand).flatMap(([manufacturer, count]) => {
+    hardQuotaOverages = Object.entries(remainingToPublishByBrand).flatMap(([manufacturer, count]) => {
       const quota = remaining.get(manufacturer);
       if (quota === undefined) throw new Error(`No approved launch quota for ${manufacturer}`);
       return count > quota ? [{ manufacturer, selected: count, remaining: quota, overBy: count - quota }] : [];
@@ -182,7 +221,8 @@ async function main() {
   }
   const preview = { mode: publish ? "publish" : "dry_run", runId: manifest.runId, runStatus: run.status,
     selected: ids.length, screeningPassed: items.length, selectedByBrand,
-    previouslyPublishedByBrand, projectedByBrand, quotaMode: catalogLaunchId ? "hard_launch_quota" : "advisory_run_mix",
+    previouslyPublishedByBrand, alreadyPublishedInCohortByBrand, remainingToPublishByBrand,
+    projectedByBrand, quotaMode: catalogLaunchId ? "hard_launch_quota" : "advisory_run_mix",
     quotaAdvisories, hardQuotaOverages, unattributedPriorBatches: unattributedPriorBatches.length,
     wouldPublishAll: hardQuotaOverages.length === 0, publicationExecuted: false,
     sourceListingIdsSha256: idsHash };
@@ -194,10 +234,153 @@ async function main() {
     throw new Error(JSON.stringify({ ...preview, message: "Publication refused: the linked catalog launch has a hard brand quota" }, null, 2));
   }
 
-  const result = await persistPilot(items, true, { source: "chestny-screened-cohort", runId: manifest.runId,
-    requested: ids.length, publish: true, cohortSha256: idsHash, sourceListingIds: canonicalIds, selectedByBrand,
-    ...(catalogLaunchId ? { catalogLaunchId } : {}) });
-  console.log(JSON.stringify({ ...preview, publicationExecuted: true, result }, null, 2));
+  const roster = ids.map((sourceListingId, index) => ({ position: index + 1, source_listing_id: sourceListingId,
+    canonical_id: canonicalIds[index], manufacturer: String(items[index].normalized?.manufacturer ?? "") }));
+  const registered = await db.rpc("register_chestny_catalog_publication_manifest", {
+    p_run_id: manifest.runId,
+    p_selected_source_ids_sha256: idsHash,
+    p_source_cohort_sha256: manifest.sourceCohortSha256 ?? null,
+    p_items: roster,
+  });
+  if (registered.error) throw new Error(`Could not register immutable publication manifest: ${registered.error.message}`);
+  const publicationManifestId = String(registered.data);
+  const persistedManifest = await db.from("chestny_catalog_publication_manifests")
+    .select("id,status,selected_count").eq("id", publicationManifestId).single();
+  if (persistedManifest.error) throw new Error(`Could not verify publication manifest: ${persistedManifest.error.message}`);
+  if (persistedManifest.data.selected_count !== ids.length) throw new Error("Saved publication manifest count does not match the selected cohort");
+  if (persistedManifest.data.status === "completed") {
+    console.log(JSON.stringify({ ...preview, publicationManifestId, publicationManifestStatus: "completed",
+      publicationExecuted: true, resumed: true, publishedCount: ids.length }, null, 2));
+    return;
+  }
+
+  let publishedCount = 0;
+  let failedCount = 0;
+  const batchLimit = 10;
+  const resumeFailedItems = existingManifest?.status === "paused";
+  try {
+    while (true) {
+      const claimed = await db.rpc("claim_chestny_catalog_publication_items", {
+        p_manifest_id: publicationManifestId, p_limit: batchLimit, p_lease_minutes: 30,
+        p_retry_exhausted: resumeFailedItems,
+      });
+      if (claimed.error) throw new Error(`Could not claim publication items: ${claimed.error.message}`);
+      const claimRows = (claimed.data ?? []) as Array<{ source_listing_id: string; canonical_id: string }>;
+      if (!claimRows.length) break;
+      const sourceIds = claimRows.map((row) => row.source_listing_id);
+      const currentVehicles = await db.from("vehicles").select("id,source_listing_id,is_public")
+        .in("source_listing_id", claimRows.map((row) => row.canonical_id));
+      if (currentVehicles.error) throw new Error(`Could not reconcile claimed publication items: ${currentVehicles.error.message}`);
+      const currentBySource = new Map((currentVehicles.data ?? []).map((vehicle) => [vehicle.source_listing_id, vehicle]));
+      const alreadyPublic: string[] = [];
+      const needsPersist: typeof items = [];
+      let batchPublished = 0;
+      let batchFailed = 0;
+      for (const sourceId of sourceIds) {
+        const canonical = canonicalBySource.get(sourceId)!;
+        const current = currentBySource.get(canonical);
+        if (current?.is_public) {
+          const finished = await db.rpc("finish_chestny_catalog_publication_item", {
+            p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+            p_status: "published", p_vehicle_id: current.id, p_error: null,
+          });
+          if (finished.error) throw new Error(`Could not reconcile already-public item ${sourceId}: ${finished.error.message}`);
+          alreadyPublic.push(sourceId);
+          publishedCount += 1;
+          batchPublished += 1;
+        } else {
+          const itemIndex = ids.indexOf(sourceId);
+          needsPersist.push(items[itemIndex]);
+        }
+      }
+      if (needsPersist.length) {
+        try {
+          const result = await persistPilot(needsPersist, true, {
+            source: "chestny-screened-cohort", runId: manifest.runId, publicationManifestId,
+            requested: needsPersist.length, publish: true, cohortSha256: idsHash,
+            sourceListingIds: needsPersist.map((item) => String(item.normalized?.sourceListingId ?? "")), selectedByBrand,
+            ...(catalogLaunchId ? { catalogLaunchId } : {}),
+          });
+          const persistedIds = needsPersist.map((item) => String(item.normalized?.sourceListingId ?? ""));
+          const verification = await db.from("vehicles").select("id,source_listing_id,is_public")
+            .in("source_listing_id", persistedIds);
+          if (verification.error) throw new Error(`Could not verify persisted publication batch: ${verification.error.message}`);
+          const verifiedById = new Map((verification.data ?? []).map((vehicle) => [vehicle.source_listing_id, vehicle]));
+          for (const item of needsPersist) {
+            const sourceId = ids.find((id) => canonicalBySource.get(id) === String(item.normalized?.sourceListingId ?? ""))!;
+            const vehicle = verifiedById.get(canonicalBySource.get(sourceId)!);
+            if (!vehicle?.is_public) {
+              const failure = await db.rpc("finish_chestny_catalog_publication_item", {
+                p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+                p_status: "failed", p_vehicle_id: vehicle?.id ?? null,
+                p_error: { reasonCode: "vehicle_not_public_after_persist", publishedCount: result.publishedCount },
+              });
+              if (failure.error) throw new Error(`Could not save failed publication item ${sourceId}: ${failure.error.message}`);
+              failedCount += 1;
+              batchFailed += 1;
+              continue;
+            }
+            const finished = await db.rpc("finish_chestny_catalog_publication_item", {
+              p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+              p_status: "published", p_vehicle_id: vehicle.id, p_error: null,
+            });
+            if (finished.error) throw new Error(`Could not save published item ${sourceId}: ${finished.error.message}`);
+            publishedCount += 1;
+            batchPublished += 1;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          for (const sourceId of sourceIds) {
+            if (alreadyPublic.includes(sourceId)) continue;
+            const currentState = await db.from("chestny_catalog_publication_manifest_items")
+              .select("status").eq("manifest_id", publicationManifestId).eq("source_listing_id", sourceId).single();
+            if (currentState.error || currentState.data.status !== "publishing") continue;
+            const finish = await db.rpc("finish_chestny_catalog_publication_item", {
+              p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+              p_status: "failed", p_vehicle_id: null, p_error: { message, reasonCode: "publication_batch_failed" },
+            });
+            if (finish.error) console.error(`Could not save failed item ${sourceId}: ${finish.error.message}`);
+            else {
+              failedCount += 1;
+              batchFailed += 1;
+            }
+          }
+        }
+      }
+      console.log(JSON.stringify({ publicationManifestId, batchSelected: sourceIds.length,
+        batchPublished, batchFailed, publishedCount, failedCount }));
+      if (batchFailed) break;
+    }
+    const finalItems = await db.from("chestny_catalog_publication_manifest_items")
+      .select("status").eq("manifest_id", publicationManifestId);
+    if (finalItems.error) throw new Error(`Could not read final publication outcomes: ${finalItems.error.message}`);
+    const statuses = finalItems.data ?? [];
+    const unfinished = statuses.filter((row) => row.status !== "published").length;
+    publishedCount = statuses.filter((row) => row.status === "published").length;
+    failedCount = statuses.filter((row) => row.status === "failed").length;
+    if (unfinished === 0) {
+      const statusUpdate = await db.rpc("set_chestny_catalog_publication_manifest_status", {
+        p_manifest_id: publicationManifestId, p_status: "completed", p_error: null,
+      });
+      if (statusUpdate.error) throw new Error(`Could not complete publication manifest: ${statusUpdate.error.message}`);
+    } else {
+      const statusUpdate = await db.rpc("set_chestny_catalog_publication_manifest_status", {
+        p_manifest_id: publicationManifestId, p_status: "paused",
+        p_error: { unfinished, publishedCount, failedCount },
+      });
+      if (statusUpdate.error) throw new Error(`Could not pause incomplete publication manifest: ${statusUpdate.error.message}`);
+    }
+    console.log(JSON.stringify({ ...preview, publicationManifestId,
+      publicationManifestStatus: unfinished === 0 ? "completed" : "paused",
+      publicationExecuted: true, publishedCount, failedCount, unfinished }));
+    if (unfinished) process.exitCode = 1;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await db.rpc("set_chestny_catalog_publication_manifest_status", {
+      p_manifest_id: publicationManifestId, p_status: "paused", p_error: { message },
+    });
+    throw error;
+  }
 }
 
 main().catch((error) => {
