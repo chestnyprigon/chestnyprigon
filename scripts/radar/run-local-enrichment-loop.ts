@@ -150,8 +150,14 @@ async function screenCompletedItems(full = false, waveId?: string) {
 
 type WaveRecord = { id: string; wave_number: number; candidate_count: number; status: string; last_error?: Record<string, unknown> | null };
 type ScreeningSummary = { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
+type PublicationReplyMarkup = { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
 
-async function screenWaveInBackground(wave: WaveRecord, full: boolean, notify: (message: string) => Promise<void>) {
+function publicationReviewMarkup(readyCount: number) {
+  if (readyCount < 1) return undefined;
+  return { inline_keyboard: [[{ text: `Проверить публикацию · ${readyCount}`, callback_data: `pub:r:${runId}:${readyCount}` }]] };
+}
+
+async function screenWaveInBackground(wave: WaveRecord, full: boolean, notify: (message: string, markup?: PublicationReplyMarkup) => Promise<void>) {
   try {
     const result = await screenCompletedItems(full, wave.id) as ScreeningSummary;
     await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${result.readyForPublication ?? 0}. Публикация не выполнялась. Run: ${runId}`);
@@ -173,7 +179,7 @@ async function processPersistedWaves(input: {
   lockToken: string;
   signal: AbortSignal;
   run: { candidate_count: number; rules: Record<string, unknown> | null };
-  notify: (message: string) => Promise<void>;
+  notify: (message: string, markup?: PublicationReplyMarkup) => Promise<void>;
   setActiveWave: (wave: WaveRecord) => void;
   delayMs: number;
   concurrency: number;
@@ -213,7 +219,7 @@ async function processPersistedWaves(input: {
       throw new Error(`Wave ${currentWave.wave_number} has unsupported status ${currentWave.status}`);
     }
 
-    let recoveredQuery = client.from("chestny_enrichment_queue").select("id")
+    const recoveredQuery = client.from("chestny_enrichment_queue").select("id")
       .eq("run_id", runId).eq("wave_id", currentWave.id).eq("status", "leased");
     const { data: abandoned, error: abandonedError } = await recoveredQuery;
     if (abandonedError) throw new Error(`Could not inspect leases for wave ${currentWave.wave_number}: ${abandonedError.message}`);
@@ -308,7 +314,10 @@ async function processPersistedWaves(input: {
     const { error } = await client.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() })
       .eq("id", runId).eq("status", "running");
     if (error) throw new Error(`Could not complete run after screening: ${error.message}`);
-    await notify(`🏁 Run ${runId} завершён: обработаны все сохранённые волны, screening готов. Публикация не выполнялась.`);
+    const finalScreening = await screenCompletedItems(true);
+    const ready = finalScreening.readyForPublication ?? 0;
+    const markup = publicationReviewMarkup(ready);
+    await notify(`🏁 Run ${runId} завершён: обработаны все сохранённые волны, полный screening готов. Допущено ${finalScreening.decisions?.approved ?? 0}, отклонено ${finalScreening.decisions?.rejected ?? 0}, изолировано ${finalScreening.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}. Публикация не выполнялась.${ready ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : " Допущенных карточек нет."}`, markup);
   }
 }
 
@@ -325,6 +334,10 @@ async function publicationDisposition(launchId: string | null) {
     matchedGoal = data;
   }
   const parameters = (matchedGoal?.parameters ?? {}) as Record<string, unknown>;
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "current_run_only") {
+    return "Публикация отдельно разрешена только для текущего завершённого run; новые волны не запускаются.";
+  }
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "whole_run") {
     return "Публикация разрешена пакетно для одобренных карточек; координатор отдельно сообщит фактический итог.";
@@ -380,8 +393,8 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
   }
   const initialCounts = await queueCounts();
   let processed = attemptedEnrichmentItems(initialCounts);
-  const notify = async (message: string) => {
-    try { await notifyCatalogOwner(message); }
+  const notify = async (message: string, markup?: PublicationReplyMarkup) => {
+    try { await notifyCatalogOwner(message, markup); }
     catch (error) { console.error(`Telegram progress notification failed: ${error instanceof Error ? error.message : String(error)}`); }
   };
   const processedBeforeWave = processed;
@@ -490,7 +503,10 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     const screeningSummary = screening
       ? `Screening волны: допущено ${screening.decisions?.approved ?? 0}, отклонено ${screening.decisions?.rejected ?? 0}, изолировано ${screening.decisions?.isolated ?? 0}; готово к публикации ${screening.readyForPublication ?? 0}.`
       : "Волна поставлена на паузу до завершения обогащения; screening не запускался.";
-    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${publication}`);
+    const fullRunFinished = finalCounts.queued + finalCounts.leased === 0 && !waveId;
+    let finalMarkup: PublicationReplyMarkup | undefined;
+    if (fullRunFinished && screening) finalMarkup = publicationReviewMarkup(screening.readyForPublication ?? 0);
+    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${publication}${finalMarkup ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : ""}`, finalMarkup);
   } catch (error) {
     if (!signal.aborted) {
       if (waveId) {

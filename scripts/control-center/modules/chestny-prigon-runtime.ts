@@ -16,6 +16,25 @@ export function createChestnyPrigonRuntime(input: {
 }) {
   const publishRun = async (runId: string): Promise<Record<string, unknown>> => {
     const outputPath = `output/chestny-vps-publication-ready-${runId}.json`;
+    const screeningOutput = await new Promise<string>((resolve, reject) => {
+      const child = spawn("npm", ["run", "--silent", "radar:screen-vps-staging"], {
+        env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId, CHESTNY_PUBLICATION_OUTPUT_PATH: outputPath },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on("error", reject);
+      child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`Publication screening exited ${code}: ${stderr.trim() || stdout.trim()}`)));
+    });
+    const jsonStart = screeningOutput.indexOf('{\n  "status"');
+    if (jsonStart < 0) throw new Error(`Publication screening returned no summary: ${screeningOutput.trim()}`);
+    const screening = JSON.parse(screeningOutput.slice(jsonStart)) as { status?: string; runId?: string; readyForPublication?: number };
+    if (screening.status !== "completed" || screening.runId !== runId || !Number.isInteger(screening.readyForPublication)) {
+      throw new Error(`Publication screening summary did not match run ${runId}`);
+    }
+    if (screening.readyForPublication === 0) return { runId, selected: 0, unique: 0, acceptedCount: 0, errorCount: 0, published: false, skipped: "no_approved_candidates" };
     const output = await new Promise<string>((resolve, reject) => {
       const child = spawn("npm", ["run", "--silent", "radar:publish-vps-staging"], {
         env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId, CHESTNY_PUBLICATION_OUTPUT_PATH: outputPath },
@@ -198,6 +217,14 @@ export function createChestnyPrigonRuntime(input: {
       if (task.parameters.publishAuthorized !== true || task.parameters.pilotApproved !== true) {
         return { stage: "publication_gate", action: null, state: "ready", summary: "Screening завершён; публикация и продолжение набора ждут отдельного утверждения владельца", result: { runId: run.id, awaitingPublicationAuthorization: true } };
       }
+      const publishedRunIds = Array.isArray(task.progress.publishedRunIds) ? task.progress.publishedRunIds.map(String) : [];
+      if (task.parameters.publicationMode === "current_run_only") {
+        if (publishedRunIds.includes(run.id)) return { stage: "publication_complete", action: null, state: "ready",
+          summary: `Публикация run ${run.id} завершена; новые волны автоматически не запускаются`, result: task.result ?? { runId: run.id } };
+        return { stage: "publish_wave", action: "run", state: "ready",
+          summary: `Публикую только одобренные карточки завершённого run ${run.id}; поиск следующих волн не запускается`,
+          progress: { intent: "publish", currentRunId: run.id } };
+      }
       const launchId = String(task.parameters.launchId ?? run.rules?.catalogLaunchId ?? "");
       const target = Number(task.parameters.targetPublications ?? 1_000);
       if (!launchId) return { stage: "blocked", action: null, state: "paused", summary: "У задачи не задан catalog launch" };
@@ -205,7 +232,6 @@ export function createChestnyPrigonRuntime(input: {
       if (error) return { stage: "quota_read_error", action: null, state: "paused", summary: `Не удалось проверить цель публикаций: ${error.message}` };
       const published = (brandRows ?? []).reduce((sum, row) => sum + Number(row.published_count ?? 0), 0);
       if (published >= target) return { stage: "goal_completed", action: null, state: "completed", summary: `Цель достигнута: ${published}/${target} новых публикаций`, result: { published, target } };
-      const publishedRunIds = Array.isArray(task.progress.publishedRunIds) ? task.progress.publishedRunIds.map(String) : [];
       if (!publishedRunIds.includes(run.id)) return { stage: "publish_wave", action: "run", state: "ready", summary: `Публикую проверенные карточки волны ${Number(task.progress.waveNumber ?? 1)}`, progress: { intent: "publish", currentRunId: run.id, published, target } };
       return { stage: "search_next_wave", action: "run", state: "ready", summary: `Ищу следующую волну по квотам: опубликовано ${published}/${target}`, progress: { intent: "next_wave", currentRunId: run.id, published, target } };
     }

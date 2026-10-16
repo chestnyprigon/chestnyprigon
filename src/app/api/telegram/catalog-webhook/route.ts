@@ -5,7 +5,7 @@ import { renderRunBrandProgress, summarizeRunBrandProgress, type RunQuota, type 
 
 type TelegramActor = { id: number };
 type TelegramChat = { id?: number; type?: string };
-type TelegramMessage = { text?: string; from?: TelegramActor; chat?: TelegramChat };
+type TelegramMessage = { text?: string; message_id?: number; from?: TelegramActor; chat?: TelegramChat };
 type TelegramCallback = {
   id: string;
   data?: string;
@@ -55,6 +55,10 @@ const MENU_COMMANDS: Record<string, string> = {
 
 function publicationState(goal: CatalogGoal | null, run?: Run | null) {
   const parameters = goal?.parameters ?? {};
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "current_run_only") {
+    return "Публикация разрешена только для текущего завершённого run; следующие волны не запускаются автоматически.";
+  }
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "whole_run") {
     return `Публикация цели: разрешена пакетно (до ${Number(parameters.publicationBatchLimit ?? parameters.maxItemsPerWave ?? 50)} карточек за волну); публикуются только одобренные screening карточки.`;
@@ -532,6 +536,17 @@ async function handleMessage(update: TelegramUpdate) {
     const db = database();
     const run = await currentRun(db);
     const goal = run ? await goalForRun(db, run.id) : null;
+    if (run?.status === "completed" && goal && Number(goal.progress?.waveNumber ?? 1) >= 1) {
+      const { count, error } = await db.from("chestny_catalog_decisions").select("source_listing_id", { count: "exact", head: true })
+        .eq("run_id", run.id).eq("decision", "approved");
+      if (error) throw new Error("Could not count screening-approved catalog cards");
+      const approved = count ?? 0;
+      if (approved > 0 && goal.parameters?.publishAuthorized !== true) {
+        return apiResponse("sendMessage", { chat_id: chatId,
+          text: `Run ${run.id} завершён. Screening одобрил ${approved} карточек. Нажмите кнопку, чтобы проверить состояние очереди и перейти к отдельному подтверждению публикации. До второго подтверждения публикации не будет.`,
+          reply_markup: { inline_keyboard: [[{ text: `Проверить публикацию · ${approved}`, callback_data: `pub:r:${run.id}:${approved}` }]] } });
+      }
+    }
     return apiResponse("sendMessage", {
       chat_id: chatId,
       text: `${publicationState(goal, run)}\n${goal ? `Этап цели: ${goalStageLabel(goal.progress?.stage)}. Публикацией управляет координатор после завершения screening волны.` : "Для текущего run нет связанной цели Control Center."}${run ? `\nТекущий run: ${run.id} (${run.status}).` : ""}`,
@@ -620,6 +635,73 @@ async function handleCallback(update: TelegramUpdate) {
   if (!callback) return noOp();
   if (!owner || !actor || String(actor.id) !== owner || callback.message?.chat?.type !== "private" || String(chatId) !== owner) {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Нет доступа", show_alert: true });
+  }
+  const publicationAction = data[0] === "pub" ? data[1] : null;
+  if ((publicationAction === "r" || publicationAction === "c") && data.length === 4) {
+    const runId = data[2];
+    const readyHint = Number(data[3]);
+    if (!/^[0-9a-f-]{36}$/i.test(runId) || !Number.isSafeInteger(readyHint) || readyHint < 1 || readyHint > 5_000) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная кнопка публикации", show_alert: true });
+    }
+    const db = database();
+    const [runResult, taskResult, counts, approvedResult, lockResult, wavesResult] = await Promise.all([
+      db.from("chestny_enrichment_runs").select("id,status").eq("id", runId).maybeSingle(),
+      db.from("control_center_tasks").select("id,state,parameters,progress,updated_at")
+        .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle(),
+      queueCounts(db, runId),
+      db.from("chestny_catalog_decisions").select("source_listing_id", { count: "exact", head: true })
+        .eq("run_id", runId).eq("decision", "approved"),
+      db.from("chestny_enrichment_worker_lock").select("run_id,expires_at")
+        .eq("lock_name", "chestny-catalog-enrichment").maybeSingle(),
+      db.from("chestny_enrichment_waves").select("status").eq("run_id", runId),
+    ]);
+    if (runResult.error || !runResult.data || taskResult.error || !taskResult.data) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Нет связанной завершённой цели публикации", show_alert: true });
+    }
+    if (approvedResult.error || lockResult.error || wavesResult.error) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Не удалось проверить безопасность публикации", show_alert: true });
+    }
+    const task = taskResult.data;
+    const parameters = (task.parameters ?? {}) as Record<string, unknown>;
+    const progress = (task.progress ?? {}) as Record<string, unknown>;
+    const activeLock = lockResult.data && Date.parse(lockResult.data.expires_at) > Date.now();
+    const unfinishedWave = (wavesResult.data ?? []).some((wave) => !["ready", "completed"].includes(wave.status));
+    if (runResult.data.status !== "completed" || counts.queued + counts.leased > 0 || activeLock || unfinishedWave || task.state !== "ready") {
+      const messageId = callback.message?.message_id;
+      const response = { method: messageId ? "editMessageText" : "answerCallbackQuery",
+        ...(messageId ? { chat_id: chatId, message_id: messageId, text: `Публикацию пока нельзя подтвердить для run ${runId}: run или screening ещё не завершены, очередь не пуста, worker активен либо цель уже выполняет другой этап.` }
+          : { callback_query_id: callback.id, text: "Run или screening ещё не готовы к публикации", show_alert: true }) };
+      return NextResponse.json(response);
+    }
+    const approvedCount = approvedResult.count ?? 0;
+    if (approvedCount < readyHint) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Число screening-решений изменилось; запросите /catalog_publish заново", show_alert: true });
+    }
+    if (publicationAction === "r") {
+      if (parameters.publishAuthorized === true) {
+        return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Публикация уже разрешена или выполняется", show_alert: true });
+      }
+      const messageId = callback.message?.message_id;
+      if (!messageId) return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Не удалось открыть подтверждение", show_alert: true });
+      return NextResponse.json({ method: "editMessageText", chat_id: chatId, message_id: messageId,
+        text: `Проверка пройдена для run ${runId}: run завершён, очередь пуста, активного worker нет. Screening одобрил ${readyHint}. Перед фактической записью в каталог локальный координатор заново сформирует run-отчёт и применит gate публикации; часть карточек может быть исключена проверками дублей, свежести и качества. Это подтверждение запустит публикацию только этого run; следующие волны автоматически не начнутся.`,
+        reply_markup: { inline_keyboard: [[{ text: `Подтверждаю публикацию · до ${readyHint}`, callback_data: `pub:c:${runId}:${readyHint}` }]] } });
+    }
+    if (parameters.publishAuthorized === true || parameters.publicationMode === "current_run_only") {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Публикация уже разрешена или была запущена", show_alert: true });
+    }
+    const nextParameters = { ...parameters, pilotApproved: true, publishAuthorized: true, publicationMode: "current_run_only" };
+    const nextProgress = { ...progress, intent: "publish", stage: "publication_gate", publicationEnabled: true };
+    const { data: updated, error: updateError } = await db.from("control_center_tasks")
+      .update({ parameters: nextParameters, progress: nextProgress, updated_at: new Date().toISOString() })
+      .eq("id", task.id).eq("state", "ready").eq("updated_at", task.updated_at).select("id").maybeSingle();
+    if (updateError || !updated) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Цель успела измениться; публикация не разрешена. Обновите статус.", show_alert: true });
+    }
+    const messageId = callback.message?.message_id;
+    if (messageId) return NextResponse.json({ method: "editMessageText", chat_id: chatId, message_id: messageId,
+      text: `✅ Публикация разрешена только для run ${runId}. Mac mini повторно проверит сохранённые данные и опубликует только прошедшие gate карточки. Поиск и следующие волны не запускаются.` });
+    return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Публикация разрешена только для этого run; координатор переданному Mac mini", show_alert: true });
   }
   if (data.length !== 5 || data[0] !== "catalog" || data[1] !== "confirm") {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная команда", show_alert: true });

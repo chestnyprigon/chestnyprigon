@@ -67,6 +67,10 @@ async function publicationPolicy(runId: string) {
   }
   const parameters = (goal?.parameters ?? {}) as Record<string, unknown>;
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
+    && parameters.publicationMode === "current_run_only") {
+    return "Владелец отдельно разрешил публикацию только текущего завершённого run; следующие волны не запускаются автоматически.";
+  }
+  if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "whole_run") {
     return "Цель разрешает пакетную публикацию только допущенных screening карточек после завершения волны.";
   }
