@@ -68,12 +68,8 @@ rotate_log
 /usr/bin/printf '%s starting run %s max-items=%s transport=%s\n' "$(/bin/date -u +%FT%TZ)" "$RUN_ID" "$MAX_ITEMS" "$TRANSPORT" >> "$LOG_FILE"
 cd "$PROJECT_ROOT" || exit 72
 
-# The worker has its own global DB/file lock. Recheck here so a manual
-# launchctl kickstart or duplicate request cannot terminate a legitimate run.
-if [[ -e /tmp/encar-coordination/chestny-catalog-enrichment.lock ]]; then
-  /usr/bin/printf '%s global worker lock is already present; refusing duplicate launch\n' "$(/bin/date -u +%FT%TZ)" >> "$LOG_FILE"
-  exit 75
-fi
+# The worker owns duplicate and stale-lock handling. Do not reject a lock file
+# here: after a Mac restart its PID is stale, and the worker can safely recover it.
 
 if [[ "$RUN_MODE" == "targeted_report_refresh" ]]; then
   /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &

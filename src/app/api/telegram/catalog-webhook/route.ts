@@ -254,19 +254,31 @@ function goalProgressLabel(goal: CatalogGoal, currentProcessed?: number) {
   return `${wave ? `Волна ${wave}. ` : ""}Опубликовано по цели: ${published}/${target}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
 }
 
-async function queueCounts(db: ReturnType<typeof database>, runId: string) {
+async function queueCounts(db: ReturnType<typeof database>, runId: string, waveId?: string) {
   const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
   const entries = await Promise.all(statuses.map(async (status) => {
-    const { count, error } = await db.from("chestny_enrichment_queue")
+    let query = db.from("chestny_enrichment_queue")
       .select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", status);
+    if (waveId) query = query.eq("wave_id", waveId);
+    const { count, error } = await query;
     if (error) throw new Error("Could not read catalog queue");
     return [status, count ?? 0] as const;
   }));
   return Object.fromEntries(entries) as Record<string, number>;
 }
 
-async function decisionCounts(db: ReturnType<typeof database>, runId: string) {
+async function decisionCounts(db: ReturnType<typeof database>, runId: string, sourceIds?: string[]) {
   const decisions = ["approved", "rejected", "isolated"];
+  if (sourceIds) {
+    const counts = Object.fromEntries(decisions.map((decision) => [decision, 0])) as Record<string, number>;
+    for (let offset = 0; offset < sourceIds.length; offset += 100) {
+      const { data, error } = await db.from("chestny_catalog_decisions")
+        .select("decision").eq("run_id", runId).in("source_listing_id", sourceIds.slice(offset, offset + 100));
+      if (error) throw new Error("Could not read catalog screening decisions for the current wave");
+      for (const row of data ?? []) if (row.decision in counts) counts[row.decision] += 1;
+    }
+    return counts;
+  }
   const entries = await Promise.all(decisions.map(async (decision) => {
     const { count, error } = await db.from("chestny_catalog_decisions")
       .select("source_listing_id", { count: "exact", head: true })
@@ -275,6 +287,12 @@ async function decisionCounts(db: ReturnType<typeof database>, runId: string) {
     return [decision, count ?? 0] as const;
   }));
   return Object.fromEntries(entries) as Record<string, number>;
+}
+
+function waveStateLabel(status: string) {
+  return ({ queued: "ожидает обработки", enriching: "обогащается", enriched: "обогащена; идёт screening",
+    screening: "идёт screening", ready: "готова к проверке/публикации", paused: "приостановлена",
+    completed: "завершена" } as Record<string, string>)[status] ?? "состояние обновляется";
 }
 
 async function reportCounts(db: ReturnType<typeof database>, run: Run) {
@@ -389,19 +407,41 @@ async function handleMessage(update: TelegramUpdate) {
     }
     const counts = await queueCounts(db, run.id);
     const decisions = await decisionCounts(db, run.id);
-    const processed = counts.succeeded + counts.unavailable + counts.failed;
+    const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+    const { data: waves, error: wavesError } = await db.from("chestny_enrichment_waves")
+      .select("id,wave_number,candidate_count,status,last_error").eq("run_id", run.id).order("wave_number");
+    if (wavesError) throw new Error("Could not read saved wave progress");
+    const waveRows = waves ?? [];
+    const currentWave = waveRows.find((item) => ["queued", "enriching", "enriched", "screening", "paused"].includes(item.status))
+      ?? waveRows.at(-1) ?? null;
+    let waveSummary = "Сохранённые волны для этого run ещё не созданы.";
+    if (currentWave) {
+      const [waveQueue, waveSources] = await Promise.all([
+        queueCounts(db, run.id, currentWave.id),
+        db.from("chestny_enrichment_queue").select("source_listing_id").eq("run_id", run.id).eq("wave_id", currentWave.id),
+      ]);
+      if (waveSources.error) throw new Error("Could not read candidate IDs for the current wave");
+      const waveProcessed = waveQueue.succeeded + waveQueue.unavailable + waveQueue.failed + waveQueue.cancelled;
+      const waveDecisions = await decisionCounts(db, run.id,
+        (waveSources.data ?? []).map((row) => String(row.source_listing_id)));
+      const savedError = currentWave.last_error && typeof currentWave.last_error === "object"
+        ? `\nПричина: ${pauseReasonLabel(currentWave.last_error)}` : "";
+      waveSummary = `Волна ${currentWave.wave_number}/${waveRows.length} — ${waveStateLabel(currentWave.status)}\nОбработано ${waveProcessed}/${currentWave.candidate_count}; ждут ${waveQueue.queued}, в работе ${waveQueue.leased}\nScreening: допущено ${waveDecisions.approved}, отклонено ${waveDecisions.rejected}, изолировано ${waveDecisions.isolated}${savedError}`;
+    }
+    const transport = run.rules?.transport === "direct" ? "домашняя сеть, без прокси"
+      : run.rules?.transport === "proxy" ? "Decodo proxy" : "не записан в запуске";
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
     if (command === "/catalog_report") {
       const reports = await reportCounts(db, run);
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Успешно обогащено:</b> ${counts.succeeded}\n<b>Недоступно:</b> ${counts.unavailable}\n<b>Ошибок:</b> ${counts.failed}\n<b>В очереди:</b> ${counts.queued}; в работе: ${counts.leased}\n\n<b>Screening:</b> допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\n<b>Отчёты:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; данные не найдены ${reports.missing}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\n<b>Всего обработано:</b> ${processed} из ${run.candidate_count}\n<b>Успешно обогащено:</b> ${counts.succeeded}\n<b>Недоступно:</b> ${counts.unavailable}\n<b>Ошибок:</b> ${counts.failed}\n<b>Отменено:</b> ${counts.cancelled}\n<b>В очереди:</b> ${counts.queued}; в работе: ${counts.leased}\n\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\n<b>Отчёты:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; данные не найдены ${reports.missing}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
     }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);
     return apiResponse("sendMessage", {
       chat_id: chatId,
       parse_mode: "HTML",
-      text: `${reportTitle}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Текущая волна</b>\n<b>Состояние:</b> ${runStateLabel(run.status)}\n<b>Обработано:</b> ${processed} из ${run.candidate_count}\n<b>Очередь:</b> ${counts.queued} ждут · ${counts.leased} в работе\n<b>Обогащение:</b> ${counts.succeeded} успешно · ${counts.unavailable} недоступно · ${counts.failed} ошибок\n<b>Отбор:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
+      text: `${reportTitle}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Run:</b> ${escapeHtml(runStateLabel(run.status))} · транспорт: ${transport}\n<b>Всего по run:</b> ${processed}/${run.candidate_count} обработано · ${counts.queued} ждут · ${counts.leased} в работе\n\n<b>Текущая волна</b>\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
     });
   }
 

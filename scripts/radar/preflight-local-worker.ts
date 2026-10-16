@@ -2,7 +2,6 @@ import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { CATALOG_POLICY } from "../encar/catalog-policy";
 import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
-import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
 
 config({ path: ".env.local", quiet: true });
 
@@ -18,11 +17,38 @@ async function main() {
   if (transport !== "direct" && transport !== "proxy") throw new Error("--transport must be direct or proxy");
   const directCheckOnly = process.argv.includes("--direct-check-only");
   const proxyCheckOnly = process.argv.includes("--proxy-check-only");
+  const runId = process.argv.find((item) => item.startsWith("--run-id="))?.slice("--run-id=".length);
   if (directCheckOnly && proxyCheckOnly) throw new Error("Choose only one of --direct-check-only or --proxy-check-only");
   if (directCheckOnly && transport !== "direct") throw new Error("--direct-check-only requires --transport=direct");
   if (proxyCheckOnly && transport !== "proxy") throw new Error("--proxy-check-only requires --transport=proxy");
 
   if (directCheckOnly) {
+    if (runId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--run-id must be a run UUID");
+      const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: run, error } = await db.from("chestny_enrichment_runs").select("id,status,rules,candidate_count").eq("id", runId).single();
+      if (error) throw new Error(`Could not read run during preflight: ${error.message}`);
+      if (!(["approved", "running", "paused"] as string[]).includes(run.status)) throw new Error(`Run status ${run.status} is not eligible for a worker`);
+      if (run.rules?.transport !== "direct") throw new Error(`Run transport is ${String(run.rules?.transport ?? "unset")}; direct preflight requires a run saved as direct`);
+      const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+        .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", new Date().toISOString()).maybeSingle();
+      if (lockError) throw new Error(`Could not inspect active worker lock: ${lockError.message}`);
+      const queue: Record<string, number> = {};
+      for (const status of ["queued", "leased"]) {
+        const result = await db.from("chestny_enrichment_queue").select("id", { count: "exact", head: true })
+          .eq("run_id", runId).eq("status", status);
+        if (result.error) throw new Error(`Could not count ${status} work: ${result.error.message}`);
+        queue[status] = result.count ?? 0;
+      }
+      console.log(JSON.stringify({ preflight: lock ? "blocked_by_active_worker" : "passed", runId, runStatus: run.status,
+        candidateCount: run.candidate_count, queue, transport: "direct_home_network", proxyCredentialRead: false,
+        proxyDispatcherUsed: false, activeWorkerRunId: lock?.run_id ?? null,
+        encarRequestsMade: 0, queueClaimsMade: 0, publicationAttempted: false }, null, 2));
+      if (lock) throw new Error(`An Encar worker holds the global lock for run ${lock.run_id}`);
+      return;
+    }
     console.log(JSON.stringify({
       preflight: "direct_transport_ready",
       transport: "direct_home_network",
@@ -36,10 +62,27 @@ async function main() {
 
   const proxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
   if (proxyCheckOnly) {
+    if (runId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--run-id must be a run UUID");
+      const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: run, error } = await db.from("chestny_enrichment_runs").select("id,status,rules,candidate_count").eq("id", runId).single();
+      if (error) throw new Error(`Could not read run during preflight: ${error.message}`);
+      if (run.rules?.transport !== "proxy") throw new Error(`Run transport is ${String(run.rules?.transport ?? "unset")}; proxy preflight requires a run saved as proxy`);
+      const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+        .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", new Date().toISOString()).maybeSingle();
+      if (lockError) throw new Error(`Could not inspect active worker lock: ${lockError.message}`);
+      console.log(JSON.stringify({ preflight: lock ? "blocked_by_active_worker" : "proxy_credential_ready", runId,
+        runStatus: run.status, candidateCount: run.candidate_count, transport: "decodo_proxy",
+        proxyEndpoint: new URL(proxyUrl!).host, proxyDispatcherUsed: true, activeWorkerRunId: lock?.run_id ?? null,
+        encarRequestsMade: 0, queueClaimsMade: 0, publicationAttempted: false }, null, 2));
+      if (lock) throw new Error(`An Encar worker holds the global lock for run ${lock.run_id}`);
+      return;
+    }
     console.log(JSON.stringify({ preflight: "proxy_credential_ready", transport: "decodo_proxy", proxyEndpoint: new URL(proxyUrl!).host, encarRequestsMade: 0 }, null, 2));
     return;
   }
-  const runId = process.argv.find((item) => item.startsWith("--run-id="))?.slice("--run-id=".length);
   if (!runId || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--run-id must be a run UUID");
 
   const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
@@ -49,6 +92,7 @@ async function main() {
     .select("id,status,candidate_count,rules").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
   if (!(run.status === "approved" || run.status === "running")) throw new Error(`Run status ${run.status} is not eligible for a worker`);
+  if (run.rules?.transport !== transport) throw new Error(`Run transport is ${String(run.rules?.transport ?? "unset")}; requested preflight transport is ${transport}`);
   const targetedReportRefresh = run.rules?.type === "targeted_report_refresh";
 
   const counts: Record<string, number> = {};
@@ -59,8 +103,11 @@ async function main() {
     counts[status] = count ?? 0;
   }
 
-  await withEnrichmentWorkerLock({ db, runId, task: async () => {
-    console.log(JSON.stringify({
+  const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+    .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment")
+    .gt("expires_at", new Date().toISOString()).maybeSingle();
+  if (lockError) throw new Error(`Could not inspect active worker lock: ${lockError.message}`);
+  console.log(JSON.stringify({
       preflight: "passed",
       runId,
       runStatus: run.status,
@@ -79,8 +126,9 @@ async function main() {
       encarRequestsMade: 0,
       queueClaimsMade: 0,
       publicationAttempted: false,
+      activeWorkerRunId: lock?.run_id ?? null,
     }, null, 2));
-  } });
+  if (lock) throw new Error(`An Encar worker holds the global lock for run ${lock.run_id}`);
 }
 
 main().catch((error) => {

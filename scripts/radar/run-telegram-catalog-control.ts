@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { readTelegramBotToken } from "./telegram-keychain";
+import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
 import { ControlTaskRepository } from "../control-center/task-repository";
 import { ControlTaskService } from "../control-center/task-service";
 import { ControlTaskCoordinator } from "../control-center/coordinator";
@@ -168,6 +169,33 @@ async function isLocalWorkerActive(runId: string) {
   }
 }
 
+async function recoverInterruptedLocalWorker() {
+  const runId = (await readFile(activeRunFile, "utf8").catch(() => "")).trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) return;
+  const { data: run, error } = await db.from("chestny_enrichment_runs").select("status")
+    .eq("id", runId).maybeSingle();
+  if (error) throw new Error(`Could not inspect saved local worker run: ${error.message}`);
+  if (!run || run.status !== "running") return;
+  if (await isLocalWorkerActive(runId)) return;
+  const now = new Date().toISOString();
+  const { data: lock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+    .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", now).maybeSingle();
+  if (lockError) throw new Error(`Could not inspect worker lock during recovery: ${lockError.message}`);
+  if (lock) return;
+
+  const recoveryFile = join(stateDir, "worker-recovery.json");
+  let previous: { runId?: string; attemptedAt?: string } = {};
+  try { previous = JSON.parse(await readFile(recoveryFile, "utf8")) as typeof previous; } catch { /* no prior attempt */ }
+  if (previous.runId === runId && previous.attemptedAt && Date.now() - Date.parse(previous.attemptedAt) < 60_000) return;
+
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("Could not determine macOS GUI user id during recovery");
+  const kick = spawnSync("/bin/launchctl", ["kickstart", `gui/${uid}/com.chestnyprigon.catalog-worker`], { encoding: "utf8" });
+  if (kick.status !== 0) throw new Error(`Could not recover saved worker ${runId} (launchctl exit ${kick.status ?? "unknown"})`);
+  await writeFile(recoveryFile, JSON.stringify({ runId, attemptedAt: now }), { mode: 0o600 });
+  await sendTelegram(Number(ownerId), `🔄 Восстанавливаю незавершённый run ${runId} из сохранённой очереди после перезапуска процесса. Проверка не делала запросов к Encar; worker продолжит с сохранённого этапа.`);
+}
+
 async function monitorCatalogProgress() {
   let snapshot: ProgressSnapshot | null = null;
   try { snapshot = JSON.parse(await readFile(telegramProgressFile, "utf8")) as ProgressSnapshot; }
@@ -249,7 +277,31 @@ async function startWorker(command: Command) {
   if (configuredTransport !== undefined && configuredTransport !== "direct" && configuredTransport !== "proxy") {
     throw new Error(`Run has unsupported Encar transport ${String(configuredTransport)}`);
   }
-  await writeFile(activeTransportFile, configuredTransport ?? "proxy", { mode: 0o600 });
+  const transport = configuredTransport ?? "proxy";
+  if (transport === "proxy") readEncarProxyUrlFromKeychain();
+  const now = new Date().toISOString();
+  const { data: workerLock, error: lockError } = await db.from("chestny_enrichment_worker_lock")
+    .select("run_id,expires_at").eq("lock_name", "chestny-catalog-enrichment").gt("expires_at", now).maybeSingle();
+  if (lockError) throw new Error(`Could not verify worker lock during preflight: ${lockError.message}`);
+  if (workerLock) throw new Error(`Preflight stopped: Encar worker lock is held by run ${workerLock.run_id}`);
+  const queueCounts = await Promise.all(["queued", "leased"].map(async (status) => {
+    const { count, error } = await db.from("chestny_enrichment_queue").select("id", { count: "exact", head: true })
+      .eq("run_id", command.run_id).eq("status", status);
+    if (error) throw new Error(`Could not count ${status} candidates during preflight: ${error.message}`);
+    return [status, count ?? 0] as const;
+  }));
+  const resumableWave = (persistedWaves ?? []).some((wave) =>
+    ["queued", "enriching", "enriched", "screening", "paused"].includes(wave.status));
+  if (!resumableWave && queueCounts.every(([, count]) => count === 0)) {
+    throw new Error("Preflight stopped: run has no queued work or unfinished screening wave");
+  }
+  const preflight = { status: "passed", runId: command.run_id, transport: transport === "direct" ? "direct_home_network" : "decodo_proxy",
+    proxyCredential: transport === "proxy" ? "available in login Keychain" : "not read",
+    proxyDispatcherUsed: transport === "proxy", queued: queueCounts.find(([name]) => name === "queued")?.[1] ?? 0,
+    leased: queueCounts.find(([name]) => name === "leased")?.[1] ?? 0,
+    savedWaves: persistedWaves?.length ?? 0, encarRequestsMade: 0, queueClaimsMade: 0, publicationAttempted: false };
+  console.log(JSON.stringify({ workerPreflight: preflight }));
+  await writeFile(activeTransportFile, transport, { mode: 0o600 });
   if (modeRun.data.rules?.type === "saved_queue_remainder") {
     await writeFile(join(stateDir, "active-mode"), "saved_queue_until_complete", { mode: 0o600 });
   } else if (modeRun.data.rules?.type !== "targeted_report_refresh") {
@@ -263,6 +315,7 @@ async function startWorker(command: Command) {
     if (uid === undefined) throw new Error("Could not determine macOS GUI user id");
     const kick = spawnSync("/bin/launchctl", ["kickstart", `gui/${uid}/com.chestnyprigon.catalog-worker`], { encoding: "utf8" });
     if (kick.status !== 0) throw new Error(`Could not start worker LaunchAgent (exit ${kick.status ?? "unknown"})`);
+    return preflight;
   } catch (error) {
     if (!existing.trim()) await unlink(activeRunFile).catch(() => undefined);
     await unlink(activeWaveSizeFile).catch(() => undefined);
@@ -323,7 +376,7 @@ async function startPreparedRun(command: Command) {
   if (transitioned) await setRunStatus(command.run_id, "running", ["approved"]);
   else if (current.status !== "running") throw new Error(`Run ${command.run_id} has status ${current.status}; worker can start only from approved or running`);
   try {
-    await startWorker(command);
+    return await startWorker(command);
   } catch (error) {
     const marker = await readFile(activeRunFile, "utf8").catch(() => "");
     if (marker.trim() === command.run_id) await unlink(activeRunFile).catch(() => undefined);
@@ -357,8 +410,8 @@ async function startInitialWave(task: { id: string; parameters: Record<string, u
     }
     if (discoveredRun.status !== "running") throw new Error(`Discovered pilot run has unexpected status ${discoveredRun.status}`);
   }
-  await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 50 });
-  await sendTelegram(Number(ownerId), `Пилот запущен: поиск нашёл ${queued} кандидатов; начались обогащение и screening. Публикация выключена.`).catch(() => undefined);
+  const preflight = await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 50 });
+  await sendTelegram(Number(ownerId), `Пилот запущен: поиск нашёл ${queued} кандидатов. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Начались обогащение и screening. Публикация выключена.`).catch(() => undefined);
   return { runId: search.runId, queued,
     summary: `Пилотный поиск завершён: ${queued} кандидатов в run ${search.runId}. Worker запущен; далее обогащение и screening. Публикация выключена.` };
 }
@@ -391,13 +444,13 @@ async function processCommand(command: Command) {
             await setRunStatus(search.runId, "completed", ["approved"]);
             return `Поиск завершён, но новых кандидатов не найдено. Позиции марок сохранены; следующий поиск начнётся с них. Публикации нет.`;
           }
-          await startPreparedRun({ ...command, run_id: search.runId });
+          const preflight = await startPreparedRun({ ...command, run_id: search.runId });
           const newRunPolicy = await publicationPolicy(search.runId);
-          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Worker запущен; после обогащения выполнится screening. ${newRunPolicy}`;
+          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Предстартовая проверка пройдена через ${preflight.transport === "direct_home_network" ? "домашнюю сеть без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Worker запущен; после обогащения выполнится screening. ${newRunPolicy}`;
         }
         if (current.status !== "approved") throw new Error(`Run ${command.run_id} has status ${current.status}; it is not ready to start`);
-        await startPreparedRun(command);
-        return `Начата обработка подготовленной волны run ${command.run_id}, лимит ${command.max_items}. Новые объявления не ищутся. ${await publicationPolicy(command.run_id)}`;
+        const preflight = await startPreparedRun(command);
+        return `Начата обработка подготовленной волны run ${command.run_id}, лимит ${command.max_items}. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Новые объявления не ищутся. ${await publicationPolicy(command.run_id)}`;
       }
     case "resume": {
       const { data: current, error } = await db.from("chestny_enrichment_runs")
@@ -413,15 +466,16 @@ async function processCommand(command: Command) {
         await setRunStatus(command.run_id, "paused", ["running"]);
       }
       await setRunStatus(command.run_id, "running", ["paused"]);
+      let preflight: Awaited<ReturnType<typeof startWorker>>;
       try {
-        await startWorker(command);
+        preflight = await startWorker(command);
       } catch (error) {
         const marker = await readFile(activeRunFile, "utf8").catch(() => "");
         if (marker.trim() === command.run_id) await unlink(activeRunFile).catch(() => undefined);
         await setRunStatus(command.run_id, "paused", ["running"]).catch(() => undefined);
         throw error;
       }
-      return `Волна run ${command.run_id} возобновлена; лимит — ${command.max_items}. После обработки автоматически выполняется screening. ${await publicationPolicy(command.run_id)}`;
+      return `Волна run ${command.run_id} возобновлена; лимит — ${command.max_items}. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. После обработки автоматически выполняется screening. ${await publicationPolicy(command.run_id)}`;
     }
     case "pause":
       await setRunStatus(command.run_id, "paused", ["approved", "running"]);
@@ -557,6 +611,8 @@ async function main() {
         }
       }
     }
+    try { await recoverInterruptedLocalWorker(); }
+    catch (error) { console.error(`Could not recover interrupted local worker: ${error instanceof Error ? error.message : String(error)}`); }
     try { await monitorCatalogProgress(); }
     catch (error) { console.error(`Could not notify catalog progress: ${error instanceof Error ? error.message : String(error)}`); }
   } finally {
