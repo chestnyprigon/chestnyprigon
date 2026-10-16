@@ -60,7 +60,11 @@ async function existingIdentifiers(client: SupabaseClient, ids: string[]) {
 async function main() {
   const apply = process.argv.includes("--apply");
   const pageSize = numberArgument("page-size", 100, 20, 200);
-  const pilotPoolTarget = numberArgument("pilot-candidates", 50, 1, 500);
+  // A scale run can reserve a larger candidate pool while retaining the same
+  // publication quotas. Keep the old flag for the 50-item pilot command.
+  const candidatePoolTarget = process.argv.some((arg) => arg.startsWith("--candidate-pool-target="))
+    ? numberArgument("candidate-pool-target", 50, 1, 5_000)
+    : numberArgument("pilot-candidates", 50, 1, 500);
   const maxPagesPerBrand = numberArgument("max-pages-per-brand", 3, 1, 20);
   const launchId = process.env.CHESTNY_CATALOG_LAUNCH_ID?.trim();
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
@@ -68,7 +72,7 @@ async function main() {
   });
   let launchQuery = client.from("chestny_catalog_launches").select("id,name,status,rules");
   if (launchId) launchQuery = launchQuery.eq("id", launchId);
-  else launchQuery = launchQuery.eq("name", "local-catalog-1000-20261007");
+  else launchQuery = launchQuery.in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1);
   const { data: launch, error: launchError } = await launchQuery.single();
   if (launchError) throw new Error(launchError.message);
   if (!(["prepared", "running"] as string[]).includes(launch.status)) throw new Error(`Launch status is ${launch.status}`);
@@ -101,14 +105,14 @@ async function main() {
     processedCandidates: processedByManufacturer.get(String(row.manufacturer)) ?? 0, conversionRate: row.conversion_rate === null ? null : Number(row.conversion_rate),
     exhausted: row.status === "exhausted",
   }));
-  const plan = planBrandSearch(states, pilotPoolTarget);
+  const plan = planBrandSearch(states, candidatePoolTarget);
   const printable = plan.map((item) => ({
     manufacturer: item.manufacturer, target: item.quotaTarget, published: item.quotaTarget - item.remainingQuota,
     remaining: item.remainingQuota, searchOffset: item.searchOffset, scanned: item.scannedCount,
     candidates: item.candidateCount, processed: item.processedCandidates, backlog: item.backlogCandidates,
     pilotConversion: item.conversionRate, candidatesToFind: item.candidatesToFind,
     conversionBlocked: item.conversionBlocked,
-    reserveBasis: item.conversionRate === null ? `pilot pool (${pilotPoolTarget})` : "observed pilot conversion",
+    reserveBasis: item.conversionRate === null ? `candidate pool (${candidatePoolTarget})` : "observed pilot conversion",
     status: item.exhausted ? "exhausted" : item.conversionBlocked ? "pilot-conversion-zero" : "searchable",
   }));
   if (!apply) {
@@ -157,7 +161,8 @@ async function main() {
   if (!runId) {
     const { data: run, error: runError } = await client.from("chestny_enrichment_runs").insert({
       project: "chestny-prigon", status: "approved", candidate_count: 0, source_file: "local-catalog-launch-search",
-      rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version, discoveryOnly: true, transport: transportArgument },
+      rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version,
+        discoveryOnly: true, transport: transportArgument, publication: "disabled", candidatePoolTarget },
     }).select("id").single();
     if (runError) throw new Error(runError.message);
     runId = run.id;
@@ -266,7 +271,8 @@ async function main() {
     .select("manufacturer,target,published_count,remaining_quota,search_offset,scanned_count,candidate_count,processed_candidates,candidate_backlog,conversion_rate,status,candidates_needed_at_observed_conversion")
     .eq("launch_id", launch.id).order("manufacturer");
   if (progressError) throw new Error(progressError.message);
-  console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, transport: transportArgument, pageSize, maxPagesPerBrand, pages: summaries, progress: finalProgress }, null, 2));
+  console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, transport: transportArgument,
+    candidatePoolTarget, pageSize, maxPagesPerBrand, pages: summaries, progress: finalProgress }, null, 2));
   } });
 }
 

@@ -383,6 +383,7 @@ async function reportCounts(db: ReturnType<typeof database>, run: Run, published
   let ready = 0;
   let unavailable = 0;
   let missing = 0;
+  const endpointOutcomes: ReasonGroups = new Map();
   for (let offset = 0; offset < succeededIds.length; offset += 100) {
     const ids = succeededIds.slice(offset, offset + 100);
     const { data, error } = await db.from("chestny_catalog_staging")
@@ -394,9 +395,143 @@ async function reportCounts(db: ReturnType<typeof database>, run: Run, published
     missing += ids.filter((id) => !found.has(id)).length;
     ready += rows.filter((row) => row.report_status === "ready").length;
     unavailable += rows.filter((row) => row.report_status === "unavailable").length;
+    for (const row of rows) {
+      const endpointStatus = row.encar_payload?.endpointStatus;
+      if (!endpointStatus || typeof endpointStatus !== "object" || Array.isArray(endpointStatus)) continue;
+      for (const [endpoint, raw] of Object.entries(endpointStatus as Record<string, unknown>)) {
+        const state = typeof raw === "string" ? raw
+          : raw && typeof raw === "object" ? String((raw as Record<string, unknown>).state ?? "unknown") : "unknown";
+        if (state !== "ok") addReasonCodes(endpointOutcomes, [`${endpoint}:${state}`]);
+      }
+    }
   }
 
-  return { ready, unavailable, missing, published };
+  return { ready, unavailable, missing, published, endpointOutcomes };
+}
+
+const reasonLabels: Record<string, string> = {
+  identity_run_canonical_duplicate: "дубль по canonical ID в этом прогоне",
+  identity_source_identifier_already_linked: "ID объявления уже связан с карточкой в базе",
+  identity_catalog_source_id_already_exists: "ID объявления уже есть в каталоге",
+  identity_existing_staging_conflict: "конфликт с существующей staging-карточкой",
+  advertisement_not_active: "объявление больше не активно в Encar",
+  source_access_blocked: "Encar ограничил доступ (403)",
+  source_rate_limited: "Encar ограничил частоту запросов (429)",
+  source_authentication_error: "ошибка авторизации источника",
+  temporary_network_error: "временная сетевая ошибка",
+  gallery_incomplete: "недостаточно фотографий",
+  detail_empty_response: "Encar вернул пустой ответ по карточке",
+  source_unavailable: "Encar не вернул карточку объявления",
+  identity_integrity_failed: "ID автомобиля конфликтует с уже сохранёнными данными",
+  canonical_identifier_missing: "Encar не вернул canonical ID автомобиля",
+  incomplete_gallery: "неполная галерея фотографий",
+  transient_request: "временная ошибка запроса к Encar",
+  enrichment_error: "ошибка обработки данных объявления",
+  other_enrichment_error: "ошибка обработки без отдельного кода причины",
+  reason_not_recorded: "причина не сохранена в очереди",
+  source_listing_unavailable: "объявление недоступно в Encar",
+  history_confirmed_empty: "история автомобиля отсутствует",
+  history_confirmed_unavailable: "история недоступна в Encar",
+  inspection_usage_excluded: "осмотр выявил аренду, такси или коммерческое использование",
+  rental_plate_detected: "по номеру выявлен арендный автомобиль",
+  rental_detected: "в данных выявлена аренда",
+  lease_detected: "в данных выявлен лизинг",
+  taxi_detected: "выявлено использование в такси",
+  commercial_detected: "выявлено коммерческое использование",
+  electric_powertrain_excluded: "электромобиль исключён правилами запуска",
+  hydrogen_powertrain_excluded: "водородный автомобиль исключён правилами запуска",
+  model_year_below_minimum: "год выпуска ниже допустимого",
+  mileage_above_maximum: "пробег выше допустимого",
+  invalid_model_year: "не удалось подтвердить год выпуска",
+  invalid_mileage: "не удалось подтвердить пробег",
+  invalid_price: "не удалось подтвердить цену",
+  missing_identity: "не хватает марки или модели",
+  insufficient_photos: "недостаточно фотографий для допуска",
+  not_advertised: "источник подтвердил, что объявление снято",
+  advertisement_status_missing: "источник не подтвердил активность объявления",
+  seizure_record: "обнаружена запись об аресте; нужна проверка",
+  pledge_record: "обнаружена запись о залоге; нужна проверка",
+};
+
+function reasonLabel(code: string) {
+  return reasonLabels[code] ?? code.replace(/_/g, " ");
+}
+
+function endpointOutcomeLabel(value: string) {
+  const [endpoint, state] = value.split(":");
+  const endpointNames: Record<string, string> = {
+    options: "Опции", inspection: "Осмотр", diagnosis: "Диагностика",
+    insurance: "Страховая история", history: "История автомобиля",
+  };
+  const stateNames: Record<string, string> = {
+    confirmed_unavailable: "Encar подтвердил отсутствие данных",
+    confirmed_empty: "Encar вернул пустой ответ",
+    not_found: "отчёт не найден (404)",
+    skipped_pre_screen: "запрос пропущен предварительным фильтром",
+    skipped: "отчёт не запрашивался",
+  };
+  return `${endpointNames[endpoint] ?? endpoint}: ${stateNames[state] ?? state.replace(/_/g, " ")}`;
+}
+
+function renderEndpointOutcomes(groups: ReasonGroups) {
+  if (!groups.size) return "нет пропусков данных в сохранённых endpoint-статусах";
+  return [...groups.entries()].sort((left, right) => right[1] - left[1]).slice(0, 6)
+    .map(([value, count]) => `${escapeHtml(endpointOutcomeLabel(value))} — ${count}`).join("; ");
+}
+
+type ReasonGroups = Map<string, number>;
+
+function addReasonCodes(groups: ReasonGroups, codes: string[]) {
+  for (const code of new Set(codes.filter(Boolean))) groups.set(code, (groups.get(code) ?? 0) + 1);
+}
+
+function renderReasonGroups(groups: ReasonGroups) {
+  if (!groups.size) return "нет зафиксированных причин";
+  return [...groups.entries()].sort((left, right) => right[1] - left[1])
+    .slice(0, 6).map(([code, count]) => `${escapeHtml(reasonLabel(code))} — ${count}`).join("; ");
+}
+
+async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: string) {
+  const groups: Record<"failed" | "unavailable", ReasonGroups> = { failed: new Map(), unavailable: new Map() };
+  for (const status of ["failed", "unavailable"] as const) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await db.from("chestny_enrichment_queue")
+        .select("result,last_error").eq("run_id", runId).eq("status", status)
+        .order("source_listing_id").range(offset, offset + 999);
+      if (error) throw new Error(`Could not read ${status} reasons for catalog report`);
+      for (const row of data ?? []) {
+        const result = (row.result && typeof row.result === "object" ? row.result : {}) as Record<string, unknown>;
+        const rawCodes = Array.isArray(result.reasonCodes) ? result.reasonCodes : [];
+        const codes = rawCodes.filter((value): value is string => typeof value === "string");
+        const singleCode = typeof result.reasonCode === "string" ? result.reasonCode : null;
+        const failureClass = typeof result.failureClass === "string" ? result.failureClass : null;
+        addReasonCodes(groups[status], codes.length ? codes : [singleCode ?? failureClass ?? (row.last_error ? "other_enrichment_error" : "reason_not_recorded")]);
+      }
+      if (!data || data.length < 1_000) break;
+    }
+  }
+  return groups;
+}
+
+async function screeningOutcomeReasons(db: ReturnType<typeof database>, runId: string) {
+  const groups: Record<"rejected" | "isolated", ReasonGroups> = { rejected: new Map(), isolated: new Map() };
+  for (const decision of ["rejected", "isolated"] as const) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await db.from("chestny_catalog_decisions")
+        .select("evidence").eq("run_id", runId).eq("decision", decision)
+        .order("source_listing_id").range(offset, offset + 999);
+      if (error) throw new Error(`Could not read ${decision} reasons for catalog report`);
+      for (const row of data ?? []) {
+        const evidence = Array.isArray(row.evidence) ? row.evidence : [];
+        const codes = evidence.flatMap((item) => item && typeof item === "object"
+          && typeof (item as Record<string, unknown>).code === "string"
+          ? [String((item as Record<string, unknown>).code)] : []);
+        addReasonCodes(groups[decision], codes.length ? codes : ["reason_not_recorded"]);
+      }
+      if (!data || data.length < 1_000) break;
+    }
+  }
+  return groups;
 }
 
 async function enqueue(input: {
@@ -493,8 +628,11 @@ async function handleMessage(update: TelegramUpdate) {
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
     if (command === "/catalog_report") {
       const reports = await reportCounts(db, run, published);
+      const [queueReasons, screeningReasons] = await Promise.all([
+        queueOutcomeReasons(db, run.id), screeningOutcomeReasons(db, run.id),
+      ]);
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\n<b>Всего обработано:</b> ${processed} из ${run.candidate_count}\n<b>Успешно обогащено:</b> ${counts.succeeded}\n<b>Недоступно:</b> ${counts.unavailable}\n<b>Ошибок:</b> ${counts.failed}\n<b>Отменено:</b> ${counts.cancelled}\n<b>В очереди:</b> ${counts.queued}; в работе: ${counts.leased}\n\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\n<b>Отчёты:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; данные не найдены ${reports.missing}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько причин.\n\n<b>Ошибки и пропуски обогащения</b>\nОшибки (${counts.failed}): ${renderReasonGroups(queueReasons.failed)}\nНедоступно (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; успешно ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
     }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);

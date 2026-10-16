@@ -48,7 +48,8 @@
     "pricing:recalculate": "tsx scripts/pricing/recalculate.ts",
     "analytics:metrika": "tsx scripts/analytics/fetch-metrika-report.ts",
     "test:pricing": "tsx --test src/lib/pricing/*.test.ts",
-    "catalog:search-local": "tsx scripts/catalog/search-local-candidates.ts"
+    "catalog:search-local": "tsx scripts/catalog/search-local-candidates.ts",
+    "catalog:start-local-scale-run": "tsx scripts/catalog/start-local-scale-run.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",
