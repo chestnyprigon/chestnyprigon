@@ -8,8 +8,12 @@ import { screenStaging } from "../encar/staging-gate";
 config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
 const RUN_ID = process.argv.find((arg) => arg.startsWith("--run-id="))?.slice("--run-id=".length);
-const OFFSET = Number(process.argv.find((arg) => arg.startsWith("--offset="))?.slice("--offset=".length));
-const SIZE = Number(process.argv.find((arg) => arg.startsWith("--size="))?.slice("--size=".length));
+const OFFSET_ARG = process.argv.find((arg) => arg.startsWith("--offset="))?.slice("--offset=".length);
+const SIZE_ARG = process.argv.find((arg) => arg.startsWith("--size="))?.slice("--size=".length);
+const WAVE_NUMBER_ARG = process.argv.find((arg) => arg.startsWith("--wave-number="))?.slice("--wave-number=".length);
+const OFFSET = OFFSET_ARG === undefined ? Number.NaN : Number(OFFSET_ARG);
+const SIZE = SIZE_ARG === undefined ? Number.NaN : Number(SIZE_ARG);
+const WAVE_NUMBER = WAVE_NUMBER_ARG === undefined ? undefined : Number(WAVE_NUMBER_ARG);
 const OUTPUT = process.argv.find((arg) => arg.startsWith("--output="))?.slice("--output=".length);
 
 function required(value: string | undefined, name: string) {
@@ -29,14 +33,37 @@ function chunks<T>(items: T[], size: number) {
 
 async function main() {
   const runId = required(RUN_ID, "--run-id");
-  if (!Number.isInteger(OFFSET) || OFFSET < 0 || !Number.isInteger(SIZE) || SIZE < 1 || SIZE > 1_000) {
-    throw new Error("--offset must be non-negative and --size must be from 1 to 1000");
+  const waveScoped = WAVE_NUMBER !== undefined;
+  if (waveScoped) {
+    if (!Number.isSafeInteger(WAVE_NUMBER) || WAVE_NUMBER! < 1 || OFFSET_ARG !== undefined || SIZE_ARG !== undefined) {
+      throw new Error("--wave-number must be a positive integer and cannot be combined with --offset/--size");
+    }
+  } else if (!Number.isInteger(OFFSET) || OFFSET < 0 || !Number.isInteger(SIZE) || SIZE < 1 || SIZE > 1_000) {
+    throw new Error("Use either --wave-number=N or --offset=N --size=N (size 1..1000)");
   }
-  const outputPath = path.resolve(OUTPUT ?? `output/publication-cohort-${OFFSET + 1}-${OFFSET + SIZE}-${runId}.json`);
   const db = createClient(required(process.env.NEXT_PUBLIC_SUPABASE_URL, "NEXT_PUBLIC_SUPABASE_URL"),
     required(process.env.SUPABASE_SERVICE_ROLE_KEY, "SUPABASE_SERVICE_ROLE_KEY"), {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+  let offset = OFFSET;
+  let size = SIZE;
+  let waveId: string | undefined;
+  if (waveScoped) {
+    const waveResult = await db.from("chestny_enrichment_waves")
+      .select("id,wave_number,candidate_count,status")
+      .eq("run_id", runId).eq("wave_number", WAVE_NUMBER).maybeSingle();
+    if (waveResult.error) throw new Error(`Could not read selected wave: ${waveResult.error.message}`);
+    if (!waveResult.data) throw new Error(`Wave ${WAVE_NUMBER} was not found for run ${runId}`);
+    if (!["ready", "completed"].includes(waveResult.data.status)) {
+      throw new Error(`Wave ${WAVE_NUMBER} is ${waveResult.data.status}; only a fully screened wave can be prepared`);
+    }
+    waveId = String(waveResult.data.id);
+    size = Number(waveResult.data.candidate_count);
+    offset = 0;
+  }
+  const outputPath = path.resolve(OUTPUT ?? (waveScoped
+    ? `output/publication-cohort-wave-${WAVE_NUMBER}-${runId}.json`
+    : `output/publication-cohort-${offset + 1}-${offset + size}-${runId}.json`));
 
   const runResult = await db.from("chestny_enrichment_runs").select("id,status").eq("id", runId).single();
   if (runResult.error) throw new Error(`Could not read run: ${runResult.error.message}`);
@@ -44,15 +71,15 @@ async function main() {
     throw new Error(`Run status ${runResult.data.status} is not eligible for a publication cohort audit`);
   }
 
-  const queueResult = await db.from("chestny_enrichment_queue")
-    .select("id,source_listing_id,status,created_at")
-    .eq("run_id", runId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true })
-    .range(OFFSET, OFFSET + SIZE - 1);
-  if (queueResult.error) throw new Error(`Could not read the selected queue range: ${queueResult.error.message}`);
+  let queueQuery = db.from("chestny_enrichment_queue")
+    .select("id,source_listing_id,status,created_at,wave_position")
+    .eq("run_id", runId);
+  if (waveId) queueQuery = queueQuery.eq("wave_id", waveId).order("wave_position", { ascending: true });
+  else queueQuery = queueQuery.order("created_at", { ascending: true }).order("id", { ascending: true });
+  const queueResult = await queueQuery.range(offset, offset + size - 1);
+  if (queueResult.error) throw new Error(`Could not read the selected queue cohort: ${queueResult.error.message}`);
   const cohort = queueResult.data ?? [];
-  if (cohort.length !== SIZE) throw new Error(`Queue range is incomplete: got ${cohort.length}/${SIZE}`);
+  if (cohort.length !== size) throw new Error(`Queue cohort is incomplete: got ${cohort.length}/${size}`);
   const unfinished = cohort.filter((row) => ["queued", "leased"].includes(row.status));
   if (unfinished.length) throw new Error(`Selected range still has ${unfinished.length} queued or leased candidates`);
 
@@ -136,15 +163,16 @@ async function main() {
   if (alreadyCatalogued.size) rejectedReasons.already_in_catalogue = alreadyCatalogued.size;
   const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId) && !alreadyCatalogued.has(item.canonicalId));
 
-  const fullRangeIds = cohort.map((row) => String(row.source_listing_id));
+  const sourceIds = cohort.map((row) => String(row.source_listing_id));
   const manifest = {
     status: "prepared",
     runId,
-    cohortSize: SIZE,
-    rangeStart: OFFSET + 1,
-    rangeEnd: OFFSET + SIZE,
-    sourceCohortSha256: sha256(fullRangeIds),
-    sourceCandidateCount: SIZE,
+    ...(waveId ? { waveId, waveNumber: WAVE_NUMBER } : {}),
+    cohortSize: size,
+    rangeStart: waveScoped ? 1 : offset + 1,
+    rangeEnd: waveScoped ? size : offset + size,
+    sourceCohortSha256: sha256(sourceIds),
+    sourceCandidateCount: size,
     successfulEnrichments: successful.length,
     unsuccessfulCandidates: failed.length,
     selectedCount: selected.length,
@@ -158,8 +186,9 @@ async function main() {
     publicationExecuted: false,
     databaseWritten: false,
     runId,
-    range: `${OFFSET + 1}-${OFFSET + SIZE}`,
-    sourceCandidates: SIZE,
+    range: waveScoped ? `wave ${WAVE_NUMBER}` : `${offset + 1}-${offset + size}`,
+    ...(waveId ? { waveId } : {}),
+    sourceCandidates: size,
     successfulEnrichments: successful.length,
     unsuccessfulCandidates: failed.length,
     screeningPassed: passed.length,
