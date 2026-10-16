@@ -279,6 +279,10 @@ async function pendingRetries(db: Db) {
 
 async function maybeFinishRun(db: Db) {
   if (await hasPendingEnrichment(db, runId) || await pendingRetries(db)) return false;
+  const { data: waves, error: waveError } = await db.from("chestny_enrichment_waves")
+    .select("status").eq("run_id", runId);
+  if (waveError) throw new Error(`Could not verify wave completion: ${waveError.message}`);
+  if ((waves ?? []).some((wave: { status: string }) => !["ready", "completed"].includes(wave.status))) return false;
   const { error: updateError } = await db.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId).in("status", ["approved", "running"]);
   if (updateError) throw new Error(updateError.message);
   return true;

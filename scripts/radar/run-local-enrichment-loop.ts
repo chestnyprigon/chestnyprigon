@@ -148,6 +148,170 @@ async function screenCompletedItems(full = false, waveId?: string) {
   }
 }
 
+type WaveRecord = { id: string; wave_number: number; candidate_count: number; status: string; last_error?: Record<string, unknown> | null };
+type ScreeningSummary = { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
+
+async function screenWaveInBackground(wave: WaveRecord, full: boolean, notify: (message: string) => Promise<void>) {
+  try {
+    const result = await screenCompletedItems(full, wave.id) as ScreeningSummary;
+    await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${result.readyForPublication ?? 0}. Публикация не выполнялась. Run: ${runId}`);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const now = new Date().toISOString();
+    const { error: checkpointError } = await client.from("chestny_enrichment_waves").update({
+      status: "paused", last_error: { stage: "screening", message, observedAt: now }, updated_at: now,
+    }).eq("id", wave.id).eq("run_id", runId).eq("status", "screening");
+    if (checkpointError) console.error(`Could not pause screening checkpoint for wave ${wave.wave_number}: ${checkpointError.message}`);
+    await notify(`⚠️ Скрининг волны ${wave.wave_number} не завершился: ${message}. Обогащение следующих волн продолжается; публикации нет. Run: ${runId}`);
+    return false;
+  }
+}
+
+async function processPersistedWaves(input: {
+  waves: WaveRecord[];
+  lockToken: string;
+  signal: AbortSignal;
+  run: { candidate_count: number; rules: Record<string, unknown> | null };
+  notify: (message: string) => Promise<void>;
+  setActiveWave: (wave: WaveRecord) => void;
+  delayMs: number;
+  concurrency: number;
+  allowMatchingStagingRefresh: boolean;
+}) {
+  const { waves, lockToken, signal, run, notify, setActiveWave, delayMs, concurrency, allowMatchingStagingRefresh } = input;
+  const screeningJobs: Array<Promise<boolean>> = [];
+  let processedThisSession = 0;
+  let processed = attemptedEnrichmentItems(await queueCounts());
+  const proxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
+
+  for (const plannedWave of waves) {
+    setActiveWave(plannedWave);
+    const { data: runControl, error: runControlError } = await client.from("chestny_enrichment_runs")
+      .select("status").eq("id", runId).single();
+    if (runControlError) throw new Error(`Cannot refresh run control status: ${runControlError.message}`);
+    if (["paused", "cancelled"].includes(runControl.status)) break;
+    if (runControl.status === "completed") break;
+    if (runControl.status !== "running") throw new Error(`Run changed to unexpected status ${runControl.status}`);
+
+    const { data: wave, error: waveError } = await client.from("chestny_enrichment_waves")
+      .select("id,wave_number,candidate_count,status,last_error").eq("id", plannedWave.id).eq("run_id", runId).single();
+    if (waveError) throw new Error(`Cannot read wave ${plannedWave.wave_number}: ${waveError.message}`);
+    const currentWave = wave as WaveRecord;
+    if (["ready", "completed"].includes(currentWave.status)) continue;
+
+    if (currentWave.status === "enriched" || currentWave.status === "screening"
+      || (currentWave.status === "paused" && currentWave.last_error?.stage === "screening")) {
+      const now = new Date().toISOString();
+      const { error: updateError } = await client.from("chestny_enrichment_waves").update({ status: "screening", updated_at: now })
+        .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening", "paused"]);
+      if (updateError) throw new Error(`Could not resume screening for wave ${currentWave.wave_number}: ${updateError.message}`);
+      screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
+      continue;
+    }
+    if (!["queued", "enriching", "paused"].includes(currentWave.status)) {
+      throw new Error(`Wave ${currentWave.wave_number} has unsupported status ${currentWave.status}`);
+    }
+
+    let recoveredQuery = client.from("chestny_enrichment_queue").select("id")
+      .eq("run_id", runId).eq("wave_id", currentWave.id).eq("status", "leased");
+    const { data: abandoned, error: abandonedError } = await recoveredQuery;
+    if (abandonedError) throw new Error(`Could not inspect leases for wave ${currentWave.wave_number}: ${abandonedError.message}`);
+    const recoveredIds = (abandoned ?? []).map((row: { id: string }) => row.id);
+    if (recoveredIds.length) {
+      const { error } = await client.from("chestny_enrichment_queue").update({
+        status: "queued", lease_until: null, updated_at: new Date().toISOString(),
+      }).in("id", recoveredIds).eq("status", "leased");
+      if (error) throw new Error(`Could not recover leases for wave ${currentWave.wave_number}: ${error.message}`);
+    }
+
+    let waveCounts = await queueCounts(currentWave.id);
+    let checkPendingRetry = true;
+    while (waveCounts.queued + waveCounts.leased > 0 || checkPendingRetry) {
+      const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
+        .select("status").eq("id", runId).single();
+      if (currentRunError) throw new Error(`Cannot refresh run control status: ${currentRunError.message}`);
+      if (["paused", "cancelled"].includes(currentRun.status)) break;
+      if (currentRun.status !== "running") throw new Error(`Run changed to unexpected status ${currentRun.status}`);
+
+      const currentLimit = Math.max(1, Math.min(10, waveCounts.queued));
+      checkPendingRetry = false;
+      const workerResults = run.rules?.type === "targeted_report_refresh"
+        ? await Promise.all(Array.from({ length: Math.min(concurrency, currentLimit) }, () =>
+          runBatch(lockToken, signal, 1, allowMatchingStagingRefresh, delayMs, proxyUrl, currentWave.id)))
+        : [await runBatch(lockToken, signal, currentLimit, allowMatchingStagingRefresh, delayMs, proxyUrl, currentWave.id)];
+      const result = mergeWorkerResults(workerResults);
+      processedThisSession += result.claimed;
+      processed += result.claimed;
+      const globalCounts = await queueCounts();
+      waveCounts = await queueCounts(currentWave.id);
+      console.log(JSON.stringify({ runId, waveId: currentWave.id, waveNumber: currentWave.wave_number,
+        processedThisSession, processedTotal: processed, recoveredLeases: recoveredIds.length, transport, delayMs,
+        ...globalCounts, wave: waveCounts }));
+      if (result.results.some((item) => /HTTP (401|403|407|429)|captcha|verification/i.test(item.error ?? "")
+        || /^(endpoint_(auth_error|blocked|rate_limited)|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
+        throw new Error("Encar access restriction detected; local enrichment paused");
+      }
+      if (result.pendingRetries && waveCounts.queued === 0 && waveCounts.leased === 0) {
+        await new Promise(resolve => setTimeout(resolve, 30_000));
+        waveCounts = await queueCounts(currentWave.id);
+        checkPendingRetry = true;
+        continue;
+      }
+      if (waveCounts.queued + waveCounts.leased === 0) break;
+      if (result.claimed === 0) throw new Error(`Wave ${currentWave.wave_number} still has work but the worker claimed none`);
+      if (processedThisSession % 50 < result.claimed) {
+        await notify(`📈 Прогресс run ${runId}: обработано ${processed}/${run.candidate_count}; волна ${currentWave.wave_number}/${waves.length}. Осталось в этой волне ${waveCounts.queued + waveCounts.leased}. Ошибок ${globalCounts.failed}. Публикация выключена.`);
+      }
+    }
+
+    const { data: afterLoop, error: afterLoopError } = await client.from("chestny_enrichment_runs")
+      .select("status").eq("id", runId).single();
+    if (afterLoopError) throw new Error(`Cannot read run after wave ${currentWave.wave_number}: ${afterLoopError.message}`);
+    if (["paused", "cancelled"].includes(afterLoop.status)) break;
+    waveCounts = await queueCounts(currentWave.id);
+    if (waveCounts.queued + waveCounts.leased > 0) continue;
+
+    const now = new Date().toISOString();
+    if (!["enriched", "screening"].includes(currentWave.status)) {
+      const { error } = await client.from("chestny_enrichment_waves").update({
+        status: "enriched", enrichment_completed_at: now, updated_at: now,
+      }).eq("id", currentWave.id).eq("run_id", runId).in("status", ["queued", "enriching", "paused"]);
+      if (error) throw new Error(`Could not checkpoint enriched wave ${currentWave.wave_number}: ${error.message}`);
+    }
+    const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", updated_at: now })
+      .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening"]);
+    if (screeningError) throw new Error(`Could not start screening checkpoint for wave ${currentWave.wave_number}: ${screeningError.message}`);
+    await notify(`✅ Обогащение волны ${currentWave.wave_number}/${waves.length} завершено. Запустил её скрининг в отдельном процессе и продолжаю следующую волну. Публикация не выполняется. Run: ${runId}`);
+    screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
+  }
+
+  const { data: controlAtEnd, error: controlAtEndError } = await client.from("chestny_enrichment_runs")
+    .select("status").eq("id", runId).single();
+  if (controlAtEndError) throw new Error(`Could not read final run state: ${controlAtEndError.message}`);
+  await Promise.all(screeningJobs);
+  if (["paused", "cancelled"].includes(controlAtEnd.status)) return;
+
+  const { data: finalWaves, error: finalWavesError } = await client.from("chestny_enrichment_waves")
+    .select("status,last_error,wave_number").eq("run_id", runId);
+  if (finalWavesError) throw new Error(`Could not verify final wave states: ${finalWavesError.message}`);
+  const screeningFailures = (finalWaves ?? []).filter((item) => item.status === "paused" && (item.last_error as Record<string, unknown> | null)?.stage === "screening");
+  if (screeningFailures.length) {
+    const { error } = await client.from("chestny_enrichment_runs").update({
+      status: "paused", pause_reason: { source: "screening_attention", failedWaves: screeningFailures.map((item) => item.wave_number), observedAt: new Date().toISOString() },
+    }).eq("id", runId).eq("status", "running");
+    if (error) throw new Error(`Could not pause run for screening attention: ${error.message}`);
+    return;
+  }
+  const remaining = (finalWaves ?? []).filter((item) => !["ready", "completed"].includes(item.status));
+  if (!remaining.length) {
+    const { error } = await client.from("chestny_enrichment_runs").update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", runId).eq("status", "running");
+    if (error) throw new Error(`Could not complete run after screening: ${error.message}`);
+    await notify(`🏁 Run ${runId} завершён: обработаны все сохранённые волны, screening готов. Публикация не выполнялась.`);
+  }
+}
+
 async function publicationDisposition(launchId: string | null) {
   const { data: goal, error } = await client.from("control_center_tasks").select("parameters")
     .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
@@ -187,11 +351,12 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
   }
   const targetedReportRefresh = run.rules?.type === "targeted_report_refresh";
   const { data: waveRows, error: waveError } = await client.from("chestny_enrichment_waves")
-    .select("id,wave_number,candidate_count,status").eq("run_id", runId).order("wave_number");
+    .select("id,wave_number,candidate_count,status,last_error").eq("run_id", runId).order("wave_number");
   if (waveError) throw new Error(`Could not read persisted wave plan: ${waveError.message}`);
-  const plannedWaves = waveRows ?? [];
+  const plannedWaves = (waveRows ?? []) as WaveRecord[];
   const activeWave = plannedWaves.find((wave) => ["queued", "enriching", "enriched", "screening", "paused"].includes(wave.status)) ?? null;
-  const waveId = activeWave?.id as string | undefined;
+  let waveId = activeWave?.id;
+  let activeWaveNumber = activeWave?.wave_number;
   const waveAlreadyEnriched = activeWave?.status === "enriched" || activeWave?.status === "screening";
   if (requestedTargetedDelayMs !== undefined && !targetedReportRefresh) {
     throw new Error("--targeted-report-refresh-delay-ms is only allowed for targeted_report_refresh runs");
@@ -222,11 +387,24 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
   const processedBeforeWave = processed;
   let processedThisWave = 0;
   if (!run.rules?.catalogLaunchId) {
-    await notify(untilComplete
+    await notify(plannedWaves.length
+      ? `🚗 Run ${runId} запущен: ${run.candidate_count} кандидатов закреплены в ${plannedWaves.length} сохранённых волнах. Обогащаю волны по очереди; скрининг каждой пойдёт параллельно следующей. Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. Публикация выключена.`
+      : untilComplete
       ? `🚗 Обработка сохранённой очереди запущена\n\nВсего: ${run.candidate_count}\nОбработано ранее: ${processedBeforeWave}\nОсталось: ${initialCounts.queued}\nРежим: до конца очереди, последовательно, паузы ${effectiveDelayMs / 1000} секунд.\nПубликация выключена.\nRun: ${runId}`
       : `Началась новая волна run ${runId}. Обработано ранее ${processedBeforeWave}; лимит этой волны ${maxItems}; в очереди ${initialCounts.queued}. Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}.`);
   }
   try {
+    if (plannedWaves.length) {
+      await processPersistedWaves({
+        waves: plannedWaves, lockToken, signal, run,
+        notify,
+        setActiveWave: (wave) => { waveId = wave.id; activeWaveNumber = wave.wave_number; },
+        delayMs: effectiveDelayMs,
+        concurrency: effectiveConcurrency,
+        allowMatchingStagingRefresh: refreshRequested,
+      });
+      return;
+    }
     const encarProxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
     while (waveId || processedThisWave < maxItems) {
       const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
@@ -297,7 +475,7 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     if (finalCounts.queued + finalCounts.leased > 0 && (waveId ? finalWaveCounts.queued + finalWaveCounts.leased === 0 : processedThisWave >= maxItems)) {
       const { error } = await client.from("chestny_enrichment_runs").update({
         status: "paused",
-        pause_reason: { source: "wave_limit", waveId: waveId ?? null, waveNumber: activeWave?.wave_number ?? null, maxItems, processedThisWave, processedTotal: processed, observedAt: new Date().toISOString() },
+        pause_reason: { source: "wave_limit", waveId: waveId ?? null, waveNumber: activeWaveNumber ?? null, maxItems, processedThisWave, processedTotal: processed, observedAt: new Date().toISOString() },
       }).eq("id", runId).in("status", ["approved", "running"]);
       if (error) throw new Error(`Could not pause run at wave limit: ${error.message}`);
     }
@@ -318,7 +496,7 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       if (waveId) {
         const { error: wavePauseError } = await client.from("chestny_enrichment_waves").update({
           status: "paused",
-          last_error: { message: error instanceof Error ? error.message : String(error), observedAt: new Date().toISOString() },
+          last_error: { stage: "enrichment", message: error instanceof Error ? error.message : String(error), observedAt: new Date().toISOString() },
           updated_at: new Date().toISOString(),
         }).eq("id", waveId).eq("run_id", runId).in("status", ["queued", "enriching", "enriched", "screening"]);
         if (wavePauseError) throw new Error(`Worker failed and wave checkpoint could not be paused: ${wavePauseError.message}`);
