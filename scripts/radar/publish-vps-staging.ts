@@ -191,23 +191,27 @@ async function main() {
       .filter((quota: Record<string, unknown>) => typeof quota.manufacturer === "string" && Number.isInteger(quota.publicationTarget))
       .map((quota: Record<string, unknown>) => [String(quota.manufacturer), Number(quota.publicationTarget)]),
   );
+  let recommendedRemainingByBrand = new Map<string, number>();
   if (catalogLaunchId) {
     const { data: quotaRows, error: quotaError } = await client.from("chestny_catalog_brand_search_status")
-      .select("manufacturer,remaining_quota").eq("launch_id", catalogLaunchId);
+      .select("manufacturer,target,remaining_quota").eq("launch_id", catalogLaunchId);
     if (quotaError) throw new Error(`Could not load remaining publication quotas: ${quotaError.message}`);
-    brandTargets = new Map((quotaRows ?? []).map((quota) => [String(quota.manufacturer), Number(quota.remaining_quota)]));
+    brandTargets = new Map((quotaRows ?? []).map((quota) => [String(quota.manufacturer), Number(quota.target)]));
+    recommendedRemainingByBrand = new Map((quotaRows ?? []).map((quota) => [String(quota.manufacturer), Number(quota.remaining_quota)]));
   }
   const publishedByBrand: Record<string, number> = {};
-  let excludedByBrandQuota = 0;
-  const quotaCappedItems = brandTargets.size ? uniqueItems.filter((item) => {
+  for (const item of uniqueItems) {
     const brand = String(item.normalized!.manufacturer);
-    const target = brandTargets.get(brand);
-    if (target === undefined) throw new Error(`No approved publication quota for ${brand}`);
-    const current = publishedByBrand[brand] ?? 0;
-    if (current >= target) { excludedByBrandQuota += 1; return false; }
-    publishedByBrand[brand] = current + 1;
-    return true;
-  }) : uniqueItems;
+    if (brandTargets.size && !brandTargets.has(brand)) throw new Error(`No brand recommendation configured for ${brand}`);
+    publishedByBrand[brand] = (publishedByBrand[brand] ?? 0) + 1;
+  }
+  const remainingQuotaAdvisories = Object.entries(publishedByBrand).flatMap(([manufacturer, selected]) => {
+    const suggestedRemaining = recommendedRemainingByBrand.get(manufacturer);
+    return suggestedRemaining !== undefined && selected > suggestedRemaining
+      ? [{ manufacturer, selected, suggestedRemaining, aboveRecommendationBy: selected - suggestedRemaining }]
+      : [];
+  });
+  const quotaCappedItems = uniqueItems;
   const canonicalIds = quotaCappedItems.map((item) => String(item.normalized!.sourceListingId));
   for (let offset = 0; offset < canonicalIds.length; offset += 200) {
     const chunk = canonicalIds.slice(offset, offset + 200);
@@ -263,7 +267,7 @@ async function main() {
     console.log(JSON.stringify({ batch: totals.batches, offset, requested: batch.length, published: result.acceptedCount }));
   }
   console.log(JSON.stringify({ ...totals, selected: selectedIds.length, unique: uniqueItems.length,
-    excludedByBrandQuota, publishedByBrand, published: true }, null, 2));
+    quotaPolicy: "advisory_brand_mix", remainingQuotaAdvisories, publishedByBrand, published: true }, null, 2));
 }
 
 main().catch((error) => {

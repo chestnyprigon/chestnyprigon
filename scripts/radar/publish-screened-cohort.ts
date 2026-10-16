@@ -165,15 +165,19 @@ async function main() {
       .filter((quota: Record<string, unknown>) => typeof quota.manufacturer === "string" && Number.isInteger(quota.publicationTarget))
       .map((quota: Record<string, unknown>) => [String(quota.manufacturer), Number(quota.publicationTarget)]),
   );
+  const recommendedRemainingByBrand = new Map<string, number>();
   const catalogLaunchId = run.rules?.catalogLaunchId ?? null;
   if (catalogLaunchId) {
     const launch = await db.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
     if (launch.error) throw new Error(`Could not verify publication launch: ${launch.error.message}`);
     if (!["prepared", "running"].includes(launch.data.status)) throw new Error(`Publication launch status is ${launch.data.status}`);
-    const quotas = await db.from("chestny_catalog_brand_search_status").select("manufacturer,target")
+    const quotas = await db.from("chestny_catalog_brand_search_status").select("manufacturer,target,remaining_quota")
       .eq("launch_id", catalogLaunchId);
     if (quotas.error) throw new Error(`Could not read launch brand recommendations: ${quotas.error.message}`);
-    for (const quota of quotas.data ?? []) brandTargets.set(String(quota.manufacturer), Number(quota.target));
+    for (const quota of quotas.data ?? []) {
+      brandTargets.set(String(quota.manufacturer), Number(quota.target));
+      recommendedRemainingByBrand.set(String(quota.manufacturer), Number(quota.remaining_quota));
+    }
   }
   const selectedByBrand: Record<string, number> = {};
   for (const item of items) {
@@ -213,36 +217,23 @@ async function main() {
       ? [{ manufacturer, suggested: target, projected: count, aboveSuggestionBy: count - target }]
       : [];
   });
-  let hardQuotaOverages: Array<{ manufacturer: string; selected: number; remaining: number; overBy: number }> = [];
-  if (catalogLaunchId) {
-    const launch = await db.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
-    if (launch.error) throw new Error(`Could not verify publication launch: ${launch.error.message}`);
-    if (!["prepared", "running"].includes(launch.data.status)) throw new Error(`Publication launch status is ${launch.data.status}`);
-    const quotas = await db.from("chestny_catalog_brand_search_status").select("manufacturer,remaining_quota")
-      .eq("launch_id", catalogLaunchId);
-    if (quotas.error) throw new Error(`Could not read hard launch quotas: ${quotas.error.message}`);
-    const remaining = new Map((quotas.data ?? []).map((row) => [String(row.manufacturer), Number(row.remaining_quota)]));
-    hardQuotaOverages = Object.entries(remainingToPublishByBrand).flatMap(([manufacturer, count]) => {
-      const quota = remaining.get(manufacturer);
-      if (quota === undefined) throw new Error(`No approved launch quota for ${manufacturer}`);
-      return count > quota ? [{ manufacturer, selected: count, remaining: quota, overBy: count - quota }] : [];
-    });
-  }
+  const remainingQuotaAdvisories = Object.entries(remainingToPublishByBrand).flatMap(([manufacturer, count]) => {
+    const suggestedRemaining = recommendedRemainingByBrand.get(manufacturer);
+    return suggestedRemaining !== undefined && count > suggestedRemaining
+      ? [{ manufacturer, selected: count, suggestedRemaining, aboveRecommendationBy: count - suggestedRemaining }]
+      : [];
+  });
   const preview = { mode: publish ? "publish" : "dry_run", runId: manifest.runId, runStatus: run.status,
     selected: ids.length, screeningPassed: items.length, selectedByBrand,
     previouslyPublishedByBrand, alreadyPublishedInCohortByBrand, remainingToPublishByBrand,
-    projectedByBrand, quotaMode: catalogLaunchId ? "hard_launch_quota" : "advisory_run_mix",
-    quotaAdvisories, hardQuotaOverages, unattributedPriorBatches: unattributedPriorBatches.length,
-    wouldPublishAll: hardQuotaOverages.length === 0, publicationExecuted: false,
+    projectedByBrand, quotaMode: "advisory_brand_mix",
+    quotaAdvisories, remainingQuotaAdvisories, unattributedPriorBatches: unattributedPriorBatches.length,
+    wouldPublishAll: true, publicationExecuted: false,
     sourceListingIdsSha256: idsHash };
   if (!publish) {
     console.log(JSON.stringify(preview, null, 2));
     return;
   }
-  if (hardQuotaOverages.length) {
-    throw new Error(JSON.stringify({ ...preview, message: "Publication refused: the linked catalog launch has a hard brand quota" }, null, 2));
-  }
-
   const roster = ids.map((sourceListingId, index) => ({ position: index + 1, source_listing_id: sourceListingId,
     canonical_id: canonicalIds[index], manufacturer: String(items[index].normalized?.manufacturer ?? "") }));
   const registered = await db.rpc("register_chestny_catalog_publication_manifest", {
