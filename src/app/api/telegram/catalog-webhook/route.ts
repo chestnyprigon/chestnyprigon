@@ -40,21 +40,15 @@ type CatalogGoal = {
   updated_at: string;
 };
 
-const OWNER_MENU = {
-  keyboard: [
-    [{ text: "📊 Статус" }, { text: "📈 Квоты" }, { text: "🧾 Отчёт" }],
-    [{ text: "⏸ Пауза" }, { text: "🛑 Остановить" }],
-  ],
-  resize_keyboard: true,
-  is_persistent: true,
-  input_field_placeholder: "Выберите действие",
-};
-
 const MENU_COMMANDS: Record<string, string> = {
   "📊 статус": "/catalog_status",
   "📈 квоты": "/catalog_plan",
   "🧾 отчёт": "/catalog_report",
   "⏸ пауза": "/catalog_pause",
+  "▶️ продолжить": "/catalog_resume",
+  "▶ продолжить": "/catalog_resume",
+  "▶️ начать очередь": "/catalog_start",
+  "🚀 новая цель": "/catalog_start",
   "🛑 остановить": "/catalog_stop",
 };
 
@@ -111,9 +105,41 @@ function pauseReasonLabel(value: unknown): string {
   return `${source}: ${description}${reason.observedAt ? ` (${formatDate(reason.observedAt)})` : ""}`;
 }
 
-function apiResponse(method: string, params: Record<string, unknown>) {
+async function ownerMenu(chatId: unknown) {
+  const common = [[{ text: "📊 Статус" }, { text: "📈 Квоты" }, { text: "🧾 Отчёт" }]];
+  if (String(chatId ?? "") !== (ownerId() ?? "")) return undefined;
+
+  try {
+    const db = database();
+    const run = await currentRun(db);
+    const tasks = await db.from("control_center_tasks")
+      .select("state,progress").eq("module_id", "chestny-prigon.catalog")
+      .in("state", ["queued", "preparing", "running", "ready", "paused"])
+      .order("updated_at", { ascending: false }).limit(1);
+    if (tasks.error) throw new Error("Could not read catalog goal state for Telegram menu");
+    const latestTask = tasks.data?.[0];
+    const actions = run?.status === "running"
+      ? [[{ text: "⏸ Пауза" }, { text: "🛑 Остановить" }]]
+      : run?.status === "paused"
+        ? [[{ text: "▶️ Продолжить" }, { text: "🛑 Остановить" }]]
+        : run?.status === "approved"
+          ? [[{ text: "▶️ Начать очередь" }, { text: "🛑 Остановить" }]]
+          : !latestTask ? [[{ text: "🚀 Новая цель" }]] : [];
+    return {
+      keyboard: [...common, ...actions],
+      resize_keyboard: true,
+      is_persistent: true,
+      input_field_placeholder: "Выберите действие",
+    };
+  } catch (error) {
+    console.error("Could not build state-aware catalog menu:", error instanceof Error ? error.message : "unknown error");
+    return { keyboard: common, resize_keyboard: true, is_persistent: true, input_field_placeholder: "Выберите действие" };
+  }
+}
+
+async function apiResponse(method: string, params: Record<string, unknown>) {
   const withMenu = method === "sendMessage" && !params.reply_markup
-    ? { ...params, reply_markup: OWNER_MENU }
+    ? { ...params, reply_markup: await ownerMenu(params.chat_id) }
     : params;
   return NextResponse.json({ method, ...withMenu });
 }
@@ -387,7 +413,6 @@ async function handleMessage(update: TelegramUpdate) {
       disable_web_page_preview: true,
       text: `🚗 <b>Панель каталога</b>\n\nКнопки показывают статус, квоты и отчёт. Волны запускаются координатором последовательно. При необходимости можно поставить обработку на паузу или остановить её.\n\nПубликация выполняется координатором после screening, только если цель получила необходимые разрешения.`,
       parse_mode: "HTML",
-      reply_markup: OWNER_MENU,
     });
   }
 
@@ -524,6 +549,7 @@ async function handleMessage(update: TelegramUpdate) {
           reply_markup: { inline_keyboard: [[{ text: "Создать отдельную пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
         });
       }
+      if (["completed", "cancelled"].includes(run.status)) return pilotGoalButton(db, chatId);
       const goal = await goalForRun(db, run.id);
       const callbackData = `catalog:confirm:start:${run.id}:50`;
       return apiResponse("sendMessage", {
