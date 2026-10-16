@@ -65,7 +65,7 @@ async function main() {
     ? `output/publication-cohort-wave-${WAVE_NUMBER}-${runId}.json`
     : `output/publication-cohort-${offset + 1}-${offset + size}-${runId}.json`));
 
-  const runResult = await db.from("chestny_enrichment_runs").select("id,status").eq("id", runId).single();
+  const runResult = await db.from("chestny_enrichment_runs").select("id,status,rules").eq("id", runId).single();
   if (runResult.error) throw new Error(`Could not read run: ${runResult.error.message}`);
   if (!["running", "paused", "completed"].includes(runResult.data.status)) {
     throw new Error(`Run status ${runResult.data.status} is not eligible for a publication cohort audit`);
@@ -95,13 +95,23 @@ async function main() {
   }
 
   const previouslyPublished = new Set<string>();
+  const attemptedPublicationIds = new Set<string>();
   const imports = await db.from("import_runs").select("cursor")
     .contains("cursor", { runId }).limit(100);
   if (imports.error) throw new Error(`Could not read previous publication batches: ${imports.error.message}`);
   for (const row of imports.data ?? []) {
     const cursor = row.cursor as Record<string, unknown> | null;
     if (cursor?.publish !== true || !Array.isArray(cursor.sourceListingIds)) continue;
-    for (const id of cursor.sourceListingIds) previouslyPublished.add(String(id));
+    for (const id of cursor.sourceListingIds) attemptedPublicationIds.add(String(id));
+  }
+
+  // Failed import batches may contain hidden drafts; an attempted write is
+  // not proof of publication.
+  for (const group of chunks([...attemptedPublicationIds], 200)) {
+    const publicRows = await db.from("vehicles").select("source_listing_id")
+      .in("source_listing_id", group).eq("is_public", true);
+    if (publicRows.error) throw new Error(`Could not verify prior publications: ${publicRows.error.message}`);
+    for (const row of publicRows.data ?? []) previouslyPublished.add(String(row.source_listing_id));
   }
 
   const byId = new Map(stageRows.map((row) => [String(row.source_listing_id), row]));
@@ -150,6 +160,8 @@ async function main() {
   }
   const candidateCanonicalIds = [...new Set(passed.map((item) => item.canonicalId))];
   const alreadyCatalogued = new Set<string>();
+  const baselineIds = new Set<string>();
+  const catalogLaunchId = runResult.data.rules?.catalogLaunchId;
   for (const group of chunks(candidateCanonicalIds, 200)) {
     const [vehicles, identifiers] = await Promise.all([
       db.from("vehicles").select("source_listing_id").in("source_listing_id", group),
@@ -160,8 +172,17 @@ async function main() {
     for (const row of vehicles.data ?? []) alreadyCatalogued.add(String(row.source_listing_id));
     for (const row of identifiers.data ?? []) alreadyCatalogued.add(String(row.source_identifier));
   }
+  if (catalogLaunchId) {
+    for (const group of chunks(candidateCanonicalIds, 200)) {
+      const baseline = await db.from("chestny_catalog_launch_baseline_identifiers")
+        .select("source_identifier").eq("launch_id", catalogLaunchId).in("source_identifier", group);
+      if (baseline.error) throw new Error(`Could not check launch baseline: ${baseline.error.message}`);
+      for (const row of baseline.data ?? []) baselineIds.add(String(row.source_identifier));
+    }
+  }
+  if (baselineIds.size) rejectedReasons.known_before_launch = baselineIds.size;
   if (alreadyCatalogued.size) rejectedReasons.already_in_catalogue = alreadyCatalogued.size;
-  const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId) && !alreadyCatalogued.has(item.canonicalId));
+  const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId) && !alreadyCatalogued.has(item.canonicalId) && !baselineIds.has(item.canonicalId));
 
   const sourceIds = cohort.map((row) => String(row.source_listing_id));
   const manifest = {

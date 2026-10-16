@@ -16,6 +16,7 @@ const DEFAULT_MANIFEST = `output/publication-cohort-368-${FIRST_COHORT_RUN_ID}.j
 
 type Manifest = {
   status: string;
+  recoveryManifestId?: string;
   runId: string;
   cohortSize?: number;
   sourceCohortSha256?: string;
@@ -120,12 +121,16 @@ async function main() {
   }
   const canonicalBySource = new Map(ids.map((sourceId, index) => [sourceId, canonicalIds[index]]));
   const existingManifestResult = await db.from("chestny_catalog_publication_manifests")
-    .select("id,status,selected_count,source_cohort_sha256")
+    .select("id,status,selected_count,source_cohort_sha256,last_error")
     .eq("run_id", manifest.runId).eq("selected_source_ids_sha256", idsHash).maybeSingle();
   if (existingManifestResult.error) throw new Error(`Could not read saved publication manifest: ${existingManifestResult.error.message}`);
   const existingManifest = existingManifestResult.data as null | {
     id: string; status: string; selected_count: number; source_cohort_sha256: string | null;
+    last_error?: { supersededByManifestId?: string };
   };
+  if (existingManifest?.last_error?.supersededByManifestId) {
+    throw new Error(`This manifest was superseded by ${existingManifest.last_error.supersededByManifestId}; use the filtered cohort`);
+  }
   const existingManifestItems = new Map<string, { canonical_id: string; status: string }>();
   const existingManifestCanonicalIds = new Set<string>();
   if (existingManifest) {
@@ -143,18 +148,42 @@ async function main() {
       throw new Error("Saved publication manifest does not match the selected source IDs and canonical IDs");
     }
   }
+  // A failed batch can leave hidden drafts. Recover only IDs explicitly owned
+  // by the paused original manifest for this same run and source cohort.
+  const recoverableCanonicalIds = new Set<string>();
+  if (manifest.recoveryManifestId) {
+    const original = await db.from("chestny_catalog_publication_manifests")
+      .select("run_id,status,source_cohort_sha256").eq("id", manifest.recoveryManifestId).single();
+    if (original.error || original.data.run_id !== manifest.runId || original.data.status !== "paused"
+      || original.data.source_cohort_sha256 !== manifest.sourceCohortSha256) {
+      throw new Error("Recovery manifest must be paused and belong to the same run and source cohort");
+    }
+    const roster = await db.from("chestny_catalog_publication_manifest_items")
+      .select("source_listing_id,canonical_id,status").eq("manifest_id", manifest.recoveryManifestId);
+    if (roster.error) throw new Error(`Could not verify recovery roster: ${roster.error.message}`);
+    const originalBySource = new Map((roster.data ?? []).map(row => [row.source_listing_id, row]));
+    for (const sourceId of ids) {
+      const row = originalBySource.get(sourceId);
+      if (!row || row.canonical_id !== canonicalBySource.get(sourceId) || !["pending", "failed"].includes(row.status)) {
+        throw new Error(`Recovery roster mismatch for ${sourceId}`);
+      }
+      if (row.status === "failed") recoverableCanonicalIds.add(row.canonical_id);
+    }
+  }
   for (const group of chunks(canonicalIds, 200)) {
     const [vehicles, identifiers] = await Promise.all([
-      db.from("vehicles").select("source_listing_id").in("source_listing_id", group),
+      db.from("vehicles").select("source_listing_id,is_public").in("source_listing_id", group),
       db.from("vehicle_source_identifiers").select("source_identifier").in("source_identifier", group),
     ]);
     if (vehicles.error) throw new Error(`Could not check catalogue duplicates: ${vehicles.error.message}`);
     if (identifiers.error) throw new Error(`Could not check identity duplicates: ${identifiers.error.message}`);
     const unexpectedVehicles = (vehicles.data ?? []).filter((vehicle) =>
-      !existingManifestCanonicalIds.has(vehicle.source_listing_id));
+      !existingManifestCanonicalIds.has(vehicle.source_listing_id)
+      && !(recoverableCanonicalIds.has(vehicle.source_listing_id) && !vehicle.is_public));
     const unexpectedIdentifiers = (identifiers.data ?? []).filter((identifier) =>
       !canonicalIdSet.has(identifier.source_identifier)
-      || !existingManifestCanonicalIds.has(String(identifier.source_identifier)));
+      || !(existingManifestCanonicalIds.has(String(identifier.source_identifier))
+        || recoverableCanonicalIds.has(String(identifier.source_identifier))));
     if (unexpectedVehicles.length || unexpectedIdentifiers.length) {
       throw new Error("A cohort ID is already in the catalogue outside this saved publication manifest; publication stopped before writes");
     }
@@ -171,6 +200,17 @@ async function main() {
     const launch = await db.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
     if (launch.error) throw new Error(`Could not verify publication launch: ${launch.error.message}`);
     if (!["prepared", "running"].includes(launch.data.status)) throw new Error(`Publication launch status is ${launch.data.status}`);
+    const baselineConflicts: string[] = [];
+    for (const group of chunks(canonicalIds, 200)) {
+      const baseline = await db.from("chestny_catalog_launch_baseline_identifiers")
+        .select("source_identifier").eq("launch_id", catalogLaunchId).in("source_identifier", group);
+      if (baseline.error) throw new Error(`Could not verify launch baseline: ${baseline.error.message}`);
+      baselineConflicts.push(...(baseline.data ?? []).map(row => String(row.source_identifier)));
+    }
+    if (baselineConflicts.length) throw new Error(JSON.stringify({
+      message: "Cohort includes canonical IDs known before this launch; prepare a filtered manifest before publication",
+      reasonCode: "known_before_launch", canonicalIds: baselineConflicts,
+    }));
     const quotas = await db.from("chestny_catalog_brand_search_status").select("manufacturer,target,remaining_quota")
       .eq("launch_id", catalogLaunchId);
     if (quotas.error) throw new Error(`Could not read launch brand recommendations: ${quotas.error.message}`);
