@@ -10,7 +10,9 @@ async function main() {
   if (!url || !key || !url.includes("ojnybjomttolhsfgkdqq")) throw Error("Expected chestny-prigon Supabase project");
   if (APPROVED_BRAND_QUOTAS.reduce((s,q)=>s+q.target,0)!==1000) throw Error("Quota sum must be 1000");
   const db=createClient(url,key);
-  const name="local-catalog-1000-20261007";
+  const nameArgument = process.argv.find((arg) => arg.startsWith("--name="))?.slice("--name=".length);
+  const name = nameArgument?.trim() || "local-catalog-1000-20261007";
+  if (!/^[a-z0-9][a-z0-9-]{5,79}$/.test(name)) throw Error("Launch name must use 6–80 lowercase letters, digits, and hyphens");
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
   if (process.argv.includes("--apply")) {

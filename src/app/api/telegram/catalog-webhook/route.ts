@@ -178,7 +178,7 @@ async function currentRun(db: ReturnType<typeof database>) {
 
   const tasks = await db.from("control_center_tasks")
     .select("state,progress,external_ref").eq("module_id", "chestny-prigon.catalog")
-    .in("state", ["queued", "preparing", "running", "ready"])
+    .in("state", ["queued", "preparing", "running", "ready", "paused"])
     .order("updated_at", { ascending: false }).limit(10);
   if (tasks.error) throw new Error("Could not read active catalog coordinator tasks");
   for (const task of tasks.data ?? []) {
@@ -186,11 +186,11 @@ async function currentRun(db: ReturnType<typeof database>) {
     const isNewGoalWaitingToStart = task.state === "ready" && !task.external_ref
       && ["search_pending", "search_candidates", "start_worker", "owner_command"].includes(stage);
     if (isNewGoalWaitingToStart) return null;
-    if (task.state === "running" && task.external_ref) {
+    if (["running", "ready", "paused"].includes(task.state) && task.external_ref) {
       const activeTaskRun = await db.from("chestny_enrichment_runs")
         .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
         .eq("id", task.external_ref).maybeSingle();
-      if (activeTaskRun.error) throw new Error("Could not read the run linked to the active coordinator task");
+      if (activeTaskRun.error) throw new Error("Could not read the run linked to the latest coordinator task");
       if (activeTaskRun.data) return activeTaskRun.data as Run;
     }
   }
@@ -497,8 +497,17 @@ async function handleMessage(update: TelegramUpdate) {
         progress,
       }) });
     }
-    const { data: launch, error: launchError } = await db.from("chestny_catalog_launches")
-      .select("id,status,name").eq("name", "local-catalog-1000-20261007").maybeSingle();
+    let launchId = String(run?.rules?.catalogLaunchId ?? "");
+    if (!launchId) {
+      const { data: latestGoal, error: goalError } = await db.from("control_center_tasks")
+        .select("parameters").eq("module_id", "chestny-prigon.catalog")
+        .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+      if (goalError) throw new Error("Could not read the latest catalog goal");
+      launchId = String((latestGoal?.parameters as Record<string, unknown> | null)?.launchId ?? "");
+    }
+    let launchQuery = db.from("chestny_catalog_launches").select("id,status,name");
+    launchQuery = launchId ? launchQuery.eq("id", launchId) : launchQuery.eq("name", "local-catalog-1000-20261007");
+    const { data: launch, error: launchError } = await launchQuery.maybeSingle();
     if (launchError) throw new Error("Could not read catalog launch plan");
     if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога пока не найден." });
     const { data: brands, error } = await db.from("chestny_catalog_brand_search_status")
