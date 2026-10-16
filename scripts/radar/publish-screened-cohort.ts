@@ -165,6 +165,16 @@ async function main() {
       .filter((quota: Record<string, unknown>) => typeof quota.manufacturer === "string" && Number.isInteger(quota.publicationTarget))
       .map((quota: Record<string, unknown>) => [String(quota.manufacturer), Number(quota.publicationTarget)]),
   );
+  const catalogLaunchId = run.rules?.catalogLaunchId ?? null;
+  if (catalogLaunchId) {
+    const launch = await db.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
+    if (launch.error) throw new Error(`Could not verify publication launch: ${launch.error.message}`);
+    if (!["prepared", "running"].includes(launch.data.status)) throw new Error(`Publication launch status is ${launch.data.status}`);
+    const quotas = await db.from("chestny_catalog_brand_search_status").select("manufacturer,target")
+      .eq("launch_id", catalogLaunchId);
+    if (quotas.error) throw new Error(`Could not read launch brand recommendations: ${quotas.error.message}`);
+    for (const quota of quotas.data ?? []) brandTargets.set(String(quota.manufacturer), Number(quota.target));
+  }
   const selectedByBrand: Record<string, number> = {};
   for (const item of items) {
     const brand = String(item.normalized?.manufacturer ?? "");
@@ -204,7 +214,6 @@ async function main() {
       : [];
   });
   let hardQuotaOverages: Array<{ manufacturer: string; selected: number; remaining: number; overBy: number }> = [];
-  const catalogLaunchId = run.rules?.catalogLaunchId ?? null;
   if (catalogLaunchId) {
     const launch = await db.from("chestny_catalog_launches").select("id,status").eq("id", catalogLaunchId).single();
     if (launch.error) throw new Error(`Could not verify publication launch: ${launch.error.message}`);

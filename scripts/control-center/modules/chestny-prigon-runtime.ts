@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { loadPublicationManifest, publicationManifestFromScreening, savePublicationManifest } from "../../radar/screened-publication-manifest";
 import type { ControlTask, CoordinatorPlan, ModuleResult, Readiness } from "../contracts";
 import { chooseNextWaveSize, processedQueueItems, type WaveCounts } from "../adaptive-wave-size";
 import { createChestnyPrigonCatalogModule } from "./chestny-prigon";
@@ -16,28 +18,35 @@ export function createChestnyPrigonRuntime(input: {
 }) {
   const publishRun = async (runId: string): Promise<Record<string, unknown>> => {
     const outputPath = `output/chestny-vps-publication-ready-${runId}.json`;
-    const screeningOutput = await new Promise<string>((resolve, reject) => {
-      const child = spawn("npm", ["run", "--silent", "radar:screen-vps-staging"], {
-        env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId, CHESTNY_PUBLICATION_OUTPUT_PATH: outputPath },
-        stdio: ["ignore", "pipe", "pipe"],
+    const manifestPath = `output/telegram-publication-manifest-${runId}.json`;
+    let manifest = await loadPublicationManifest(manifestPath, runId);
+    if (!manifest) {
+      const screeningOutput = await new Promise<string>((resolve, reject) => {
+        const child = spawn("npm", ["run", "--silent", "radar:screen-vps-staging", "--", "--full"], {
+          env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId, CHESTNY_PUBLICATION_OUTPUT_PATH: outputPath },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+        child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+        child.on("error", reject);
+        child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`Publication screening exited ${code}: ${stderr.trim() || stdout.trim()}`)));
       });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-      child.on("error", reject);
-      child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`Publication screening exited ${code}: ${stderr.trim() || stdout.trim()}`)));
-    });
-    const jsonStart = screeningOutput.indexOf('{\n  "status"');
-    if (jsonStart < 0) throw new Error(`Publication screening returned no summary: ${screeningOutput.trim()}`);
-    const screening = JSON.parse(screeningOutput.slice(jsonStart)) as { status?: string; runId?: string; readyForPublication?: number };
-    if (screening.status !== "completed" || screening.runId !== runId || !Number.isInteger(screening.readyForPublication)) {
-      throw new Error(`Publication screening summary did not match run ${runId}`);
+      const jsonStart = screeningOutput.indexOf('{\n  "status"');
+      if (jsonStart < 0) throw new Error(`Publication screening returned no summary: ${screeningOutput.trim()}`);
+      const screening = JSON.parse(screeningOutput.slice(jsonStart)) as { status?: string; runId?: string; readyForPublication?: number };
+      if (screening.status !== "completed" || screening.runId !== runId || !Number.isInteger(screening.readyForPublication)) {
+        throw new Error(`Publication screening summary did not match run ${runId}`);
+      }
+      if (screening.readyForPublication === 0) return { runId, selected: 0, unique: 0, acceptedCount: 0, errorCount: 0, published: false, skipped: "no_approved_candidates" };
+      const prepared = publicationManifestFromScreening(JSON.parse(await readFile(outputPath, "utf8")), runId);
+      if (!prepared) throw new Error("Publication report unexpectedly contains an empty roster");
+      manifest = await savePublicationManifest(manifestPath, prepared);
     }
-    if (screening.readyForPublication === 0) return { runId, selected: 0, unique: 0, acceptedCount: 0, errorCount: 0, published: false, skipped: "no_approved_candidates" };
     const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn("npm", ["run", "--silent", "radar:publish-vps-staging"], {
-        env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId, CHESTNY_PUBLICATION_OUTPUT_PATH: outputPath },
+      const child = spawn("npm", ["run", "--silent", "radar:publish-screened-cohort", "--", `--manifest=${manifestPath}`, "--publish"], {
+        env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stdout = "";
@@ -53,7 +62,13 @@ export function createChestnyPrigonRuntime(input: {
     for (let start = output.lastIndexOf("{"); start >= 0; start = output.lastIndexOf("{", start - 1)) {
       try {
         const parsed: unknown = JSON.parse(output.slice(start).trim());
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const result = parsed as Record<string, unknown>;
+          if (result.runId !== runId || result.publicationManifestStatus !== "completed"
+            || result.selected !== manifest.selectedCount || result.publishedCount !== manifest.selectedCount
+            || result.unfinished !== 0) throw new Error("Publication result is incomplete or does not match the frozen roster");
+          return { ...result, acceptedCount: result.publishedCount, errorCount: result.failedCount, published: true };
+        }
       } catch {
         // This opening brace belonged to npm output or an incomplete prefix.
       }

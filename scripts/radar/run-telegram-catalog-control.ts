@@ -101,7 +101,7 @@ type ProgressRun = {
 
 type ProgressSnapshot = { runId: string; processed: number; status: string };
 
-async function latestCatalogRun(statuses: string[]): Promise<ProgressRun | null> {
+async function latestCatalogRun(): Promise<ProgressRun | null> {
   const columns = "id,status,candidate_count,created_at,started_at,completed_at,pause_reason,rules";
   const mainRun = (run: ProgressRun) => run.rules?.type !== "targeted_report_refresh";
   const now = new Date().toISOString();
@@ -205,7 +205,7 @@ async function monitorCatalogProgress() {
   try { snapshot = JSON.parse(await readFile(telegramProgressFile, "utf8")) as ProgressSnapshot; }
   catch { /* No prior notification snapshot; announce the active run once. */ }
 
-  const active = await latestCatalogRun([]);
+  const active = await latestCatalogRun();
   let run = active;
   if (!run && snapshot?.runId) {
     const { data, error } = await db.from("chestny_enrichment_runs")
@@ -278,10 +278,10 @@ async function startWorker(command: Command) {
     throw new Error(`Persisted wave size ${workerLimit} is outside the supported range 1–500`);
   }
   const configuredTransport = modeRun.data.rules?.transport;
-  if (configuredTransport !== undefined && configuredTransport !== "direct" && configuredTransport !== "proxy") {
+  if (configuredTransport !== "direct" && configuredTransport !== "proxy") {
     throw new Error(`Run has unsupported Encar transport ${String(configuredTransport)}`);
   }
-  const transport = configuredTransport ?? "proxy";
+  const transport = configuredTransport;
   if (transport === "proxy") readEncarProxyUrlFromKeychain();
   const now = new Date().toISOString();
   const { data: workerLock, error: lockError } = await db.from("chestny_enrichment_worker_lock")

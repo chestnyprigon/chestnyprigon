@@ -22,7 +22,7 @@ if (!runId || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(runId)) throw new Error("--r
 
 const untilComplete = process.argv.includes("--until-complete");
 const transportArgument = process.argv.find((argument) => argument.startsWith("--transport="))?.slice("--transport=".length);
-const transport = transportArgument ?? "proxy";
+const transport = transportArgument;
 if (transport !== "direct" && transport !== "proxy") throw new Error("--transport must be direct or proxy");
 const batchSize = 10;
 const maxItemsArgument = process.argv.find((argument) => argument.startsWith("--max-items="))?.slice("--max-items=".length);
@@ -351,7 +351,7 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     .select("status,candidate_count,rules").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
   const savedTransport = run.rules?.transport;
-  if (savedTransport && savedTransport !== transport) {
+  if (savedTransport !== transport) {
     throw new Error(`Run transport is ${String(savedTransport)}; refusing to continue through ${transport}`);
   }
   if (!(run.status === "approved" || run.status === "running")) throw new Error(`Run status ${run.status} is not eligible for a worker`);

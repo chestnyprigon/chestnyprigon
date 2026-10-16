@@ -57,6 +57,9 @@ function publicationState(goal: CatalogGoal | null, run?: Run | null) {
   const parameters = goal?.parameters ?? {};
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "current_run_only") {
+    if (run && Array.isArray(goal?.progress?.publishedRunIds) && goal.progress.publishedRunIds.includes(run.id)) {
+      return "Публикация этого run завершена; новые публикации требуют отдельного подтверждения.";
+    }
     return "Публикация разрешена только для текущего завершённого run; следующие волны не запускаются автоматически.";
   }
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
@@ -267,17 +270,21 @@ function goalStageLabel(stage: unknown) {
     search_pending: "поиск готовится", owner_command: "команда владельца", start_worker: "запуск обработки",
     worker_started: "обогащение и проверка", continue_wave: "продолжение очереди",
     next_wave_started: "обогащение и проверка", enrichment_screening: "обогащение и проверка",
-    publish_wave: "пакетная публикация", published: "волна опубликована",
+    publish_wave: "пакетная публикация", published: "волна опубликована", publication_complete: "публикация завершена",
+    publication_gate: "ожидает разрешения публикации",
     paused_for_attention: "пауза: требуется разбор причины", pilot_review: "ожидает проверки пилота",
     goal_completed: "цель выполнена", search_exhausted: "новых кандидатов не найдено" } as Record<string, string>)[value] ?? "обработка";
 }
 
-function goalProgressLabel(goal: CatalogGoal, currentProcessed?: number) {
+function goalProgressLabel(goal: CatalogGoal, currentProcessed?: number, currentPublished?: number) {
   const wave = Number(goal.progress?.waveNumber ?? 0);
   if (goal.parameters?.queueOnly === true) {
     const total = Number(goal.parameters.targetCandidates ?? 0);
     const processed = currentProcessed ?? Number(goal.progress?.processed ?? 0);
     return `Обработано ${processed} из ${total} кандидатов.`;
+  }
+  if (goal.parameters?.publicationMode === "current_run_only" && currentPublished !== undefined) {
+    return `Опубликовано из текущего run: ${currentPublished}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
   }
   const target = Number(goal.parameters?.targetPublications ?? 1_000);
   const published = Number(goal.progress?.published ?? goal.progress?.publishedCount ?? 0);
@@ -325,7 +332,44 @@ function waveStateLabel(status: string) {
     completed: "завершена" } as Record<string, string>)[status] ?? "состояние обновляется";
 }
 
-async function reportCounts(db: ReturnType<typeof database>, run: Run) {
+async function publishedCountForRun(db: ReturnType<typeof database>, run: Run) {
+  const publishedIds = new Set<string>();
+  const legacyBatchIds: string[] = [];
+  for (let offset = 0; ; offset += 1_000) {
+    const { data, error } = await db.from("import_runs").select("id,cursor")
+      .contains("cursor", { runId: run.id }).order("id").range(offset, offset + 999);
+    if (error) throw new Error("Could not read publication batches for report");
+    for (const batch of data ?? []) {
+      if (batch.cursor?.publish !== true) continue;
+      if (Array.isArray(batch.cursor.sourceListingIds)) {
+        for (const id of batch.cursor.sourceListingIds) publishedIds.add(String(id));
+      } else legacyBatchIds.push(String(batch.id));
+    }
+    if (!data || data.length < 1_000) break;
+  }
+  // Historical publisher batches did not store their source ID roster.
+  // Their raw rows retain the import batch and canonical source identifiers.
+  for (let group = 0; group < legacyBatchIds.length; group += 100) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await db.from("encar_raw_listings").select("source_listing_id")
+        .in("import_run_id", legacyBatchIds.slice(group, group + 100)).order("source_listing_id").range(offset, offset + 999);
+      if (error) throw new Error("Could not reconcile historical publication batches");
+      for (const row of data ?? []) publishedIds.add(String(row.source_listing_id));
+      if (!data || data.length < 1_000) break;
+    }
+  }
+  let published = 0;
+  const ids = [...publishedIds];
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const { data, error } = await db.from("vehicles")
+      .select("source_listing_id,is_public").in("source_listing_id", ids.slice(offset, offset + 200));
+    if (error) throw new Error("Could not reconcile published catalog vehicles");
+    published += (data ?? []).filter(vehicle => vehicle.is_public).length;
+  }
+  return published;
+}
+
+async function reportCounts(db: ReturnType<typeof database>, run: Run, published: number) {
   const succeededIds: string[] = [];
   for (let offset = 0; ; offset += 1_000) {
     const { data, error } = await db.from("chestny_enrichment_queue")
@@ -352,20 +396,6 @@ async function reportCounts(db: ReturnType<typeof database>, run: Run) {
     unavailable += rows.filter((row) => row.report_status === "unavailable").length;
   }
 
-  const { data: batches, error } = await db.from("import_runs")
-    .select("cursor").contains("cursor", { runId: run.id });
-  if (error) throw new Error("Could not read publication batches for report");
-  const publishedIds = new Set((batches ?? []).flatMap((batch) =>
-    batch.cursor?.publish === true && Array.isArray(batch.cursor?.sourceListingIds)
-      ? batch.cursor.sourceListingIds.map(String) : []));
-  let published = 0;
-  const ids = [...publishedIds];
-  for (let offset = 0; offset < ids.length; offset += 200) {
-    const { data, error: vehicleError } = await db.from("vehicles")
-      .select("source_listing_id,is_public").in("source_listing_id", ids.slice(offset, offset + 200));
-    if (vehicleError) throw new Error("Could not reconcile published catalog vehicles");
-    published += (data ?? []).filter((vehicle) => vehicle.is_public).length;
-  }
   return { ready, unavailable, missing, published };
 }
 
@@ -435,6 +465,7 @@ async function handleMessage(update: TelegramUpdate) {
         : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
     }
     const counts = await queueCounts(db, run.id);
+    const published = await publishedCountForRun(db, run);
     const decisions = await decisionCounts(db, run.id);
     const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
     const { data: waves, error: wavesError } = await db.from("chestny_enrichment_waves")
@@ -461,7 +492,7 @@ async function handleMessage(update: TelegramUpdate) {
       : run.rules?.transport === "proxy" ? "Decodo proxy" : "не записан в запуске";
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
     if (command === "/catalog_report") {
-      const reports = await reportCounts(db, run);
+      const reports = await reportCounts(db, run, published);
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
         text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\n<b>Всего обработано:</b> ${processed} из ${run.candidate_count}\n<b>Успешно обогащено:</b> ${counts.succeeded}\n<b>Недоступно:</b> ${counts.unavailable}\n<b>Ошибок:</b> ${counts.failed}\n<b>Отменено:</b> ${counts.cancelled}\n<b>В очереди:</b> ${counts.queued}; в работе: ${counts.leased}\n\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> допущено ${decisions.approved}; отклонено ${decisions.rejected}; изолировано ${decisions.isolated}\n<b>Отчёты:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; данные не найдены ${reports.missing}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
     }
@@ -470,7 +501,7 @@ async function handleMessage(update: TelegramUpdate) {
     return apiResponse("sendMessage", {
       chat_id: chatId,
       parse_mode: "HTML",
-      text: `${reportTitle}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Run:</b> ${escapeHtml(runStateLabel(run.status))} · транспорт: ${transport}\n<b>Всего по run:</b> ${processed}/${run.candidate_count} обработано · ${counts.queued} ждут · ${counts.leased} в работе\n\n<b>Текущая волна</b>\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
+      text: `${reportTitle}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed, published)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Run:</b> ${escapeHtml(runStateLabel(run.status))} · транспорт: ${transport}\n<b>Всего по run:</b> ${processed}/${run.candidate_count} обработано · ${counts.queued} ждут · ${counts.leased} в работе\n\n<b>Текущая волна</b>\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
     });
   }
 

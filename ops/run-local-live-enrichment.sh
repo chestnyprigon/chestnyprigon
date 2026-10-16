@@ -31,9 +31,9 @@ if [[ ! "$RUN_ID" =~ ^[0-9a-fA-F-]{36}$ ]]; then
 fi
 printf '%s\n' "phase=queue_created run_id=$RUN_ID prepare_report=$PREPARE"
 
-node_modules/.bin/tsx scripts/radar/preflight-local-worker.ts --run-id="$RUN_ID" >"$PREFLIGHT" 2>&1
+node_modules/.bin/tsx scripts/radar/preflight-local-worker.ts --run-id="$RUN_ID" --transport=direct >"$PREFLIGHT" 2>&1
 printf '%s\n' "phase=enrichment_started run_id=$RUN_ID"
-node_modules/.bin/tsx scripts/radar/run-local-enrichment-loop.ts --run-id="$RUN_ID" --until-complete >"$WORKER_LOG" 2>&1
+node_modules/.bin/tsx scripts/radar/run-local-enrichment-loop.ts --run-id="$RUN_ID" --transport=direct --until-complete >"$WORKER_LOG" 2>&1
 
 printf '%s\n' "phase=screening_started run_id=$RUN_ID"
 CHESTNY_ENRICHMENT_RUN_ID="$RUN_ID" \

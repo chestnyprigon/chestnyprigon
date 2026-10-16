@@ -55,10 +55,11 @@ if [[ -s "$MODE_FILE" ]]; then
   fi
 fi
 
-TRANSPORT="proxy"
-if [[ -s "$TRANSPORT_FILE" ]]; then
-  TRANSPORT=$(/bin/cat "$TRANSPORT_FILE" | /usr/bin/tr -d '\r\n')
+if [[ ! -s "$TRANSPORT_FILE" ]]; then
+  /usr/bin/printf '%s missing active transport; refusing to choose a network route implicitly\n' "$(/bin/date -u +%FT%TZ)" >> "$LOG_FILE"
+  exit 64
 fi
+TRANSPORT=$(/bin/cat "$TRANSPORT_FILE" | /usr/bin/tr -d '\r\n')
 if [[ "$TRANSPORT" != "proxy" && "$TRANSPORT" != "direct" ]]; then
   /usr/bin/printf '%s invalid active transport %s; refusing to start\n' "$(/bin/date -u +%FT%TZ)" "$TRANSPORT" >> "$LOG_FILE"
   exit 64
@@ -79,9 +80,13 @@ else
   /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
 fi
 WORKER_PID=$!
+/usr/bin/caffeinate -i -w "$WORKER_PID" &
+AWAKE_PID=$!
 trap '/bin/kill -TERM "$WORKER_PID" 2>/dev/null || true; wait "$WORKER_PID" 2>/dev/null || true; exit 143' TERM INT
 wait "$WORKER_PID"
 STATUS=$?
+/bin/kill "$AWAKE_PID" 2>/dev/null || true
+wait "$AWAKE_PID" 2>/dev/null || true
 trap - TERM INT
 
 if (( STATUS == 0 )) && [[ -f "$REQUEST_FILE" ]] && [[ "$(/bin/cat "$REQUEST_FILE" | /usr/bin/tr -d '\r\n')" == "$RUN_ID" ]]; then
