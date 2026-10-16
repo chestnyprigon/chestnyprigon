@@ -12,6 +12,8 @@ import type { EncarBundle, EncarDetail, EncarSearchListing } from "../encar/type
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
 const RUN_ID = process.env.CHESTNY_ENRICHMENT_RUN_ID?.trim() ?? "";
+const WAVE_ID = process.env.CHESTNY_ENRICHMENT_WAVE_ID?.trim() ?? "";
+if (WAVE_ID && !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(WAVE_ID)) throw new Error("CHESTNY_ENRICHMENT_WAVE_ID must be a wave UUID");
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -55,7 +57,7 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const rows: Array<Record<string, unknown>> = [];
-  const cachePath = path.resolve("output", `screening-cache-${RUN_ID}.json`);
+  const cachePath = path.resolve("output", `screening-cache-${RUN_ID}${WAVE_ID ? `-${WAVE_ID}` : ""}.json`);
   const cacheKey = `${CATALOG_POLICY.version}:${new Date().toISOString().slice(0, 10)}:2`;
   type Evaluation = ReturnType<typeof screenStaging>;
   const cache: Record<string, { updatedAt: string; evaluated: Evaluation }> = {};
@@ -70,11 +72,12 @@ async function main() {
   if (RUN_ID) {
     const sourceIds: string[] = [];
     for (let offset = 0; ; offset += 1_000) {
-      const { data, error } = await client.from("chestny_enrichment_queue")
+      let queueQuery = client.from("chestny_enrichment_queue")
         .select("source_listing_id")
         .eq("run_id", RUN_ID)
-        .eq("status", "succeeded")
-        .range(offset, offset + 999);
+        .eq("status", "succeeded");
+      if (WAVE_ID) queueQuery = queueQuery.eq("wave_id", WAVE_ID);
+      const { data, error } = await queueQuery.range(offset, offset + 999);
       if (error) throw new Error(error.message);
       sourceIds.push(...(data ?? []).map((item) => String(item.source_listing_id)));
       if (!data || data.length < 1_000) break;
@@ -212,6 +215,7 @@ async function main() {
     status: "completed",
     mode: process.argv.includes("--read-only-audit") ? "read-only-audit" : "local-screening-with-persisted-decisions",
     runId: RUN_ID,
+    ...(WAVE_ID ? { waveId: WAVE_ID } : {}),
     sourceRows: matchingRunRows,
     payloadRows: matchingRunRows - missingPayload,
     missingPayload,
@@ -251,6 +255,13 @@ async function main() {
       await fs.writeFile(`${cachePath}.tmp`, JSON.stringify({ key: cacheKey, entries: cache }), { mode: 0o600 });
       await fs.rename(`${cachePath}.tmp`, cachePath);
     }
+  }
+  if (WAVE_ID && !process.argv.includes("--read-only-audit")) {
+    const now = new Date().toISOString();
+    const { error: waveError } = await client.from("chestny_enrichment_waves").update({
+      status: "ready", screening_completed_at: now, completed_at: now, updated_at: now,
+    }).eq("id", WAVE_ID).eq("run_id", RUN_ID).in("status", ["enriched", "screening", "ready"]);
+    if (waveError) throw new Error(`Could not checkpoint screened wave ${WAVE_ID}: ${waveError.message}`);
   }
   console.log(JSON.stringify({ ...output, ready: output.ready.slice(0, 20), outputFile }, null, 2));
 }

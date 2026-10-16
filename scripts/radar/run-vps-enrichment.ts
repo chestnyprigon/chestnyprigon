@@ -36,6 +36,8 @@ function boundedNumber(name: string, fallback: number, minimum: number, maximum:
 }
 
 const runId = required("CHESTNY_ENRICHMENT_RUN_ID");
+const waveId = process.env.CHESTNY_ENRICHMENT_WAVE_ID?.trim() || null;
+if (waveId && !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(waveId)) throw new Error("CHESTNY_ENRICHMENT_WAVE_ID must be a wave UUID");
 const standardLocalRun = process.env.CHESTNY_ENRICHMENT_STANDARD_RUN === "true";
 const batchSize = boundedNumber("CHESTNY_ENRICHMENT_BATCH_SIZE", direct ? 1 : 50, 1, direct ? 10 : 50);
 const delayMs = boundedNumber("CHESTNY_ENRICHMENT_DELAY_MS", CATALOG_POLICY.requestDelayMs, 1_000, 30_000);
@@ -98,6 +100,17 @@ function failureClass(error: string) {
   if (/HTTP (404|410)/i.test(error)) return "source_unavailable";
   if (/HTTP (408|429|5\d\d)|timeout|abort|proxy|socket|econn|eai_again|fetch failed/i.test(error)) return "transient_request";
   return "enrichment_error";
+}
+
+function failureReasonCode(error: string, kind: string) {
+  if (/detail_empty_response/i.test(error) || /HTTP (404|410)/i.test(error)) return "source_listing_unavailable";
+  if (/HTTP (401|407)/i.test(error)) return "source_authentication_error";
+  if (/HTTP 403/i.test(error)) return "source_access_blocked";
+  if (/HTTP 429/i.test(error)) return "source_rate_limited";
+  if (/incomplete_gallery/i.test(error)) return "gallery_incomplete";
+  if (/identity|canonical/i.test(error)) return "identity_integrity_failed";
+  if (/fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy|HTTP (408|5\d\d)/i.test(error)) return "temporary_network_error";
+  return kind;
 }
 
 async function requestJson(agent: ProxyAgent | null, endpoint: string, headers?: Record<string, string>, lockSignal?: AbortSignal) {
@@ -198,12 +211,14 @@ function endpointStatus(outcome: EndpointOutcome | { endpoint: EncarEndpoint; st
   };
 }
 
-async function requeueRetryableFailures(db: Db) {
-  const { data, error } = await db.from("chestny_enrichment_queue")
+async function requeueRetryableFailures(db: Db, scopeWaveId = waveId) {
+  let query = db.from("chestny_enrichment_queue")
     .select("id,last_error,attempt_count,result")
     .eq("run_id", runId)
     .eq("status", "failed")
     .lt("attempt_count", maxAttempts);
+  if (scopeWaveId) query = query.eq("wave_id", scopeWaveId);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   const ids = ((data ?? []) as Array<{ id: string; last_error: string | null; result?: Record<string, unknown> }>).filter((row) => row.last_error !== "detail_empty_response" && (row.result?.retryable === true || (row.result?.retryExhausted !== true && isRetryableFailure(row.last_error))) && (!row.result?.retryAfter || Date.parse(String(row.result.retryAfter)) <= Date.now())).map((row) => row.id);
   if (!ids.length) return 0;
@@ -254,8 +269,10 @@ function choiceOptions(payload: unknown) {
 
 async function pendingRetries(db: Db) {
   if (skipRetryRequeue) return 0;
-  const { data, error } = await db.from("chestny_enrichment_queue").select("id,result")
+  let query = db.from("chestny_enrichment_queue").select("id,result")
     .eq("run_id", runId).eq("status", "failed").lt("attempt_count", maxAttempts);
+  if (waveId) query = query.eq("wave_id", waveId);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []).filter((row: { result?: Record<string, unknown> }) => row.result?.retryable === true).length;
 }
@@ -274,6 +291,12 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
   }
   const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("status,candidate_count,rules").eq("id", runId).single();
   if (runError) throw new Error(runError.message);
+  if (waveId) {
+    const { data: wave, error: waveError } = await db.from("chestny_enrichment_waves")
+      .select("id,status").eq("id", waveId).eq("run_id", runId).single();
+    if (waveError) throw new Error(`Cannot resolve wave ${waveId} for run ${runId}: ${waveError.message}`);
+    if (!(["queued", "enriching", "paused"] as string[]).includes(wave.status)) throw new Error(`Wave ${waveId} is ${wave.status}, not open for enrichment`);
+  }
   if (standardLocalRun && run.rules?.catalogLaunchId) throw new Error("Ordinary local batching cannot process a separate catalog launch");
   const allowMatchingStagingRefresh = process.env.CHESTNY_ENRICHMENT_ALLOW_MATCHING_STAGING_REFRESH === "true";
   if (allowMatchingStagingRefresh && run.rules?.type !== "targeted_report_refresh") {
@@ -302,7 +325,10 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
   }
   const retriesScheduled = skipRetryRequeue ? 0 : await requeueRetryableFailures(db);
   if (lockSignal.aborted) throw lockSignal.reason;
-  const { data: rows, error } = await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 15 });
+  const claim = waveId
+    ? await db.rpc("claim_chestny_enrichment_wave", { p_run_id: runId, p_wave_id: waveId, p_limit: batchSize, p_lease_minutes: 15 })
+    : await db.rpc("claim_chestny_enrichment_queue", { p_run_id: runId, p_limit: batchSize, p_lease_minutes: 15 });
+  const { data: rows, error } = claim;
   if (error) throw new Error(error.message);
   await mkdir(coordinationDirectory, { recursive: true });
   try {
@@ -387,8 +413,14 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         const advertisement = obj(detail.advertisement);
         const advertisementStatus = text(advertisement.status) ?? text(advertisement.saleStatus);
         if (advertisementStatus && !["ADVERTISE", "SALE"].includes(advertisementStatus)) {
-          await complete(db, row, "unavailable", { advertisedId, canonicalId, vehicleNo, advertisementStatus });
-          results.push({ sourceListingId: advertisedId, status: "unavailable", reason: advertisementStatus });
+          const observedAt = new Date().toISOString();
+          await complete(db, row, "unavailable", {
+            advertisedId, canonicalId, vehicleNo, advertisementStatus,
+            failureClass: "source_unavailable", reasonCode: "advertisement_not_active",
+            reasonCodes: ["advertisement_not_active"], attempt: row.attempt_count ?? 1,
+            observedAt, retryable: false,
+          });
+          results.push({ sourceListingId: advertisedId, status: "unavailable", reasonCode: "advertisement_not_active", reason: advertisementStatus });
           await sleep(delayMs);
           continue;
         }
@@ -738,11 +770,18 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           || ["auth_error", "blocked", "rate_limited"].includes(kind);
         if (stopState) { pauseAfterCurrent = true; pauseMessage = "Источник или прокси ограничил доступ. Требуется проверка подключения; очередь сохранена."; }
         const reportedError = endpointOutcome?.httpStatus ? `HTTP ${endpointOutcome.httpStatus}` : endpointOutcome?.reasonCode ?? message;
+        const reasonCode = endpointOutcome?.reasonCode ?? failureReasonCode(message, kind);
+        const observedAt = endpointOutcome?.observedAt ?? new Date().toISOString();
+        const attempt = endpointOutcome?.attempts ?? row.attempt_count ?? 1;
         await complete(db, row, unavailable ? "unavailable" : "failed", {
           advertisedId,
           ...(finalIsolation ? { screeningDecision: "isolated", reasonEvidence: [evidence(endpointOutcome!.reasonCode, "Ответ источника не подтверждает целостность данных.", { state: endpointOutcome!.state, httpStatus: endpointOutcome!.httpStatus }, `encar.${endpointOutcome!.endpoint}`)] } : {}),
-          reason: endpointOutcome?.reasonCode ?? message,
-          ...(endpointOutcome ? { endpointStatus: endpointStatus(endpointOutcome), reasonCodes: [endpointOutcome.reasonCode] } : {}),
+          reason: reasonCode,
+          reasonCode,
+          reasonCodes: [reasonCode],
+          observedAt,
+          attempt,
+          ...(endpointOutcome ? { endpointStatus: endpointStatus(endpointOutcome) } : {}),
           failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind,
           checkpoint: checkpointData,
           retryable, retryExhausted,
@@ -750,7 +789,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           networkCause: error instanceof Error && error.cause && typeof error.cause === "object"
             ? { code: obj(error.cause).code ?? null, name: obj(error.cause).name ?? null } : null,
         }, undefined, undefined, undefined, [], unavailable ? undefined : (endpointOutcome?.reasonCode ?? message));
-        results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: reportedError, reasonCode: endpointOutcome?.reasonCode, failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind, retryable });
+        results.push({ sourceListingId: advertisedId, status: unavailable ? "unavailable" : "failed", error: reportedError, reasonCode, failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind, retryable, retryExhausted, attempt, observedAt });
       }
       await sleep(delayMs);
     }
@@ -759,7 +798,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
       if (paused.error) throw Error(paused.error.message);
     }
     const completed = preserveRunStatus || pauseAfterCurrent ? false : await maybeFinishRun(db);
-    console.log(JSON.stringify({ runId, transport: direct ? "direct" : "proxy", requestedJson, scheduledWaitMs, delayMs, elapsedMs: Date.now() - startedAt, batchSize, retriesScheduled, pendingRetries: await pendingRetries(db), reserved: rows?.length ?? 0, claimed: results.length, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
+    console.log(JSON.stringify({ runId, ...(waveId ? { waveId } : {}), transport: direct ? "direct" : "proxy", requestedJson, scheduledWaitMs, delayMs, elapsedMs: Date.now() - startedAt, batchSize, retriesScheduled, pendingRetries: await pendingRetries(db), reserved: rows?.length ?? 0, claimed: results.length, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
   } finally {
     await agent?.close();
     await rm(activePath, { force: true });

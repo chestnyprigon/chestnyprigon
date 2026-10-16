@@ -129,9 +129,14 @@ async function main() {
     return;
   }
 
-  // Search requests on Mac mini use the dedicated Decodo account. Resolve this
-  // before creating a run or acquiring the Encar/search lock.
-  process.env.ENCAR_PROXY_URL = readEncarProxyUrlFromKeychain();
+  const transportArgument = process.argv.find((arg) => arg.startsWith("--transport="))?.slice("--transport=".length)
+    ?? process.env.CHESTNY_ENCAR_TRANSPORT?.trim()
+    ?? "proxy";
+  if (transportArgument !== "direct" && transportArgument !== "proxy") throw new Error("Encar transport must be direct or proxy");
+  // Resolve credentials before any search or run mutation. Direct mode removes
+  // a possibly inherited proxy URL so encarFetch cannot silently use it.
+  if (transportArgument === "proxy") process.env.ENCAR_PROXY_URL = readEncarProxyUrlFromKeychain();
+  else delete process.env.ENCAR_PROXY_URL;
 
   const linkedRunIds = [...new Set((rows ?? []).map((row: Record<string, unknown>) => row.run_id)
     .filter((id: unknown): id is string => typeof id === "string"))];
@@ -152,13 +157,25 @@ async function main() {
   if (!runId) {
     const { data: run, error: runError } = await client.from("chestny_enrichment_runs").insert({
       project: "chestny-prigon", status: "approved", candidate_count: 0, source_file: "local-catalog-launch-search",
-      rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version, discoveryOnly: true },
+      rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version, discoveryOnly: true, transport: transportArgument },
     }).select("id").single();
     if (runError) throw new Error(runError.message);
     runId = run.id;
   }
   if (!runId) throw new Error("Could not resolve the candidate discovery run");
   const activeRunId = runId;
+  const { data: activeRun, error: activeRunError } = await client.from("chestny_enrichment_runs").select("status,rules").eq("id", activeRunId).single();
+  if (activeRunError) throw new Error(activeRunError.message);
+  const savedTransport = asRecord(activeRun.rules).transport;
+  if (savedTransport && savedTransport !== transportArgument) {
+    throw new Error(`Run transport is ${String(savedTransport)}; refusing to search through ${transportArgument}`);
+  }
+  if (!savedTransport) {
+    if (activeRun.status !== "approved") throw new Error("Cannot set transport on a run that has already started");
+    const { error: transportError } = await client.from("chestny_enrichment_runs")
+      .update({ rules: { ...asRecord(activeRun.rules), transport: transportArgument } }).eq("id", activeRunId).eq("status", "approved");
+    if (transportError) throw new Error(`Could not persist Encar transport: ${transportError.message}`);
+  }
   const { error: attachError } = await client.from("chestny_catalog_brand_search_progress")
     .update({ run_id: runId }).eq("launch_id", launch.id)
     .or(previousRunId ? `run_id.is.null,run_id.eq.${previousRunId}` : "run_id.is.null");
@@ -249,7 +266,7 @@ async function main() {
     .select("manufacturer,target,published_count,remaining_quota,search_offset,scanned_count,candidate_count,processed_candidates,candidate_backlog,conversion_rate,status,candidates_needed_at_observed_conversion")
     .eq("launch_id", launch.id).order("manufacturer");
   if (progressError) throw new Error(progressError.message);
-  console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, pageSize, maxPagesPerBrand, pages: summaries, progress: finalProgress }, null, 2));
+  console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, transport: transportArgument, pageSize, maxPagesPerBrand, pages: summaries, progress: finalProgress }, null, 2));
   } });
 }
 

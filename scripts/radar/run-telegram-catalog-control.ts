@@ -26,6 +26,7 @@ const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE
 const stateDir = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const activeRunFile = join(stateDir, "active-run");
 const activeWaveSizeFile = join(stateDir, "active-wave-size");
+const activeTransportFile = join(stateDir, "active-transport");
 const telegramProgressFile = join(stateDir, "telegram-progress.json");
 
 type Command = {
@@ -236,6 +237,19 @@ async function startWorker(command: Command) {
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   const modeRun = await db.from("chestny_enrichment_runs").select("rules").eq("id", command.run_id).single();
   if (modeRun.error) throw new Error(`Could not inspect worker mode: ${modeRun.error.message}`);
+  const { data: persistedWaves, error: waveError } = await db.from("chestny_enrichment_waves")
+    .select("id,wave_number,candidate_count,status").eq("run_id", command.run_id).order("wave_number");
+  if (waveError) throw new Error(`Could not inspect persisted wave plan: ${waveError.message}`);
+  const activeWave = (persistedWaves ?? []).find((wave) => ["queued", "enriching", "enriched", "screening", "paused"].includes(wave.status));
+  const workerLimit = activeWave ? Number(activeWave.candidate_count) : command.max_items;
+  if (!Number.isInteger(workerLimit) || workerLimit < 1 || workerLimit > 500) {
+    throw new Error(`Persisted wave size ${workerLimit} is outside the supported range 1–500`);
+  }
+  const configuredTransport = modeRun.data.rules?.transport;
+  if (configuredTransport !== undefined && configuredTransport !== "direct" && configuredTransport !== "proxy") {
+    throw new Error(`Run has unsupported Encar transport ${String(configuredTransport)}`);
+  }
+  await writeFile(activeTransportFile, configuredTransport ?? "proxy", { mode: 0o600 });
   if (modeRun.data.rules?.type === "saved_queue_remainder") {
     await writeFile(join(stateDir, "active-mode"), "saved_queue_until_complete", { mode: 0o600 });
   } else if (modeRun.data.rules?.type !== "targeted_report_refresh") {
@@ -243,7 +257,7 @@ async function startWorker(command: Command) {
   }
   if (existingRunId && existingRunId !== command.run_id) await writeFile(activeRunFile, command.run_id, { mode: 0o600 });
   else if (!existingRunId) await writeFile(activeRunFile, command.run_id, { mode: 0o600, flag: "wx" });
-  await writeFile(activeWaveSizeFile, String(command.max_items), { mode: 0o600 });
+  await writeFile(activeWaveSizeFile, String(workerLimit), { mode: 0o600 });
   try {
     const uid = process.getuid?.();
     if (uid === undefined) throw new Error("Could not determine macOS GUI user id");
@@ -258,9 +272,9 @@ async function startWorker(command: Command) {
 
 async function searchNextWave(launchId?: string) {
   const output = await new Promise<string>((resolve, reject) => {
-    const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--pilot-candidates=50"], {
+    const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--pilot-candidates=50", "--transport=direct"], {
       cwd: process.cwd(),
-      env: { ...process.env, ...(launchId ? { CHESTNY_CATALOG_LAUNCH_ID: launchId } : {}) },
+      env: { ...process.env, CHESTNY_ENCAR_TRANSPORT: "direct", ...(launchId ? { CHESTNY_CATALOG_LAUNCH_ID: launchId } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -283,6 +297,28 @@ async function searchNextWave(launchId?: string) {
 async function startPreparedRun(command: Command) {
   const { data: current, error } = await db.from("chestny_enrichment_runs").select("status").eq("id", command.run_id).single();
   if (error) throw new Error(`Cannot read run before worker start: ${error.message}`);
+  if (current.status === "approved") {
+    const { data: existingWaves, error: wavesError } = await db.from("chestny_enrichment_waves")
+      .select("id").eq("run_id", command.run_id).limit(1);
+    if (wavesError) throw new Error(`Cannot inspect saved wave plan: ${wavesError.message}`);
+    if (!existingWaves?.length) {
+      const { count: queuedCount, error: queuedError } = await db.from("chestny_enrichment_queue")
+        .select("id", { count: "exact", head: true }).eq("run_id", command.run_id).eq("status", "queued");
+      if (queuedError) throw new Error(`Cannot inspect queue before wave planning: ${queuedError.message}`);
+      const { count: nonQueuedCount, error: nonQueuedError } = await db.from("chestny_enrichment_queue")
+        .select("id", { count: "exact", head: true }).eq("run_id", command.run_id).neq("status", "queued");
+      if (nonQueuedError) throw new Error(`Cannot inspect queue statuses before wave planning: ${nonQueuedError.message}`);
+      if ((queuedCount ?? 0) > 0 && (nonQueuedCount ?? 0) === 0) {
+        const { data: wavePlan, error: planError } = await db.rpc("plan_chestny_enrichment_waves", {
+          p_run_id: command.run_id,
+          p_safe_wave_capacity: command.max_items,
+          p_plan: { source: "macmini_worker_start", policyVersion: "balanced-wave-v1", configuredSafeCapacity: command.max_items },
+        });
+        if (planError) throw new Error(`Cannot persist wave plan; worker was not started: ${planError.message}`);
+        console.log(JSON.stringify({ wavePlan }));
+      }
+    }
+  }
   const transitioned = current.status === "approved";
   if (transitioned) await setRunStatus(command.run_id, "running", ["approved"]);
   else if (current.status !== "running") throw new Error(`Run ${command.run_id} has status ${current.status}; worker can start only from approved or running`);

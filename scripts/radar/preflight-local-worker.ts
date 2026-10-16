@@ -13,9 +13,30 @@ function required(name: string) {
 }
 
 async function main() {
-  const proxyUrl = readEncarProxyUrlFromKeychain();
-  if (process.argv.includes("--proxy-check-only")) {
-    console.log(JSON.stringify({ preflight: "proxy_credential_ready", transport: "decodo_proxy", proxyEndpoint: new URL(proxyUrl).host, encarRequestsMade: 0 }, null, 2));
+  const transportArgument = process.argv.find((item) => item.startsWith("--transport="))?.slice("--transport=".length);
+  const transport = transportArgument ?? "proxy";
+  if (transport !== "direct" && transport !== "proxy") throw new Error("--transport must be direct or proxy");
+  const directCheckOnly = process.argv.includes("--direct-check-only");
+  const proxyCheckOnly = process.argv.includes("--proxy-check-only");
+  if (directCheckOnly && proxyCheckOnly) throw new Error("Choose only one of --direct-check-only or --proxy-check-only");
+  if (directCheckOnly && transport !== "direct") throw new Error("--direct-check-only requires --transport=direct");
+  if (proxyCheckOnly && transport !== "proxy") throw new Error("--proxy-check-only requires --transport=proxy");
+
+  if (directCheckOnly) {
+    console.log(JSON.stringify({
+      preflight: "direct_transport_ready",
+      transport: "direct_home_network",
+      proxyCredentialRead: false,
+      proxyDispatcherUsed: false,
+      networkConnectivityChecked: false,
+      encarRequestsMade: 0,
+    }, null, 2));
+    return;
+  }
+
+  const proxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
+  if (proxyCheckOnly) {
+    console.log(JSON.stringify({ preflight: "proxy_credential_ready", transport: "decodo_proxy", proxyEndpoint: new URL(proxyUrl!).host, encarRequestsMade: 0 }, null, 2));
     return;
   }
   const runId = process.argv.find((item) => item.startsWith("--run-id="))?.slice("--run-id=".length);
@@ -45,9 +66,10 @@ async function main() {
       runStatus: run.status,
       candidateCount: run.candidate_count,
       queue: counts,
-      transport: "decodo_proxy",
-      proxyCredential: "available in login Keychain",
-      proxyEndpoint: new URL(proxyUrl).host,
+      transport: transport === "direct" ? "direct_home_network" : "decodo_proxy",
+      proxyCredential: transport === "proxy" ? "available in login Keychain" : "not read",
+      ...(proxyUrl ? { proxyEndpoint: new URL(proxyUrl).host } : {}),
+      proxyDispatcherUsed: transport === "proxy",
       maxItemsPerInvocation: targetedReportRefresh ? 5_000 : 50,
       queueClaimSize: targetedReportRefresh ? 1 : 10,
       concurrentListings: targetedReportRefresh ? 2 : 1,

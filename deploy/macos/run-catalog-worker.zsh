@@ -9,6 +9,7 @@ LOG_DIR="${CHESTNY_WORKER_LOG_DIR:-/Users/koredigital/Library/Logs/chestny-prigo
 REQUEST_FILE="$STATE_DIR/active-run"
 WAVE_SIZE_FILE="$STATE_DIR/active-wave-size"
 MODE_FILE="$STATE_DIR/active-mode"
+TRANSPORT_FILE="$STATE_DIR/active-transport"
 LOG_FILE="$LOG_DIR/worker.log"
 
 /bin/mkdir -p "$STATE_DIR" "$LOG_DIR"
@@ -54,8 +55,17 @@ if [[ -s "$MODE_FILE" ]]; then
   fi
 fi
 
+TRANSPORT="proxy"
+if [[ -s "$TRANSPORT_FILE" ]]; then
+  TRANSPORT=$(/bin/cat "$TRANSPORT_FILE" | /usr/bin/tr -d '\r\n')
+fi
+if [[ "$TRANSPORT" != "proxy" && "$TRANSPORT" != "direct" ]]; then
+  /usr/bin/printf '%s invalid active transport %s; refusing to start\n' "$(/bin/date -u +%FT%TZ)" "$TRANSPORT" >> "$LOG_FILE"
+  exit 64
+fi
+
 rotate_log
-/usr/bin/printf '%s starting run %s max-items=%s\n' "$(/bin/date -u +%FT%TZ)" "$RUN_ID" "$MAX_ITEMS" >> "$LOG_FILE"
+/usr/bin/printf '%s starting run %s max-items=%s transport=%s\n' "$(/bin/date -u +%FT%TZ)" "$RUN_ID" "$MAX_ITEMS" "$TRANSPORT" >> "$LOG_FILE"
 cd "$PROJECT_ROOT" || exit 72
 
 # The worker has its own global DB/file lock. Recheck here so a manual
@@ -66,11 +76,11 @@ if [[ -e /tmp/encar-coordination/chestny-catalog-enrichment.lock ]]; then
 fi
 
 if [[ "$RUN_MODE" == "targeted_report_refresh" ]]; then
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &
 elif [[ "$RUN_MODE" == "saved_queue_until_complete" ]]; then
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --until-complete >> "$LOG_FILE" 2>&1 &
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete >> "$LOG_FILE" 2>&1 &
 else
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
+  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
 fi
 WORKER_PID=$!
 trap '/bin/kill -TERM "$WORKER_PID" 2>/dev/null || true; wait "$WORKER_PID" 2>/dev/null || true; exit 143' TERM INT
