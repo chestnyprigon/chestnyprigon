@@ -266,9 +266,6 @@ async function processPersistedWaves(input: {
       }
       if (waveCounts.queued + waveCounts.leased === 0) break;
       if (result.claimed === 0) throw new Error(`Wave ${currentWave.wave_number} still has work but the worker claimed none`);
-      if (processedThisSession % 50 < result.claimed) {
-        await notify(`📈 Прогресс run ${runId}: обработано ${processed}/${run.candidate_count}; волна ${currentWave.wave_number}/${waves.length}. Осталось в этой волне ${waveCounts.queued + waveCounts.leased}. Ошибок ${globalCounts.failed}. Публикация выключена.`);
-      }
     }
 
     const { data: afterLoop, error: afterLoopError } = await client.from("chestny_enrichment_runs")
@@ -288,7 +285,6 @@ async function processPersistedWaves(input: {
     const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", last_error: null, updated_at: now })
       .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening"]);
     if (screeningError) throw new Error(`Could not start screening checkpoint for wave ${currentWave.wave_number}: ${screeningError.message}`);
-    await notify(`✅ Обогащение волны ${currentWave.wave_number}/${waves.length} завершено. Запустил её скрининг в отдельном процессе и продолжаю следующую волну. Публикация не выполняется. Run: ${runId}`);
     screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
   }
 
@@ -446,8 +442,8 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       processed += result.claimed;
       const counts = await queueCounts();
       console.log(JSON.stringify({ runId, batch, processedThisWave, processedTotal: processed, maxItems, recoveredLeases: recoveredIds.length, transport, delayMs: effectiveDelayMs, concurrentListings: effectiveConcurrency, ...counts }));
-      const progressInterval = untilComplete ? 50 : 10;
-      if (processedThisWave > 0 && processedThisWave % progressInterval === 0) {
+      const progressInterval = targetedReportRefresh ? 10 : 0;
+      if (progressInterval > 0 && processedThisWave > 0 && processedThisWave % progressInterval === 0) {
         const progressMessage = targetedReportRefresh
           ? `Обновление данных Encar: run ${runId}. Обработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}; осталось ${counts.queued}. Публикация выключена.`
           : `📈 Прогресс обработки\n\nОбработано: ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nОшибок: ${counts.failed}\nОсталось: ${counts.queued}\nТранспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}\nПубликация выключена.\nRun: ${runId}`;
