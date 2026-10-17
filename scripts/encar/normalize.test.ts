@@ -62,3 +62,51 @@ test("normalizes European brands and displacement fallback fields", () => {
   assert.equal(vehicle.manufacturer, "BMW");
   assert.equal(vehicle.engineCc, 3000);
 });
+
+test("uses Encar's listed photo ordering and preserves source order within exterior photos", () => {
+  const vehicle = normalizeListing({
+    fetchedAt: "2026-08-09T00:00:00.000Z",
+    search: {
+      Id: "photo-order-1", Manufacturer: "현대", Model: "쏘나타", Year: 202001, Mileage: 20_000, Price: 1500,
+      Photos: [
+        { location: "/front.jpg", ordering: 2 },
+        { location: "/rear.jpg", ordering: 1 },
+        { location: "/cabin.jpg", ordering: 3 },
+      ],
+    },
+    detail: {
+      vehicleId: "photo-order-1",
+      category: { manufacturerName: "현대", modelGroupEnglishName: "Sonata", yearMonth: "202001" },
+      advertisement: { price: 1500 },
+      spec: { mileage: 20_000, fuelName: "가솔린" },
+      photos: [
+        { path: "/front.jpg", type: "OUTER", code: "027" },
+        { path: "/rear.jpg", type: "OUTER", code: "002" },
+        { path: "/cabin.jpg", type: "INNER", code: "001" },
+      ],
+    },
+  });
+  assert.deepEqual(vehicle.imageUrls, [
+    "https://ci.encar.com/rear.jpg",
+    "https://ci.encar.com/front.jpg",
+    "https://ci.encar.com/cabin.jpg",
+  ]);
+});
+
+test("does not sort Encar exterior photos lexically by their photo code", () => {
+  const vehicle = normalizeListing({
+    fetchedAt: "2026-08-09T00:00:00.000Z",
+    search: { Id: "photo-code-1", Manufacturer: "현대", Model: "쏘나타", Year: 202001, Mileage: 20_000, Price: 1500 },
+    detail: {
+      vehicleId: "photo-code-1",
+      category: { manufacturerName: "현대", modelGroupEnglishName: "Sonata", yearMonth: "202001" },
+      advertisement: { price: 1500 },
+      spec: { mileage: 20_000, fuelName: "가솔린" },
+      photos: [
+        { path: "/source-first.jpg", type: "OUTER", code: "027" },
+        { path: "/source-second.jpg", type: "OUTER", code: "002" },
+      ],
+    },
+  });
+  assert.equal(vehicle.imageUrls[0], "https://ci.encar.com/source-first.jpg");
+});

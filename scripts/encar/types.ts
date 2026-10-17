@@ -12,11 +12,18 @@ export type EncarSearchListing = {
   Mileage?: string | number;
   Price?: string | number;
   Photo?: string;
-  Photos?: string[];
+  Photos?: Array<EncarSearchPhoto | string>;
   ServiceCopyCar?: string;
   SellType?: string;
   BuyType?: string;
   OfficeCityState?: string;
+  [key: string]: unknown;
+};
+
+export type EncarSearchPhoto = {
+  location?: string;
+  ordering?: number | string;
+  type?: string;
   [key: string]: unknown;
 };
 

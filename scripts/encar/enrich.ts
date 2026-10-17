@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
+import { orderedDetailPhotos } from "./normalize";
 import { encarHeaders, encarHistoryHeaders, ensureEncarVerified } from "./auth";
 import { parseBodyDiagnosis } from "./body-diagnosis";
 import { publicationGate } from "./publication-gate";
@@ -128,7 +129,8 @@ export function inspectionSummary(payload: unknown, listingPayload: unknown, dia
         })
     : [];
   const listingOptions = record(record(listingPayload).detail).options;
-  const listingPhotos = record(record(listingPayload).detail).photos;
+  const listingBundle = record(listingPayload) as unknown as import("./types").EncarBundle;
+  const listingPhotos = orderedDetailPhotos(listingBundle);
   const standardOptionCodesAvailable = Array.isArray(record(listingOptions).standard);
   const standardOptionCodes = standardOptionCodesAvailable
     ? (record(listingOptions).standard as unknown[]).map(string).filter((item): item is string => Boolean(item))

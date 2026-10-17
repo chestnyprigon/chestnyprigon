@@ -33,7 +33,7 @@ const MANUFACTURERS: Array<[RegExp, string]> = [
   [/시트로엥|Citroen|Citroën/u, "Citroën"],
 ];
 
-const PHOTO_PRIORITY: Record<string, number> = { OUTER: 0, INNER: 1, OPTION: 2 };
+const PHOTO_PRIORITY: Record<string, number> = { THUMBNAIL: 0, OUTER: 1, INNER: 2, OPTION: 3 };
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -91,13 +91,56 @@ function yearMonthDate(value: unknown) {
   return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-01`;
 }
 
-function imageUrls(bundle: EncarBundle) {
-  return [...(bundle.detail.photos ?? [])]
-    .filter((photo) => Boolean(photo.path))
+function photoPathKey(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const source = value.trim();
+  try {
+    return new URL(source, "https://ci.encar.com").pathname;
+  } catch {
+    return source;
+  }
+}
+
+export function orderedDetailPhotos(bundle: EncarBundle) {
+  const sourceOrder = new Map<string, number>();
+  const listedPhotos = (bundle.search?.Photos ?? []).map((photo, index) => {
+    const ordering = typeof photo === "string" ? Number.NaN : Number(photo.ordering);
+    return { photo, index, ordering };
+  }).sort((left, right) => {
+    const leftHasOrdering = Number.isFinite(left.ordering);
+    const rightHasOrdering = Number.isFinite(right.ordering);
+    if (leftHasOrdering && rightHasOrdering) return left.ordering - right.ordering || left.index - right.index;
+    if (leftHasOrdering) return -1;
+    if (rightHasOrdering) return 1;
+    return left.index - right.index;
+  });
+  for (const [index, { photo }] of listedPhotos.entries()) {
+    const location = typeof photo === "string" ? photo : photo.location;
+    const key = photoPathKey(location);
+    if (key && !sourceOrder.has(key)) sourceOrder.set(key, index);
+  }
+
+  return (bundle.detail?.photos ?? [])
+    .map((photo, index) => ({ photo, index, key: photoPathKey(photo.path) }))
+    .filter(({ photo }) => Boolean(photo.path))
     .sort((left, right) => {
-      const typeOrder = (PHOTO_PRIORITY[left.type ?? ""] ?? 9) - (PHOTO_PRIORITY[right.type ?? ""] ?? 9);
-      return typeOrder || String(left.code ?? "").localeCompare(String(right.code ?? ""));
+      const leftSourceOrder = left.key ? sourceOrder.get(left.key) : undefined;
+      const rightSourceOrder = right.key ? sourceOrder.get(right.key) : undefined;
+      if (leftSourceOrder !== undefined || rightSourceOrder !== undefined) {
+        if (leftSourceOrder === undefined) return 1;
+        if (rightSourceOrder === undefined) return -1;
+        return leftSourceOrder - rightSourceOrder || left.index - right.index;
+      }
+      const typeOrder = (PHOTO_PRIORITY[left.photo.type?.toUpperCase() ?? ""] ?? 9) - (PHOTO_PRIORITY[right.photo.type?.toUpperCase() ?? ""] ?? 9);
+      // Keep Encar's order within a photo type; alphabetically sorting codes can
+      // move a rear/interior frame ahead of the source's selected cover.
+      return typeOrder || left.index - right.index;
     })
+    .map(({ photo }) => photo);
+}
+
+function imageUrls(bundle: EncarBundle) {
+  return orderedDetailPhotos(bundle)
     .map((photo) => encarPhotoUrl(String(photo.path).startsWith("http") ? String(photo.path) : `https://ci.encar.com${photo.path}`))
     .filter((url, index, urls) => urls.indexOf(url) === index)
     .slice(0, 30);
