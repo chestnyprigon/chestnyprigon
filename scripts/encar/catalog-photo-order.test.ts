@@ -1,31 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { orderImagesByReport } from "../../src/lib/catalog/photo-order";
+import { orderCatalogImages } from "../../src/lib/catalog/photo-order";
+import { encarPhotoUrl } from "../../src/lib/encar/images";
 
-test("restores the Encar report photo order for cards already in the catalog", () => {
-  const imageUrls = [
-    "https://ci.encar.com/rear.jpg",
-    "https://ci.encar.com/cabin.jpg",
-    "https://ci.encar.com/front.jpg",
-    "https://ci.encar.com/unlisted.jpg",
-  ];
-  const report = {
-    photoGroups: [
-      { url: "https://ci.encar.com/front.jpg", group: "Кузов" },
-      { url: "https://ci.encar.com/rear.jpg", group: "Кузов" },
-      { url: "https://ci.encar.com/cabin.jpg", group: "Салон" },
-    ],
-  };
+const base = "https://ci.encar.com/carpicture03/pic4293/42932193";
 
-  assert.deepEqual(orderImagesByReport(report, imageUrls), [
-    "https://ci.encar.com/front.jpg",
-    "https://ci.encar.com/rear.jpg",
-    "https://ci.encar.com/cabin.jpg",
-    "https://ci.encar.com/unlisted.jpg",
-  ]);
+test("BMW Z4 uses frontal 003 instead of the unordered report's key photo 042", () => {
+  const images = [2, 3, 4, 42].map(code => encarPhotoUrl(`${base}_${String(code).padStart(3, "0")}.jpg`));
+  const report = { photoGroups: [
+    { url: `${base}_042.jpg`, group: "Детали" },
+    { url: `${base}_003.jpg`, group: "Кузов" },
+    { url: `${base}_004.jpg`, group: "Кузов" },
+    { url: `${base}_002.jpg`, group: "Кузов" },
+  ] };
+  const result = orderCatalogImages(report, images);
+  assert.equal(result[0], images[1]);
+  assert.deepEqual(result.slice(1), [images[0], images[2], images[3]]);
+  assert.deepEqual(images.map(url => Number(url.match(/_(\d{3})\./)?.[1])), [2, 3, 4, 42]);
 });
 
-test("keeps existing image order if the report has no saved photo ordering", () => {
-  const images = ["https://ci.encar.com/a.jpg", "https://ci.encar.com/b.jpg"];
-  assert.deepEqual(orderImagesByReport({}, images), images);
+test("standard 001 cover outranks rear/interior frames, even without a report", () => {
+  const images = [10, 4, 3, 1].map(code => `${base}_${String(code).padStart(3, "0")}.JPG`);
+  assert.equal(orderCatalogImages(null, images)[0], images[3]);
+  assert.equal(orderCatalogImages({ photoGroups: [
+    { url: images[0], group: "Салон" },
+    { url: images[1], group: "Кузов" },
+    { url: images[2], group: "Кузов" },
+    { url: images[3], group: "Кузов" },
+  ] }, images)[0], images[3]);
+});
+
+test("confirmed interior photos cannot outrank an exterior cover", () => {
+  const images = [`${base}_001.jpg`, `${base}_003.jpg`];
+  assert.equal(orderCatalogImages({ photoGroups: [
+    { url: images[0], group: "Салон" },
+    { url: images[1], group: "Кузов" },
+  ] }, images)[0], images[1]);
+  assert.deepEqual(orderCatalogImages({}, []), []);
 });

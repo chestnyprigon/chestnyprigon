@@ -5,7 +5,7 @@ import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profi
 import { calculateBelarusPrice } from "@/lib/pricing/chestny-prigon-profile";
 import { loadPricingContext, type PricingContext } from "@/lib/pricing/pricing-context";
 import { encarPhotoUrl } from "@/lib/encar/images";
-import { orderImagesByReport } from "@/lib/catalog/photo-order";
+import { orderCatalogImages } from "@/lib/catalog/photo-order";
 import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
@@ -320,7 +320,7 @@ function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): Cat
       profile: pricingContext.profile,
       exchangeRates: pricingContext.exchangeRates,
     });
-    const images = orderImagesByReport(row.inspection_summary, (row.image_urls ?? []).map(encarPhotoUrl));
+    const images = orderCatalogImages(row.inspection_summary, (row.image_urls ?? []).map(encarPhotoUrl));
     if (!images.length) return [];
 
     return [
@@ -372,7 +372,7 @@ function mapVehicleRows(
 ): CatalogCar[] {
   return data.flatMap((row) => {
     const report = reportsByVehicle.get(row.id);
-    const images = orderImagesByReport(report?.inspection_summary, (imagesByVehicle.get(row.id) ?? []).map(encarPhotoUrl));
+    const images = orderCatalogImages(report?.inspection_summary, (imagesByVehicle.get(row.id) ?? []).map(encarPhotoUrl));
     if (!images.length) return [];
     let calculation: BelarusPriceCalculation;
     try {

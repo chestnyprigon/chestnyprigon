@@ -63,15 +63,15 @@ test("normalizes European brands and displacement fallback fields", () => {
   assert.equal(vehicle.engineCc, 3000);
 });
 
-test("uses Encar's listed photo ordering and preserves source order within exterior photos", () => {
+test("full-car cover outranks arbitrary source ordering and thumbnail flags", () => {
   const vehicle = normalizeListing({
     fetchedAt: "2026-08-09T00:00:00.000Z",
     search: {
       Id: "photo-order-1", Manufacturer: "현대", Model: "쏘나타", Year: 202001, Mileage: 20_000, Price: 1500,
       Photos: [
-        { location: "/front.jpg", ordering: 2 },
-        { location: "/rear.jpg", ordering: 1 },
-        { location: "/cabin.jpg", ordering: 3 },
+        { location: "/carpicture03/pic4293/42932193_010.jpg", ordering: 1 },
+        { location: "/carpicture03/pic4293/42932193_004.jpg", ordering: 2 },
+        { location: "/carpicture03/pic4293/42932193_001.jpg", ordering: 3 },
       ],
     },
     detail: {
@@ -80,20 +80,18 @@ test("uses Encar's listed photo ordering and preserves source order within exter
       advertisement: { price: 1500 },
       spec: { mileage: 20_000, fuelName: "가솔린" },
       photos: [
-        { path: "/front.jpg", type: "OUTER", code: "027" },
-        { path: "/rear.jpg", type: "OUTER", code: "002" },
-        { path: "/cabin.jpg", type: "INNER", code: "001" },
+        { path: "/carpicture03/pic4293/42932193_010.jpg", type: "INNER", code: "010" },
+        { path: "/carpicture03/pic4293/42932193_027.jpg", type: "THUMBNAIL", code: "001" },
+        { path: "/carpicture03/pic4293/42932193_004.jpg", type: "OUTER", code: "004" },
+        { path: "/carpicture03/pic4293/42932193_001.jpg", type: "OUTER", code: "001" },
       ],
     },
   });
-  assert.deepEqual(vehicle.imageUrls, [
-    "https://ci.encar.com/rear.jpg",
-    "https://ci.encar.com/front.jpg",
-    "https://ci.encar.com/cabin.jpg",
-  ]);
+  assert.match(vehicle.imageUrls[0], /42932193_001\.jpg/);
+  assert.match(vehicle.imageUrls.at(-1)!, /42932193_010\.jpg/);
 });
 
-test("does not sort Encar exterior photos lexically by their photo code", () => {
+test("uses frontal 003 before rear 002 when the standard cover is absent", () => {
   const vehicle = normalizeListing({
     fetchedAt: "2026-08-09T00:00:00.000Z",
     search: { Id: "photo-code-1", Manufacturer: "현대", Model: "쏘나타", Year: 202001, Mileage: 20_000, Price: 1500 },
@@ -103,10 +101,10 @@ test("does not sort Encar exterior photos lexically by their photo code", () => 
       advertisement: { price: 1500 },
       spec: { mileage: 20_000, fuelName: "가솔린" },
       photos: [
-        { path: "/source-first.jpg", type: "OUTER", code: "027" },
-        { path: "/source-second.jpg", type: "OUTER", code: "002" },
+        { path: "/carpicture03/pic4293/42932193_002.jpg", type: "OUTER", code: "002" },
+        { path: "/carpicture03/pic4293/42932193_003.jpg", type: "OUTER", code: "003" },
       ],
     },
   });
-  assert.equal(vehicle.imageUrls[0], "https://ci.encar.com/source-first.jpg");
+  assert.match(vehicle.imageUrls[0], /42932193_003\.jpg/);
 });
