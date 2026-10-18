@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { readTelegramBotToken } from "./telegram-keychain";
+import { flushTelegramOutbox, sendTelegramWithOutbox } from "./telegram-catalog-notify";
 import { readEncarProxyUrlFromKeychain } from "../encar/proxy";
 import { ControlTaskRepository } from "../control-center/task-repository";
 import { ControlTaskService } from "../control-center/task-service";
@@ -40,12 +41,7 @@ type Command = {
 };
 
 async function sendTelegram(chatId: number, text: string) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
-  });
-  if (!response.ok) throw new Error(`Telegram sendMessage returned HTTP ${response.status}`);
+  await sendTelegramWithOutbox(botToken, chatId, text);
 }
 
 async function publicationPolicy(runId: string) {
@@ -570,6 +566,11 @@ async function main() {
   if (!handle) return;
 
   try {
+    try {
+      await flushTelegramOutbox(botToken);
+    } catch (error) {
+      console.error(`Could not flush Telegram notification outbox: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const leaseToken = randomUUID();
     for (let count = 0; count < 20; count += 1) {
       const { data, error } = await db.rpc("claim_chestny_catalog_worker_command", { p_token: leaseToken, p_lease_seconds: 90 });
