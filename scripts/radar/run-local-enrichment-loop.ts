@@ -41,6 +41,10 @@ if (requestedTargetedConcurrency !== undefined && (!Number.isInteger(requestedTa
 const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+function isRetryableInfrastructureFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|Supabase temporarily unavailable|worker lock RPC failed|checkpoint could not be paused/i.test(message);
+}
 type WorkerResult = {
   claimed: number;
   pendingRetries?: number;
@@ -66,6 +70,24 @@ async function queueCounts(scopeWaveId?: string) {
     counts[status] = count ?? 0;
   }
   return counts;
+}
+
+async function failedOutcomeCounts(scopeWaveId?: string) {
+  let identityConflicts = 0;
+  for (let offset = 0; ; offset += 500) {
+    let query = client.from("chestny_enrichment_queue").select("result")
+      .eq("run_id", runId).eq("status", "failed").order("id").range(offset, offset + 499);
+    if (scopeWaveId) query = query.eq("wave_id", scopeWaveId);
+    const { data, error } = await query;
+    if (error) throw new Error(`Could not classify failed queue outcomes: ${error.message}`);
+    identityConflicts += (data ?? []).filter((item) => {
+      const result = item.result && typeof item.result === "object" ? item.result as Record<string, unknown> : {};
+      return result.failureClass === "identity_integrity";
+    }).length;
+    if (!data || data.length < 500) break;
+  }
+  const counts = await queueCounts(scopeWaveId);
+  return { identityConflicts, technicalErrors: Math.max(0, counts.failed - identityConflicts) };
 }
 
 async function runBatch(lockToken: string, signal: AbortSignal, limit: number, allowMatchingStagingRefresh: boolean, delayMs: number, encarProxyUrl?: string, waveId?: string): Promise<WorkerResult> {
@@ -495,6 +517,7 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     console.log(JSON.stringify({ runId, screening, ...finalCounts }));
     const publication = await publicationDisposition(run.rules?.catalogLaunchId ? String(run.rules.catalogLaunchId) : null);
     const waveTerminal = finalWaveCounts.succeeded + finalWaveCounts.unavailable + finalWaveCounts.failed + finalWaveCounts.cancelled;
+    const failureBreakdown = await failedOutcomeCounts();
     const waveLabel = waveId ? `Волна ${activeWave?.wave_number}: ${waveTerminal}/${activeWave?.candidate_count}; ` : "";
     const screeningSummary = screening
       ? `Screening волны: допущено ${screening.decisions?.approved ?? 0}, отклонено ${screening.decisions?.rejected ?? 0}, изолировано ${screening.decisions?.isolated ?? 0}; готово к публикации ${screening.readyForPublication ?? 0}.`
@@ -502,9 +525,10 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     const fullRunFinished = finalCounts.queued + finalCounts.leased === 0 && !waveId;
     let finalMarkup: PublicationReplyMarkup | undefined;
     if (fullRunFinished && screening) finalMarkup = publicationReviewMarkup(screening.readyForPublication ?? 0);
-    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}, ошибок ${finalCounts.failed}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${publication}${finalMarkup ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : ""}`, finalMarkup);
+    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}; технических ошибок ${failureBreakdown.technicalErrors}, исключено из-за дублей/конфликтов ID ${failureBreakdown.identityConflicts}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${publication}${finalMarkup ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : ""}`, finalMarkup);
   } catch (error) {
-    if (!signal.aborted) {
+    const retryableInfrastructureFailure = isRetryableInfrastructureFailure(error);
+    if (!signal.aborted && !retryableInfrastructureFailure) {
       if (waveId) {
         const { error: wavePauseError } = await client.from("chestny_enrichment_waves").update({
           status: "paused",
@@ -519,7 +543,11 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       }).eq("id", runId).in("status", ["approved", "running", "completed"]);
       if (pauseError) throw new Error(`Worker failed and run could not be paused: ${pauseError.message}`);
     }
-    await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItems}: ${error instanceof Error ? error.message : String(error)}`);
+    if (retryableInfrastructureFailure) {
+      await notify(`⚠️ Временный сбой связи с Supabase для run ${runId} после ${processed}/${maxItems}. Сохранённый checkpoint не сбрасываю; Mac mini повторит подключение с паузой, только если run остаётся активным.`);
+    } else {
+      await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItems}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     throw error;
   }
 }
@@ -533,5 +561,23 @@ async function main() {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  const infrastructureFailure = isRetryableInfrastructureFailure(error);
+  if (!infrastructureFailure) {
+    process.exitCode = 1;
+    return;
+  }
+  const statusClient = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  void (async () => {
+    try {
+      const { data, error: statusError } = await statusClient.from("chestny_enrichment_runs")
+        .select("status").eq("id", runId).maybeSingle();
+      // Exit 75 is reserved for the Mac mini supervisor. Never auto-retry a
+      // deliberately paused/cancelled run or when its state cannot be verified.
+      process.exitCode = !statusError && data?.status === "running" ? 75 : 1;
+    } catch {
+      process.exitCode = 1;
+    }
+  })();
 });

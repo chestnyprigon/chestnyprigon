@@ -460,6 +460,7 @@ function reasonLabel(code: string) {
 function endpointOutcomeLabel(value: string) {
   const [endpoint, state] = value.split(":");
   const endpointNames: Record<string, string> = {
+    detail: "Карточка Encar",
     options: "Опции", inspection: "Осмотр", diagnosis: "Диагностика",
     insurance: "Страховая история", history: "История автомобиля",
   };
@@ -480,6 +481,7 @@ function renderEndpointOutcomes(groups: ReasonGroups) {
 }
 
 type ReasonGroups = Map<string, number>;
+type QueueReasonSummary = { failed: ReasonGroups; unavailable: ReasonGroups; identityExcluded: number; identityReasons: ReasonGroups };
 
 function addReasonCodes(groups: ReasonGroups, codes: string[]) {
   for (const code of new Set(codes.filter(Boolean))) groups.set(code, (groups.get(code) ?? 0) + 1);
@@ -491,8 +493,8 @@ function renderReasonGroups(groups: ReasonGroups) {
     .slice(0, 6).map(([code, count]) => `${escapeHtml(reasonLabel(code))} — ${count}`).join("; ");
 }
 
-async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: string) {
-  const groups: Record<"failed" | "unavailable", ReasonGroups> = { failed: new Map(), unavailable: new Map() };
+async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: string): Promise<QueueReasonSummary> {
+  const groups: QueueReasonSummary = { failed: new Map(), unavailable: new Map(), identityExcluded: 0, identityReasons: new Map() };
   for (const status of ["failed", "unavailable"] as const) {
     for (let offset = 0; ; offset += 1_000) {
       const { data, error } = await db.from("chestny_enrichment_queue")
@@ -505,7 +507,13 @@ async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: strin
         const codes = rawCodes.filter((value): value is string => typeof value === "string");
         const singleCode = typeof result.reasonCode === "string" ? result.reasonCode : null;
         const failureClass = typeof result.failureClass === "string" ? result.failureClass : null;
-        addReasonCodes(groups[status], codes.length ? codes : [singleCode ?? failureClass ?? (row.last_error ? "other_enrichment_error" : "reason_not_recorded")]);
+        const reasons = codes.length ? codes : [singleCode ?? failureClass ?? (row.last_error ? "other_enrichment_error" : "reason_not_recorded")];
+        if (status === "failed" && failureClass === "identity_integrity") {
+          groups.identityExcluded += 1;
+          addReasonCodes(groups.identityReasons, reasons);
+        } else {
+          addReasonCodes(status === "failed" ? groups.failed : groups.unavailable, reasons);
+        }
       }
       if (!data || data.length < 1_000) break;
     }
@@ -632,7 +640,7 @@ async function handleMessage(update: TelegramUpdate) {
         queueOutcomeReasons(db, run.id), screeningOutcomeReasons(db, run.id),
       ]);
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько причин.\n\n<b>Ошибки и пропуски обогащения</b>\nОшибки (${counts.failed}): ${renderReasonGroups(queueReasons.failed)}\nНедоступно (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; успешно ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько кодов.\n\n<b>Итоги очереди</b>\nТехнические ошибки (${Math.max(0, counts.failed - queueReasons.identityExcluded)}): ${renderReasonGroups(queueReasons.failed)}\nИсключено из обогащения: совпадения ID/дубли (${queueReasons.identityExcluded}): ${renderReasonGroups(queueReasons.identityReasons)}\nОбъявление недоступно в источнике (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; обогащено ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
     }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);

@@ -72,22 +72,35 @@ cd "$PROJECT_ROOT" || exit 72
 # The worker owns duplicate and stale-lock handling. Do not reject a lock file
 # here: after a Mac restart its PID is stale, and the worker can safely recover it.
 
-if [[ "$RUN_MODE" == "targeted_report_refresh" ]]; then
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &
-elif [[ "$RUN_MODE" == "saved_queue_until_complete" ]]; then
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete >> "$LOG_FILE" 2>&1 &
-else
-  /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
-fi
-WORKER_PID=$!
-/usr/bin/caffeinate -i -w "$WORKER_PID" &
-AWAKE_PID=$!
-trap '/bin/kill -TERM "$WORKER_PID" 2>/dev/null || true; wait "$WORKER_PID" 2>/dev/null || true; exit 143' TERM INT
-wait "$WORKER_PID"
-STATUS=$?
-/bin/kill "$AWAKE_PID" 2>/dev/null || true
-wait "$AWAKE_PID" 2>/dev/null || true
-trap - TERM INT
+ATTEMPT=0
+MAX_RECOVERY_RESTARTS=3
+while true; do
+  if [[ "$RUN_MODE" == "targeted_report_refresh" ]]; then
+    /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete --allow-matching-staging-refresh --targeted-report-refresh-delay-ms=2000 --targeted-report-refresh-concurrency=2 >> "$LOG_FILE" 2>&1 &
+  elif [[ "$RUN_MODE" == "saved_queue_until_complete" ]]; then
+    /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --until-complete >> "$LOG_FILE" 2>&1 &
+  else
+    /opt/homebrew/opt/node@24/bin/npm run catalog:worker-local -- --run-id="$RUN_ID" --transport="$TRANSPORT" --max-items="$MAX_ITEMS" >> "$LOG_FILE" 2>&1 &
+  fi
+  WORKER_PID=$!
+  /usr/bin/caffeinate -i -w "$WORKER_PID" &
+  AWAKE_PID=$!
+  trap '/bin/kill -TERM "$WORKER_PID" 2>/dev/null || true; wait "$WORKER_PID" 2>/dev/null || true; exit 143' TERM INT
+  wait "$WORKER_PID"
+  STATUS=$?
+  /bin/kill "$AWAKE_PID" 2>/dev/null || true
+  wait "$AWAKE_PID" 2>/dev/null || true
+  trap - TERM INT
+
+  if (( STATUS != 75 || ATTEMPT >= MAX_RECOVERY_RESTARTS )) || [[ ! -f "$REQUEST_FILE" ]] || [[ "$(/bin/cat "$REQUEST_FILE" | /usr/bin/tr -d '\r\n')" != "$RUN_ID" ]]; then
+    break
+  fi
+  ATTEMPT=$((ATTEMPT + 1))
+  BACKOFF=$((120 * ATTEMPT + 10))
+  /usr/bin/printf '%s transient Supabase connection failure; checkpoint is preserved; retry %s/%s in %ss\n' \
+    "$(/bin/date -u +%FT%TZ)" "$ATTEMPT" "$MAX_RECOVERY_RESTARTS" "$BACKOFF" >> "$LOG_FILE"
+  /bin/sleep "$BACKOFF"
+done
 
 if (( STATUS == 0 )) && [[ -f "$REQUEST_FILE" ]] && [[ "$(/bin/cat "$REQUEST_FILE" | /usr/bin/tr -d '\r\n')" == "$RUN_ID" ]]; then
   /bin/rm "$REQUEST_FILE"

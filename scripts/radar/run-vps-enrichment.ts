@@ -52,6 +52,7 @@ const radarPath = `${coordinationDirectory}/radar-priority.json`;
 const startedAt = Date.now();
 let requestedJson = 0;
 let scheduledWaitMs = 0;
+const queueCheckpoints = new Map<string, Record<string, unknown>>();
 const sleep = (ms: number) => { scheduledWaitMs += ms; return new Promise((resolve) => setTimeout(resolve, ms)); };
 const text = (value: unknown) => {
   if (typeof value === "string" && value.trim()) return value.trim();
@@ -73,8 +74,14 @@ type Row = {
 type Db = ReturnType<typeof createClient<any>>;
 
 class EncarRequestError extends Error {
-  constructor(readonly status: number, readonly endpoint: string) {
+  constructor(readonly status: number, readonly endpoint: string, readonly attempts = 1, readonly elapsedMs?: number) {
     super(`HTTP ${status} for ${endpoint}`);
+  }
+}
+
+class EncarRequestDiagnosticsError extends Error {
+  constructor(message: string, readonly diagnostics: { endpoint: string; httpStatus: number | null; attempts: number; elapsedMs: number; observedAt: string }, options?: ErrorOptions) {
+    super(message, options);
   }
 }
 
@@ -157,16 +164,26 @@ async function requestJson(agent: ProxyAgent | null, endpoint: string, headers?:
 }
 
 async function requestJsonWithRetry(agent: ProxyAgent | null, endpoint: string, lockSignal?: AbortSignal) {
+  const startedAt = Date.now();
+  let lastStatus: number | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       if (lockSignal?.aborted) throw lockSignal.reason;
-      return await requestJson(agent, endpoint, undefined, lockSignal);
+      const payload = await requestJson(agent, endpoint, undefined, lockSignal);
+      return { payload, diagnostics: { endpoint: "detail", httpStatus: 200, attempts: attempt, elapsedMs: Date.now() - startedAt, observedAt: new Date().toISOString() } };
     } catch (error) {
       if (lockSignal?.aborted) throw lockSignal.reason ?? error;
       const status = error instanceof EncarRequestError ? error.status : null;
+      if (status !== null) lastStatus = status;
       const retryable = status === 408 || (status !== null && status >= 500)
         || /fetch failed|abort|timeout|timed out|econn|eai_again|socket|proxy/i.test(error instanceof Error ? error.message : String(error));
-      if (!retryable || attempt === maxAttempts) throw error;
+      if (!retryable || attempt === maxAttempts) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new EncarRequestDiagnosticsError(message, {
+          endpoint: "detail", httpStatus: status ?? lastStatus, attempts: attempt,
+          elapsedMs: Date.now() - startedAt, observedAt: new Date().toISOString(),
+        }, { cause: error });
+      }
       await sleep(Math.min(delayMs * attempt, 30_000));
     }
   }
@@ -185,8 +202,9 @@ async function requestEndpoint(agent: ProxyAgent | null, name: EncarEndpoint, en
     maxAttempts, delayMs, wait: sleep,
     probe: async () => {
       if (lockSignal?.aborted) throw lockSignal.reason;
-      try { return { httpStatus: 200, payload: await requestJson(agent, endpoint, headers, lockSignal) }; }
-      catch (error) { if (lockSignal?.aborted) throw lockSignal.reason ?? error; return { httpStatus: error instanceof EncarRequestError ? error.status : null, error }; }
+      const startedAt = Date.now();
+      try { return { httpStatus: 200, payload: await requestJson(agent, endpoint, headers, lockSignal), elapsedMs: Date.now() - startedAt }; }
+      catch (error) { if (lockSignal?.aborted) throw lockSignal.reason ?? error; return { httpStatus: error instanceof EncarRequestError ? error.status : null, error, elapsedMs: Date.now() - startedAt }; }
     },
   });
   if (lockSignal?.aborted) throw lockSignal.reason;
@@ -202,6 +220,7 @@ function endpointStatus(outcome: EndpointOutcome | { endpoint: EncarEndpoint; st
     state: outcome.state,
     httpStatus: "httpStatus" in outcome ? outcome.httpStatus : null,
     attempts: "attempts" in outcome ? outcome.attempts : 0,
+    elapsedMs: "elapsedMs" in outcome ? outcome.elapsedMs ?? null : null,
     observedAt: "observedAt" in outcome ? outcome.observedAt : null,
     retryable: "retryable" in outcome ? outcome.retryable : false,
     reasonCode: outcome.reasonCode,
@@ -230,14 +249,18 @@ async function requeueRetryableFailures(db: Db, scopeWaveId = waveId) {
 }
 
 async function complete(db: Db, row: Row, status: "succeeded" | "unavailable" | "failed", result: Record<string, unknown>, payload?: Record<string, unknown>, fuel?: string | null, color?: string | null, images: string[] = [], errorMessage?: string) {
-  if (result.failureClass === "identity_integrity") {
-    result.screeningDecision = "isolated";
-    result.reasonEvidence = integrityEvidence(result.integrityIssues as Parameters<typeof integrityEvidence>[0]);
+  const checkpoint = queueCheckpoints.get(row.id);
+  const persistedResult = checkpoint && !result.checkpoint
+    ? { ...result, checkpoint }
+    : result;
+  if (persistedResult.failureClass === "identity_integrity") {
+    persistedResult.outcomeCategory = "excluded_duplicate_or_identity_conflict";
+    persistedResult.integrityEvidence = integrityEvidence(persistedResult.integrityIssues as Parameters<typeof integrityEvidence>[0]);
   }
   const response = await db.rpc("complete_chestny_enrichment_queue_item", {
     p_queue_id: row.id,
     p_status: status,
-    p_result: result,
+    p_result: persistedResult,
     p_payload: payload ?? null,
     p_fuel: fuel ?? null,
     p_color: color ?? null,
@@ -377,7 +400,9 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
       const checkpoint = obj(previousResult.checkpoint);
       row.attempt_count = saved.data.attempt_count;
       let checkpointData: Record<string, unknown> = checkpoint;
+      queueCheckpoints.set(row.id, checkpointData);
       const saveCheckpoint = async () => {
+        queueCheckpoints.set(row.id, checkpointData);
         const savedCheckpoint = await db.from("chestny_enrichment_queue").update({ result: { ...previousResult, checkpoint: checkpointData } }).eq("id", row.id).eq("status", "leased");
         if (savedCheckpoint.error) throw new Error(savedCheckpoint.error.message);
       };
@@ -394,7 +419,10 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           continue;
         }
         // Resolve the canonical ID from detail before calling any other endpoint.
-        const detailResponse = await requestJsonWithRetry(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS`, lockSignal);
+        const detailRequest = await requestJsonWithRetry(agent, `https://api.encar.com/v1/readside/vehicles?vehicleIds=${encodeURIComponent(advertisedId)}&include=SPEC,ADVERTISEMENT,PHOTOS,CATEGORY,MANAGE,CONTACT,VIEW,OPTIONS`, lockSignal);
+        const detailResponse = detailRequest.payload;
+        checkpointData = { ...checkpointData, detailRequest: detailRequest.diagnostics };
+        await saveCheckpoint();
         if (Array.isArray(detailResponse) && detailResponse.length === 0) throw new Error("detail_empty_response");
         if (Array.isArray(detailResponse) && detailResponse.length !== 1) {
           const issue = {
@@ -608,7 +636,8 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             rawReports: { inspection: null, diagnosis: null, insurance: null, history: null },
             identifiers: { advertisedId, canonicalId, vehicleNo },
             screening: preliminaryScreening,
-            endpointStatus: { options: skipped, inspection: skipped, diagnosis: skipped, insurance: skipped, history: skipped },
+            endpointStatus: { detail: { state: "ok", ...detailRequest.diagnostics }, options: skipped, inspection: skipped, diagnosis: skipped, insurance: skipped, history: skipped },
+            detailRequest: detailRequest.diagnostics,
             fetchedAt: new Date().toISOString(),
           };
           await complete(db, row, "succeeded", {
@@ -734,6 +763,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           screening: supplementalDecision,
           publicationGate: gate.proof,
           endpointStatus: {
+            detail: { state: "ok", ...detailRequest.diagnostics },
             options: endpointStatus(optionsResult),
             inspection: endpointStatus(inspectionResult),
             diagnosis: endpointStatus(diagnosisResult),
@@ -762,7 +792,9 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           throw lockSignal.reason ?? error;
         }
         const message = error instanceof Error ? error.message : String(error);
-        const unavailable = (error instanceof EncarRequestError && [404, 410].includes(error.status)) || message === "detail_empty_response";
+        const unavailable = (error instanceof EncarRequestError && [404, 410].includes(error.status))
+          || (error instanceof EncarRequestDiagnosticsError && [404, 410].includes(error.diagnostics.httpStatus ?? 0))
+          || message === "detail_empty_response";
         const kind = failureClass(message);
         const endpointOutcome = error instanceof EndpointEnrichmentError ? error.outcome : null;
         const temporary = !unavailable && (endpointOutcome?.retryable ?? isRetryableFailure(message));
@@ -786,6 +818,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
           observedAt,
           attempt,
           ...(endpointOutcome ? { endpointStatus: endpointStatus(endpointOutcome) } : {}),
+          ...(error instanceof EncarRequestDiagnosticsError ? { requestDiagnostics: error.diagnostics } : {}),
           failureClass: endpointOutcome ? `endpoint_${endpointOutcome.state}` : kind,
           checkpoint: checkpointData,
           retryable, retryExhausted,

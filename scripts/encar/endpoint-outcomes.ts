@@ -19,6 +19,7 @@ export type EndpointOutcome = {
   state: EndpointState;
   httpStatus: number | null;
   attempts: number;
+  elapsedMs?: number;
   observedAt: string;
   retryable: boolean;
   payload: unknown | null;
@@ -34,6 +35,7 @@ type Probe = {
   payload?: unknown;
   error?: unknown;
   attempts?: number;
+  elapsedMs?: number;
   canonicalId?: string;
   vehicleNo?: string;
 };
@@ -119,6 +121,7 @@ export function classifyEndpointProbe(probe: Probe): EndpointOutcome {
     state,
     httpStatus,
     attempts,
+    ...(probe.elapsedMs !== undefined ? { elapsedMs: Math.max(0, Math.round(probe.elapsedMs)) } : {}),
     observedAt: new Date().toISOString(),
     retryable,
     payload,

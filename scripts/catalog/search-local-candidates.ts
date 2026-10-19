@@ -210,20 +210,30 @@ async function main() {
     let scanned = 0;
     let pages = 0;
     let exhausted = false;
+    let filteredByInitialRules = 0;
+    let alreadyKnown = 0;
     while (found < brand.candidatesToFind && !exhausted && pages < maxPagesPerBrand) {
       let page: Awaited<ReturnType<typeof fetchDirectSearchPage>>;
+      const requestStartedAt = Date.now();
       try {
         page = await fetchDirectSearchPage({ offset, limit: pageSize, query, signal, verifyAccess: false });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({ event: "encar_search_page_failed", runId: activeRunId, manufacturer: brand.manufacturer,
+          offset, limit: pageSize, httpStatus: Number(message.match(/HTTP (\d{3})/)?.[1]) || null,
+          elapsedMs: Date.now() - requestStartedAt, observedAt: new Date().toISOString(), classification: /403/.test(message) ? "blocked" : /429/.test(message) ? "rate_limited" : /fetch failed|timeout|socket|econn|eai_again/i.test(message) ? "network_error" : "request_error" }));
         await client.rpc("record_chestny_catalog_search_error", { p_launch: launch.id, p_manufacturer: brand.manufacturer, p_message: message });
         throw error;
       }
+      console.log(JSON.stringify({ event: "encar_search_page", runId: activeRunId, manufacturer: brand.manufacturer,
+        offset, limit: pageSize, httpStatus: 200, elapsedMs: Date.now() - requestStartedAt,
+        returned: page.listings.length, sourceTotal: page.total, observedAt: new Date().toISOString() }));
+      let excludedByInitialRules = 0;
       const candidates = page.listings.flatMap((listing) => {
         const id = String(listing.Id ?? "").trim();
-        if (!id || searchExclusionReasons(listing).length) return [];
+        if (!id || searchExclusionReasons(listing).length) { excludedByInitialRules += 1; return []; }
         const modelYear = toModelYear(listing.Year) ?? toModelYear(listing.FormYear);
-        if (modelYear !== null && modelYear < CATALOG_POLICY.minYear) return [];
+        if (modelYear !== null && modelYear < CATALOG_POLICY.minYear) { excludedByInitialRules += 1; return []; }
         const snapshot = {
           ...listing, encarId: id, quotaManufacturer: brand.manufacturer,
           manufacturer: listing.Manufacturer ?? null, model: listing.Model ?? null, modelYear,
@@ -233,6 +243,8 @@ async function main() {
       });
       const pageIds = [...new Set(candidates.map((candidate) => candidate.source_listing_id))];
       const knownIds = await existingIdentifiers(client, pageIds);
+      alreadyKnown += candidates.filter((candidate) => knownIds.has(candidate.source_listing_id)).length;
+      filteredByInitialRules += excludedByInitialRules;
       const allowance = Math.max(0, brand.candidatesToFind - found);
       const newCandidates = candidates.filter((candidate) => !knownIds.has(candidate.source_listing_id)).slice(0, allowance);
       const nextOffset = offset + pageSize;
@@ -253,7 +265,8 @@ async function main() {
       pages += 1;
       await new Promise((resolve) => setTimeout(resolve, CATALOG_POLICY.requestDelayMs));
     }
-    summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages, newCandidates: found, exhausted, targetReached: found >= brand.candidatesToFind });
+    summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages,
+      filteredByInitialRules, alreadyKnown, newCandidates: found, exhausted, targetReached: found >= brand.candidatesToFind });
     finishedBrands += 1;
     foundAcrossBrands += found;
     // Report only at stable five-brand milestones. The control task reports the

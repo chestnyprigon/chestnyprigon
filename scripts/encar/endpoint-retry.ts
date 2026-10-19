@@ -8,7 +8,7 @@ export async function requestEndpointWithRetry(input: {
   maxAttempts?: number;
   delayMs?: number;
   signal?: AbortSignal;
-  probe: (attempt: number) => Promise<{httpStatus?: number | null; payload?: unknown; error?: unknown}>;
+  probe: (attempt: number) => Promise<{httpStatus?: number | null; payload?: unknown; error?: unknown; elapsedMs?: number}>;
   wait: (milliseconds: number) => Promise<unknown>;
 }) {
   const max=Math.min(CATALOG_POLICY.maxEndpointAttempts,Math.max(1,input.maxAttempts??CATALOG_POLICY.maxEndpointAttempts));
