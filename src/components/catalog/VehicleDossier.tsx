@@ -140,8 +140,8 @@ function ClientPriceTable({
       <p className="is-emphasis"><span>Первый платёж</span><b>{dollar(calculation.firstPaymentUsd)}</b></p>
       <p><span>Услуги СВХ и декларант</span><b>{euro(calculation.svhDeclarantEur)}</b></p>
       <p><span>Таможенная пошлина</span><b>{euro(calculation.customsDutyEur)}</b></p>
-      <p><span>Оформление и сопровождение</span><b>{euro(calculation.customsClearanceEur)}</b></p>
-      <p><span>Утилизационный сбор</span><b>{euro(calculation.utilizationFeeEur)}</b></p>
+      <p><span>Утилизационный сбор</span><b>{euro(calculation.customsClearanceEur)}</b></p>
+      <p><span>Таможенный сбор за оформление</span><b>{euro(calculation.utilizationFeeEur)}</b></p>
       <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
       <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
       <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>
