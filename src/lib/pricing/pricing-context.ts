@@ -26,7 +26,7 @@ async function loadPricingContextUncached(): Promise<PricingContext> {
     const profile: PricingProfile = profileRow ? {
       version: profileRow.version,
       krwPerUsd: Number(profileRow.krw_per_usd), deliveryUsd: Number(profileRow.delivery_usd), commissionRate: Number(profileRow.commission_rate),
-      svhDeclarantEur: Number(profileRow.svh_declarant_eur), customsClearanceEur: Number(profileRow.customs_clearance_eur),
+      svhDeclarantEur: Number(profileRow.svh_declarant_eur), utilizationFeeEur: Number(profileRow.customs_clearance_eur),
       companyServiceUsd: Number(profileRow.company_service_usd),
     } : CHESTNY_PRIGON_PRICING_PROFILE;
     const krwUsdRate = krwRateResult.error

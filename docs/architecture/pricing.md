@@ -2,7 +2,7 @@
 
 The live calculator is `src/lib/pricing/chestny-prigon-profile.ts`. It separates commercial tariffs supplied by the client from statutory Belarus payments.
 
-Profile version: `chestny-prigon-client-table-v2-dynamic-state-fees`.
+Profile version: fixed customs-clearance fee policy (40 EUR).
 
 ## Commercial tariffs
 
@@ -12,15 +12,17 @@ Profile version: `chestny-prigon-client-table-v2-dynamic-state-fees`.
 | Delivery to Minsk | 4,700 USD | Standard passenger-car route tariff |
 | Commission | 2.5% | Calculated from source price and delivery |
 | SVH and declarant | 150 EUR | Client operational tariff |
-| Handling and accompaniment | 400 EUR | Client operational tariff, not a statutory customs fee |
+| Utilization fee (catalog label) | 400 EUR | Existing client tariff retained in the legacy `customs_clearance_eur` profile column |
+| Customs clearance fee | 40 EUR | Fixed amount for every vehicle; included in the Minsk-arrival total |
 | Company service | 300 USD | Client service tariff |
 
 ## Dynamic statutory calculations
 
 1. USD/BYN and EUR/BYN are obtained from the daily NBRB API. A labelled fallback is used only if NBRB is unavailable.
 2. Customs duty is calculated by vehicle age, engine displacement and—only for vehicles up to three years old—customs value. The rates follow the EAEU personal-import brackets.
-3. For a M1 vehicle imported by a private person for personal use, utilization fee is calculated from the legal BYN rates: 624.92 BYN up to three years inclusive and 1,282.02 BYN after three years, effective 2026-04-29. The client table displays this line in EUR after conversion using the current NBRB EUR/BYN rate; the total uses the same converted value.
-4. Preferential treatment affects only customs duty and remains a scenario until the buyer's eligibility is confirmed.
+3. The customer-approved customs-clearance fee is fixed at 40 EUR for every vehicle. It is not converted from BYN and does not vary by vehicle age or NBRB rates.
+4. The existing 400 EUR profile tariff is displayed as “Утилизационный сбор” and remains in the Minsk-arrival total. Its current database storage column is named `customs_clearance_eur` for backward compatibility.
+5. Preferential treatment affects only customs duty and remains a scenario until the buyer's eligibility is confirmed.
 
 The Encar payload currently provides first-registration date rather than an independently verified production date. It is used for the preliminary age group; the final customs amount must be checked against the vehicle documents.
 

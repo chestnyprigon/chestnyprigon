@@ -4,7 +4,7 @@ export type PricingProfile = {
   deliveryUsd: number;
   commissionRate: number;
   svhDeclarantEur: number;
-  customsClearanceEur: number;
+  utilizationFeeEur: number;
   companyServiceUsd: number;
 };
 
@@ -16,23 +16,19 @@ export type ExchangeRates = {
 };
 
 export const CHESTNY_PRIGON_PRICING_PROFILE: PricingProfile = {
-  version: "chestny-prigon-client-table-v3-preferential-default",
+  version: "chestny-prigon-client-table-v4-fixed-customs-clearance-40-eur",
   // Commercial KRW/USD rate is supplied and approved by the client.
   krwPerUsd: 1397,
   deliveryUsd: 4_900,
   commissionRate: 0.02,
   svhDeclarantEur: 150,
-  // Commercial handling and accompaniment tariff, not a statutory customs fee.
-  customsClearanceEur: 400,
+  // Retained commercial tariff; stored in the legacy customs_clearance_eur column.
+  utilizationFeeEur: 400,
   companyServiceUsd: 300,
 };
 
-const PERSONAL_IMPORT_UTILIZATION_FEE_BYN = {
-  upToThreeYears: 624.92,
-  overThreeYears: 1_282.02,
-} as const;
-
 const PARKING_FEE_KRW = 440_000;
+const CUSTOMS_CLEARANCE_EUR = 40;
 
 // Used only when the official daily cache cannot be read. It is deliberately
 // labelled as a fallback in the UI and is replaced by the NBRB cache server-side.
@@ -73,8 +69,7 @@ export type BelarusPriceCalculation = {
   svhDeclarantEur: number;
   customsDutyEur: number | null;
   customsClearanceEur: number;
-  utilizationFeeByn: number | null;
-  utilizationFeeEur: number | null;
+  utilizationFeeEur: number;
   arrivalMinskEur: number | null;
   companyServiceUsd: number;
   totalUsd: number | null;
@@ -138,13 +133,6 @@ function customsDutyEur({ priceEur, engineCc, ageBand, preferential }: { priceEu
   return Math.round(dutyEur * (preferential ? 0.5 : 1));
 }
 
-function utilizationFeeByn(ageBand: VehicleAgeBand | null) {
-  if (ageBand === null) return null;
-  return ageBand === "up_to_three_years"
-    ? PERSONAL_IMPORT_UTILIZATION_FEE_BYN.upToThreeYears
-    : PERSONAL_IMPORT_UTILIZATION_FEE_BYN.overThreeYears;
-}
-
 export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCalculation {
   if (!Number.isFinite(input.priceKrw) || input.priceKrw <= 0) throw new Error("priceKrw must be a positive number");
   const profile = input.profile ?? CHESTNY_PRIGON_PRICING_PROFILE;
@@ -169,11 +157,9 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
         ? "Не указан объём двигателя"
         : null;
   const dutyEur = unavailableReason ? null : customsDutyEur({ priceEur: sourcePriceEur, engineCc: input.engineCc, ageBand, preferential });
-  const utilizationByn = dutyEur === null ? null : utilizationFeeByn(ageBand);
-  const utilizationEur = utilizationByn === null ? null : Math.round(utilizationByn / rates.eurByn);
-  const arrivalMinskEur = dutyEur === null || utilizationByn === null
+  const arrivalMinskEur = dutyEur === null
     ? null
-    : Math.round(profile.svhDeclarantEur + dutyEur + profile.customsClearanceEur + utilizationByn / rates.eurByn);
+    : Math.round(profile.svhDeclarantEur + dutyEur + profile.utilizationFeeEur + CUSTOMS_CLEARANCE_EUR);
   // eurPerUsd is derived as (BYN per EUR) / (BYN per USD), so its unit is
   // USD per EUR. EUR costs must therefore be converted to USD by multiplying.
   const totalUsd = arrivalMinskEur === null ? null : Math.round(firstPaymentUsd + arrivalMinskEur * eurPerUsd + profile.companyServiceUsd);
@@ -196,9 +182,8 @@ export function calculateBelarusPrice(input: BelarusPriceInput): BelarusPriceCal
     firstPaymentUsd,
     svhDeclarantEur: profile.svhDeclarantEur,
     customsDutyEur: dutyEur,
-    customsClearanceEur: profile.customsClearanceEur,
-    utilizationFeeByn: utilizationByn,
-    utilizationFeeEur: utilizationEur,
+    customsClearanceEur: CUSTOMS_CLEARANCE_EUR,
+    utilizationFeeEur: profile.utilizationFeeEur,
     arrivalMinskEur,
     companyServiceUsd: profile.companyServiceUsd,
     totalUsd,

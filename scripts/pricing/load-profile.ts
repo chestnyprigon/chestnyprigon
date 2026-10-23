@@ -28,7 +28,7 @@ export async function loadPersistedPricingProfile(client: SupabaseClient): Promi
     deliveryUsd: Number(row.delivery_usd),
     commissionRate: Number(row.commission_rate),
     svhDeclarantEur: Number(row.svh_declarant_eur),
-    customsClearanceEur: Number(row.customs_clearance_eur),
+    utilizationFeeEur: Number(row.customs_clearance_eur),
     companyServiceUsd: Number(row.company_service_usd),
   } : CHESTNY_PRIGON_PRICING_PROFILE;
   // The rate table may not exist until its migration is applied. In that case

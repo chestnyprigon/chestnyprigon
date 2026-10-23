@@ -12,7 +12,7 @@ test("reproduces the approved client delivery and commission first payment", () 
     now: new Date("2026-08-23T12:00:00Z"),
   });
 
-  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v3-preferential-default");
+  assert.equal(CHESTNY_PRIGON_PRICING_PROFILE.version, "chestny-prigon-client-table-v4-fixed-customs-clearance-40-eur");
   assert.equal(result.sourcePriceUsd, 36_106);
   assert.equal(result.parkingFeeKrw, 440_000);
   assert.equal(result.costInKoreaUsd, Math.round((50_440_000 + 440_000) / CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd));
@@ -43,7 +43,7 @@ test("converts arrival costs from EUR to USD by multiplying the USD-per-EUR rate
   assert.equal(result.totalUsd, Math.round(result.firstPaymentUsd + result.arrivalMinskEur! * 1.142 + result.companyServiceUsd));
 });
 
-test("uses the current Belarus utilization fee by the vehicle age", () => {
+test("uses a fixed 40 EUR customs-clearance fee and preserves the 400 EUR utilization tariff", () => {
   const base = {
     priceKrw: 20_000_000,
     engineCc: 1_598,
@@ -55,10 +55,10 @@ test("uses the current Belarus utilization fee by the vehicle age", () => {
   const upToThreeYears = calculateBelarusPrice({ ...base, firstRegistrationDate: "2023-08-26" });
   const overThreeYears = calculateBelarusPrice({ ...base, firstRegistrationDate: "2023-08-25" });
 
-  assert.equal(upToThreeYears.utilizationFeeByn, 624.92);
-  assert.equal(overThreeYears.utilizationFeeByn, 1_282.02);
-  assert.equal(upToThreeYears.utilizationFeeEur, Math.round(624.92 / upToThreeYears.rates.eurByn));
-  assert.equal(overThreeYears.utilizationFeeEur, Math.round(1_282.02 / overThreeYears.rates.eurByn));
+  assert.equal(upToThreeYears.customsClearanceEur, 40);
+  assert.equal(overThreeYears.customsClearanceEur, 40);
+  assert.equal(upToThreeYears.utilizationFeeEur, 400);
+  assert.equal(overThreeYears.utilizationFeeEur, 400);
 });
 
 test("applies the preferential coefficient only to customs duty", () => {
@@ -73,7 +73,11 @@ test("applies the preferential coefficient only to customs duty", () => {
   const regular = calculateBelarusPrice({ ...base, preferential: false });
 
   assert.equal(regular.customsDutyEur, preferential.customsDutyEur! * 2);
-  assert.equal(regular.totalUsd! - preferential.totalUsd!, Math.round(preferential.customsDutyEur! * preferential.eurPerUsd));
+  for (const result of [preferential, regular]) {
+    assert.equal(result.totalUsd, Math.round(
+      result.firstPaymentUsd + result.arrivalMinskEur! * result.eurPerUsd + result.companyServiceUsd,
+    ));
+  }
 });
 
 test("does not invent a customs amount for an electric vehicle", () => {
