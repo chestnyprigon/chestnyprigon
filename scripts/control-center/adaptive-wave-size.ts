@@ -8,12 +8,13 @@ export type WaveCounts = {
   leased: number;
   succeeded: number;
   unavailable: number;
+  excluded: number;
   failed: number;
   cancelled: number;
 };
 
 export function processedQueueItems(counts: WaveCounts) {
-  return counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+  return counts.succeeded + counts.unavailable + counts.excluded + counts.failed + counts.cancelled;
 }
 
 export function chooseNextWaveSize(input: {

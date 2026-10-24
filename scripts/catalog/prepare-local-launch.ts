@@ -2,21 +2,20 @@ import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { writeFile, mkdir } from "node:fs/promises";
 import { CATALOG_POLICY } from "../encar/catalog-policy";
-import { APPROVED_BRAND_QUOTAS } from "./brand-quotas";
+import { APPROVED_BRAND_MIX_WEIGHTS } from "./brand-quotas";
 config({path:".env.local",quiet:true});
 
 async function main() {
   const url=process.env.NEXT_PUBLIC_SUPABASE_URL, key=process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key || !url.includes("ojnybjomttolhsfgkdqq")) throw Error("Expected chestny-prigon Supabase project");
-  if (APPROVED_BRAND_QUOTAS.reduce((s,q)=>s+q.target,0)!==1000) throw Error("Quota sum must be 1000");
   const db=createClient(url,key);
   const nameArgument = process.argv.find((arg) => arg.startsWith("--name="))?.slice("--name=".length);
-  const name = nameArgument?.trim() || "local-catalog-1000-20261007";
+  const name = nameArgument?.trim() || `local-catalog-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
   if (!/^[a-z0-9][a-z0-9-]{5,79}$/.test(name)) throw Error("Launch name must use 6–80 lowercase letters, digits, and hyphens");
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
   if (process.argv.includes("--apply")) {
-    const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_QUOTAS,p_rules:CATALOG_POLICY});
+    const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,p_rules:CATALOG_POLICY});
     if (prepared.error) throw Error(prepared.error.message);
     launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
     if (launch.error) throw Error(launch.error.message);

@@ -26,8 +26,11 @@ const transport = transportArgument;
 if (transport !== "direct" && transport !== "proxy") throw new Error("--transport must be direct or proxy");
 const batchSize = 10;
 const maxItemsArgument = process.argv.find((argument) => argument.startsWith("--max-items="))?.slice("--max-items=".length);
-const maxItems = maxItemsArgument === undefined ? (untilComplete ? 5_000 : 50) : Number(maxItemsArgument);
-if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > (untilComplete ? 5_000 : 500)) throw new Error("Invalid --max-items for this worker mode");
+const maxItems = maxItemsArgument === undefined ? (untilComplete ? Number.POSITIVE_INFINITY : 50) : Number(maxItemsArgument);
+const maxItemsLabel = Number.isFinite(maxItems) ? String(maxItems) : "до конца очереди";
+if (maxItemsArgument !== undefined && (!Number.isSafeInteger(maxItems) || maxItems < 1 || (!untilComplete && maxItems > 500))) {
+  throw new Error("Invalid --max-items for this worker mode");
+}
 const targetedDelayArgument = process.argv.find((argument) => argument.startsWith("--targeted-report-refresh-delay-ms="))?.slice("--targeted-report-refresh-delay-ms=".length);
 const requestedTargetedDelayMs = targetedDelayArgument === undefined ? undefined : Number(targetedDelayArgument);
 if (requestedTargetedDelayMs !== undefined && (!Number.isInteger(requestedTargetedDelayMs) || requestedTargetedDelayMs < 2_000 || requestedTargetedDelayMs > 30_000)) {
@@ -50,6 +53,7 @@ type WorkerResult = {
   pendingRetries?: number;
   succeeded: number;
   unavailable: number;
+  excluded?: number;
   failed: number;
   requestedJson?: number;
   scheduledWaitMs?: number;
@@ -59,7 +63,7 @@ type WorkerResult = {
 
 async function queueCounts(scopeWaveId?: string) {
   const counts: Record<string, number> = {};
-  for (const status of ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"]) {
+  for (const status of ["queued", "leased", "succeeded", "unavailable", "excluded", "failed", "cancelled"]) {
     let query = client.from("chestny_enrichment_queue")
       .select("id", { count: "exact", head: true })
       .eq("run_id", runId)
@@ -73,21 +77,8 @@ async function queueCounts(scopeWaveId?: string) {
 }
 
 async function failedOutcomeCounts(scopeWaveId?: string) {
-  let identityConflicts = 0;
-  for (let offset = 0; ; offset += 500) {
-    let query = client.from("chestny_enrichment_queue").select("result")
-      .eq("run_id", runId).eq("status", "failed").order("id").range(offset, offset + 499);
-    if (scopeWaveId) query = query.eq("wave_id", scopeWaveId);
-    const { data, error } = await query;
-    if (error) throw new Error(`Could not classify failed queue outcomes: ${error.message}`);
-    identityConflicts += (data ?? []).filter((item) => {
-      const result = item.result && typeof item.result === "object" ? item.result as Record<string, unknown> : {};
-      return result.failureClass === "identity_integrity";
-    }).length;
-    if (!data || data.length < 500) break;
-  }
   const counts = await queueCounts(scopeWaveId);
-  return { identityConflicts, technicalErrors: Math.max(0, counts.failed - identityConflicts) };
+  return { identityConflicts: counts.excluded ?? 0, technicalErrors: counts.failed };
 }
 
 async function runBatch(lockToken: string, signal: AbortSignal, limit: number, allowMatchingStagingRefresh: boolean, delayMs: number, encarProxyUrl?: string, waveId?: string): Promise<WorkerResult> {
@@ -135,12 +126,13 @@ function mergeWorkerResults(results: WorkerResult[]): WorkerResult {
     pendingRetries: Math.max(combined.pendingRetries ?? 0, item.pendingRetries ?? 0),
     succeeded: combined.succeeded + item.succeeded,
     unavailable: combined.unavailable + item.unavailable,
+    excluded: (combined.excluded ?? 0) + (item.excluded ?? 0),
     failed: combined.failed + item.failed,
     requestedJson: (combined.requestedJson ?? 0) + (item.requestedJson ?? 0),
     scheduledWaitMs: (combined.scheduledWaitMs ?? 0) + (item.scheduledWaitMs ?? 0),
     elapsedMs: Math.max(combined.elapsedMs ?? 0, item.elapsedMs ?? 0),
     results: [...combined.results, ...item.results],
-  }), { claimed: 0, succeeded: 0, unavailable: 0, failed: 0, results: [] });
+  }), { claimed: 0, succeeded: 0, unavailable: 0, excluded: 0, failed: 0, results: [] });
 }
 
 async function screenCompletedItems(full = false, waveId?: string) {
@@ -171,27 +163,105 @@ async function screenCompletedItems(full = false, waveId?: string) {
 }
 
 type WaveRecord = { id: string; wave_number: number; candidate_count: number; status: string; last_error?: Record<string, unknown> | null };
-type ScreeningSummary = { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number };
+type ScreeningSummary = { decisions?: Record<string, number>; readyForPublication?: number; missingPayload?: number;
+  succeededQueueRows?: number; stagingRows?: number; missingStagingCount?: number };
 type PublicationReplyMarkup = { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+
+function lastJsonObject(output: string) {
+  for (let start = output.lastIndexOf("{"); start >= 0; start = output.lastIndexOf("{", start - 1)) {
+    try {
+      const parsed: unknown = JSON.parse(output.slice(start).trim());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch { /* Try an earlier opening brace; child output can contain nested JSON. */ }
+  }
+  throw new Error(`Command returned no JSON summary: ${output.trim().slice(-2_000)}`);
+}
+
+async function runCatalogScript(args: string[], label: string) {
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", ...args], {
+      env: { ...process.env, CHESTNY_ENRICHMENT_RUN_ID: runId },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`${label} exited ${code}: ${(stderr.trim() || stdout.trim()).slice(-2_000)}`)));
+  });
+  return lastJsonObject(output);
+}
+
+async function publishWaveAfterScreening(wave: WaveRecord) {
+  const manifestPath = `output/automatic-publication-wave-${wave.wave_number}-${runId}.json`;
+  const prepared = await runCatalogScript(["scripts/radar/prepare-publication-cohort.ts",
+    `--run-id=${runId}`, `--wave-number=${wave.wave_number}`, `--output=${manifestPath}`], "Publication cohort preparation");
+  const selected = Number(prepared.selectedForPublicationReview ?? 0);
+  if (prepared.status !== "prepared_for_review" || prepared.publicationExecuted !== false || !Number.isInteger(selected)) {
+    throw new Error("Publication cohort preparation did not return a valid read-only manifest summary");
+  }
+  if (selected === 0) return { selected: 0, publishedCount: 0, failedCount: 0, skipped: "no_approved_candidates" };
+  const result = await runCatalogScript(["scripts/radar/publish-screened-cohort.ts", `--manifest=${manifestPath}`, "--publish"], "Automatic publication");
+  if (result.runId !== runId || result.publicationManifestStatus !== "completed"
+    || Number(result.selected) !== selected || Number(result.publishedCount) !== selected || Number(result.unfinished) !== 0) {
+    throw new Error(`Publication result did not reconcile with the frozen wave roster: ${JSON.stringify(result).slice(0, 1_500)}`);
+  }
+  return result;
+}
+
+async function publicationTotals() {
+  const manifests = await client.from("chestny_catalog_publication_manifests").select("id").eq("run_id", runId);
+  if (manifests.error) throw new Error(`Could not read publication manifests: ${manifests.error.message}`);
+  const ids = (manifests.data ?? []).map((row) => String(row.id));
+  if (!ids.length) return { published: 0, failed: 0, pending: 0 };
+  const countStatus = async (status: string) => {
+    const result = await client.from("chestny_catalog_publication_manifest_items")
+      .select("id", { count: "exact", head: true }).in("manifest_id", ids).eq("status", status);
+    if (result.error) throw new Error(`Could not count publication items ${status}: ${result.error.message}`);
+    return result.count ?? 0;
+  };
+  const [published, failed, pending, publishing] = await Promise.all([
+    countStatus("published"), countStatus("failed"), countStatus("pending"), countStatus("publishing"),
+  ]);
+  return { published, failed, pending: pending + publishing };
+}
 
 function publicationReviewMarkup(readyCount: number) {
   if (readyCount < 1) return undefined;
   return { inline_keyboard: [[{ text: `Проверить публикацию · ${readyCount}`, callback_data: `pub:r:${runId}:${readyCount}` }]] };
 }
 
-async function screenWaveInBackground(wave: WaveRecord, full: boolean, notify: (message: string, markup?: PublicationReplyMarkup) => Promise<void>) {
+async function screenWaveInBackground(wave: WaveRecord, full: boolean, autoPublish: boolean,
+  publishWave: (wave: WaveRecord) => Promise<Record<string, unknown>>,
+  notify: (message: string, markup?: PublicationReplyMarkup) => Promise<void>) {
   try {
     const result = await screenCompletedItems(full, wave.id) as ScreeningSummary;
-    await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${result.readyForPublication ?? 0}. Публикация не выполнялась. Run: ${runId}`);
+    if ((result.missingStagingCount ?? 0) > 0 || result.succeededQueueRows !== result.stagingRows) {
+      throw new Error(`Сверка staging не пройдена: успешных строк очереди ${result.succeededQueueRows ?? "?"}, строк staging ${result.stagingRows ?? "?"}, отсутствует или неуспешно сохранено ${result.missingStagingCount ?? "?"}. Публикация заблокирована.`);
+    }
+    const ready = result.readyForPublication ?? 0;
+    if (autoPublish && ready > 0) {
+      try {
+        const publication = await publishWave(wave);
+        await notify(`✅ Волна ${wave.wave_number}: скрининг завершён. Допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}. Автоматически опубликовано ${publication.publishedCount ?? 0} из ${publication.selected ?? ready}; ошибок публикации ${publication.failedCount ?? 0}. Run: ${runId}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await notify(`⚠️ Волна ${wave.wave_number} прошла screening (${ready} кандидатов готовы), но автопубликация не завершена: ${message.slice(0, 900)}. Следующие волны продолжаются; повторно Encar не запрашиваю. Run: ${runId}`);
+      }
+    } else {
+      await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}.${autoPublish ? " Автопубликация не нужна: допущенных карточек нет." : " Публикация для этого run выключена."} Run: ${runId}`);
+    }
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const now = new Date().toISOString();
+    const stage = /сверка staging|staging reconciliation/i.test(message) ? "staging_reconciliation" : "screening";
     const { error: checkpointError } = await client.from("chestny_enrichment_waves").update({
-      status: "paused", last_error: { stage: "screening", message, observedAt: now }, updated_at: now,
+      status: "paused", last_error: { stage, message, observedAt: now }, updated_at: now,
     }).eq("id", wave.id).eq("run_id", runId).eq("status", "screening");
     if (checkpointError) console.error(`Could not pause screening checkpoint for wave ${wave.wave_number}: ${checkpointError.message}`);
-    await notify(`⚠️ Скрининг волны ${wave.wave_number} не завершился: ${message}. Обогащение следующих волн продолжается; публикации нет. Run: ${runId}`);
+    await notify(`⚠️ Волна ${wave.wave_number} не прошла проверку перед публикацией: ${message}. Публикация этой волны заблокирована; остальные волны продолжаются. Run: ${runId}`);
     return false;
   }
 }
@@ -209,6 +279,12 @@ async function processPersistedWaves(input: {
 }) {
   const { waves, lockToken, signal, run, notify, setActiveWave, delayMs, concurrency, allowMatchingStagingRefresh } = input;
   const screeningJobs: Array<Promise<boolean>> = [];
+  let publicationTail: Promise<void> = Promise.resolve();
+  const publishWaveSerially = async (wave: WaveRecord) => {
+    const publication = publicationTail.then(() => publishWaveAfterScreening(wave));
+    publicationTail = publication.then(() => undefined, () => undefined);
+    return publication;
+  };
   let processedThisSession = 0;
   let processed = attemptedEnrichmentItems(await queueCounts());
   const proxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
@@ -234,7 +310,7 @@ async function processPersistedWaves(input: {
       const { error: updateError } = await client.from("chestny_enrichment_waves").update({ status: "screening", updated_at: now })
         .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening", "paused"]);
       if (updateError) throw new Error(`Could not resume screening for wave ${currentWave.wave_number}: ${updateError.message}`);
-      screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
+      screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true, publishWaveSerially, notify));
       continue;
     }
     if (!["queued", "enriching", "paused"].includes(currentWave.status)) {
@@ -307,7 +383,7 @@ async function processPersistedWaves(input: {
     const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", last_error: null, updated_at: now })
       .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening"]);
     if (screeningError) throw new Error(`Could not start screening checkpoint for wave ${currentWave.wave_number}: ${screeningError.message}`);
-    screeningJobs.push(screenWaveInBackground(currentWave, false, notify));
+    screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true, publishWaveSerially, notify));
   }
 
   await Promise.all(screeningJobs);
@@ -319,7 +395,8 @@ async function processPersistedWaves(input: {
   const { data: finalWaves, error: finalWavesError } = await client.from("chestny_enrichment_waves")
     .select("status,last_error,wave_number").eq("run_id", runId);
   if (finalWavesError) throw new Error(`Could not verify final wave states: ${finalWavesError.message}`);
-  const screeningFailures = (finalWaves ?? []).filter((item) => item.status === "paused" && (item.last_error as Record<string, unknown> | null)?.stage === "screening");
+  const screeningFailures = (finalWaves ?? []).filter((item) => item.status === "paused"
+    && ["screening", "staging_reconciliation"].includes(String((item.last_error as Record<string, unknown> | null)?.stage ?? "")));
   if (screeningFailures.length) {
     const { error } = await client.from("chestny_enrichment_runs").update({
       status: "paused", pause_reason: { source: "screening_attention", failedWaves: screeningFailures.map((item) => item.wave_number), observedAt: new Date().toISOString() },
@@ -334,12 +411,19 @@ async function processPersistedWaves(input: {
     if (error) throw new Error(`Could not complete run after screening: ${error.message}`);
     const finalScreening = await screenCompletedItems(true);
     const ready = finalScreening.readyForPublication ?? 0;
-    const markup = publicationReviewMarkup(ready);
-    await notify(`🏁 Run ${runId} завершён: обработаны все сохранённые волны, полный screening готов. Допущено ${finalScreening.decisions?.approved ?? 0}, отклонено ${finalScreening.decisions?.rejected ?? 0}, изолировано ${finalScreening.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}. Публикация не выполнялась.${ready ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : " Допущенных карточек нет."}`, markup);
+    const autoPublication = run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true;
+    const totals = autoPublication ? await publicationTotals() : null;
+    const markup = autoPublication ? undefined : publicationReviewMarkup(ready);
+    await notify(`🏁 Run ${runId} завершён: обработаны все сохранённые волны, полный screening готов. Допущено ${finalScreening.decisions?.approved ?? 0}, отклонено ${finalScreening.decisions?.rejected ?? 0}, изолировано ${finalScreening.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}.${autoPublication
+      ? ` Автопубликация по волнам: опубликовано ${totals?.published ?? 0}, ошибок ${totals?.failed ?? 0}, ожидают разбора ${totals?.pending ?? 0}.`
+      : ready ? " Публикация не выполнялась. Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : " Публикация не выполнялась; допущенных карточек нет."}`, markup);
   }
 }
 
-async function publicationDisposition(launchId: string | null) {
+async function publicationDisposition(launchId: string | null, rules?: Record<string, unknown> | null) {
+  if (rules?.publication === "auto_after_screening" && rules.publicationAuthorized === true) {
+    return "Автопубликация разрешена после screening каждой волны; публикуются только карточки, прошедшие gate.";
+  }
   const { data: goal, error } = await client.from("control_center_tasks").select("parameters")
     .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
   if (error) return "Не удалось проверить разрешение публикации цели; фактический итог будет показан после проверки координатором.";
@@ -467,8 +551,8 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       const progressInterval = targetedReportRefresh ? 10 : 0;
       if (progressInterval > 0 && processedThisWave > 0 && processedThisWave % progressInterval === 0) {
         const progressMessage = targetedReportRefresh
-          ? `Обновление данных Encar: run ${runId}. Обработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}; осталось ${counts.queued}. Публикация выключена.`
-          : `📈 Прогресс обработки\n\nОбработано: ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nОшибок: ${counts.failed}\nОсталось: ${counts.queued}\nТранспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}\nПубликация выключена.\nRun: ${runId}`;
+          ? `Обновление данных Encar: run ${runId}. Обработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, исключено как дубли/конфликты ID ${counts.excluded}, технических ошибок ${counts.failed}; осталось ${counts.queued}.`
+          : `📈 Прогресс обработки\n\nОбработано: ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nДубли/конфликты ID: ${counts.excluded}\nТехнических ошибок: ${counts.failed}\nОсталось: ${counts.queued}\nТранспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}\nRun: ${runId}`;
         await notify(progressMessage);
       }
       if (result.results.some((item) => /HTTP (403|429)|captcha|verification/i.test(item.error ?? "")
@@ -515,8 +599,8 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       ? null
       : await screenCompletedItems(finalCounts.queued + finalCounts.leased === 0, waveId);
     console.log(JSON.stringify({ runId, screening, ...finalCounts }));
-    const publication = await publicationDisposition(run.rules?.catalogLaunchId ? String(run.rules.catalogLaunchId) : null);
-    const waveTerminal = finalWaveCounts.succeeded + finalWaveCounts.unavailable + finalWaveCounts.failed + finalWaveCounts.cancelled;
+    const publication = await publicationDisposition(run.rules?.catalogLaunchId ? String(run.rules.catalogLaunchId) : null, run.rules);
+    const waveTerminal = finalWaveCounts.succeeded + finalWaveCounts.unavailable + finalWaveCounts.excluded + finalWaveCounts.failed + finalWaveCounts.cancelled;
     const failureBreakdown = await failedOutcomeCounts();
     const waveLabel = waveId ? `Волна ${activeWave?.wave_number}: ${waveTerminal}/${activeWave?.candidate_count}; ` : "";
     const screeningSummary = screening
@@ -525,7 +609,8 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
     const fullRunFinished = finalCounts.queued + finalCounts.leased === 0 && !waveId;
     let finalMarkup: PublicationReplyMarkup | undefined;
     if (fullRunFinished && screening) finalMarkup = publicationReviewMarkup(screening.readyForPublication ?? 0);
-    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}; технических ошибок ${failureBreakdown.technicalErrors}, исключено из-за дублей/конфликтов ID ${failureBreakdown.identityConflicts}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${publication}${finalMarkup ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : ""}`, finalMarkup);
+    const autoPublication = run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true;
+    await notify(`${waveLabel}run ${runId}: обработано в этой сессии ${processedThisWave}, всего по run ${processed}. Успешно ${finalCounts.succeeded}, недоступно ${finalCounts.unavailable}; технических ошибок ${failureBreakdown.technicalErrors}, исключено из-за дублей/конфликтов ID ${failureBreakdown.identityConflicts}; осталось ${finalCounts.queued}. ${screeningSummary} Транспорт: ${transport === "direct" ? "домашняя сеть, без прокси" : "Decodo proxy"}. ${autoPublication ? "Публикация: автоматически после screening каждой волны." : `${publication} Публикация этой волны не запускалась.`}${finalMarkup && !autoPublication ? " Нажмите кнопку, чтобы проверить состав и перейти к отдельному подтверждению." : ""}`, finalMarkup);
   } catch (error) {
     const retryableInfrastructureFailure = isRetryableInfrastructureFailure(error);
     if (!signal.aborted && !retryableInfrastructureFailure) {
@@ -544,9 +629,9 @@ async function processLoop(lockToken: string, signal: AbortSignal) {
       if (pauseError) throw new Error(`Worker failed and run could not be paused: ${pauseError.message}`);
     }
     if (retryableInfrastructureFailure) {
-      await notify(`⚠️ Временный сбой связи с Supabase для run ${runId} после ${processed}/${maxItems}. Сохранённый checkpoint не сбрасываю; Mac mini повторит подключение с паузой, только если run остаётся активным.`);
+      await notify(`⚠️ Временный сбой связи с Supabase для run ${runId} после ${processed}/${maxItemsLabel}. Сохранённый checkpoint не сбрасываю; Mac mini повторит подключение с паузой, только если run остаётся активным.`);
     } else {
-      await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItems}: ${error instanceof Error ? error.message : String(error)}`);
+      await notify(`Worker приостановлен с ошибкой для run ${runId} после ${processed}/${maxItemsLabel}: ${error instanceof Error ? error.message : String(error)}`);
     }
     throw error;
   }

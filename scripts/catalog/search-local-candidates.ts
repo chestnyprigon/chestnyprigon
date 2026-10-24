@@ -59,13 +59,18 @@ async function existingIdentifiers(client: SupabaseClient, ids: string[]) {
 
 async function main() {
   const apply = process.argv.includes("--apply");
+  const publicationMode = process.argv.find((arg) => arg.startsWith("--publication="))?.slice("--publication=".length)
+    ?? "auto_after_screening";
+  if (!(publicationMode === "disabled" || publicationMode === "auto_after_screening")) {
+    throw new Error("--publication must be disabled or auto_after_screening");
+  }
   const pageSize = numberArgument("page-size", 100, 20, 200);
-  // A scale run can reserve a larger candidate pool while retaining the same
-  // publication quotas. Keep the old flag for the 50-item pilot command.
-  const candidatePoolTarget = process.argv.some((arg) => arg.startsWith("--candidate-pool-target="))
-    ? numberArgument("candidate-pool-target", 50, 1, 5_000)
-    : numberArgument("pilot-candidates", 50, 1, 500);
-  const maxPagesPerBrand = numberArgument("max-pages-per-brand", 3, 1, 20);
+  // Scan each configured brand to source exhaustion. Brand targets only
+  // influence diversity; they don't cap candidate discovery or publication.
+  if (process.argv.some((arg) => arg.startsWith("--candidate-pool-target=")
+    || arg.startsWith("--pilot-candidates=") || arg.startsWith("--max-pages-per-brand="))) {
+    throw new Error("Candidate and page caps are no longer supported; search continues until each brand's source listing is exhausted");
+  }
   const launchId = process.env.CHESTNY_CATALOG_LAUNCH_ID?.trim();
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -78,14 +83,14 @@ async function main() {
   if (!(["prepared", "running"] as string[]).includes(launch.status)) throw new Error(`Launch status is ${launch.status}`);
 
   const { data: rows, error } = await client.from("chestny_catalog_brand_search_status")
-    .select("manufacturer,target,remaining_quota,published_count,search_offset,scanned_count,candidate_count,processed_candidates,conversion_rate,status,last_error,run_id")
+    .select("manufacturer,target,published_count,search_offset,scanned_count,candidate_count,processed_candidates,conversion_rate,status,last_error,run_id")
     .eq("launch_id", launch.id).order("manufacturer");
   if (error) throw new Error(error.message);
   const processedByManufacturer = new Map<string, number>();
   const { data: cohortRuns, error: cohortError } = await client.from("chestny_enrichment_runs")
     .select("id").contains("rules", { catalogLaunchId: launch.id });
   if (cohortError) throw new Error(cohortError.message);
-  const completedStatuses = ["succeeded", "unavailable", "failed", "cancelled"];
+  const completedStatuses = ["succeeded", "unavailable", "excluded", "failed", "cancelled"];
   for (const cohortRun of cohortRuns ?? []) {
     for (let offset = 0; ; offset += 1_000) {
       const { data: queueRows, error: queueError } = await client.from("chestny_enrichment_queue")
@@ -100,27 +105,27 @@ async function main() {
     }
   }
   const states: BrandSearchState[] = (rows ?? []).map((row: Record<string, unknown>) => ({
-    manufacturer: String(row.manufacturer), quotaTarget: Number(row.target), remainingQuota: Number(row.remaining_quota),
+    manufacturer: String(row.manufacturer), diversityWeight: Number(row.target), publishedCount: Number(row.published_count),
     searchOffset: Number(row.search_offset), scannedCount: Number(row.scanned_count), candidateCount: Number(row.candidate_count),
     processedCandidates: processedByManufacturer.get(String(row.manufacturer)) ?? 0, conversionRate: row.conversion_rate === null ? null : Number(row.conversion_rate),
     exhausted: row.status === "exhausted",
   }));
-  const plan = planBrandSearch(states, candidatePoolTarget);
+  const plan = planBrandSearch(states);
+  const totalWeight = plan.reduce((sum, item) => sum + item.diversityWeight, 0);
   const printable = plan.map((item) => ({
-    manufacturer: item.manufacturer, target: item.quotaTarget, published: item.quotaTarget - item.remainingQuota,
-    remaining: item.remainingQuota, searchOffset: item.searchOffset, scanned: item.scannedCount,
+    manufacturer: item.manufacturer, recommendedMixPercent: totalWeight ? Number((item.diversityWeight / totalWeight * 100).toFixed(1)) : 0,
+    published: item.publishedCount, searchOffset: item.searchOffset, scanned: item.scannedCount,
     candidates: item.candidateCount, processed: item.processedCandidates, backlog: item.backlogCandidates,
-    pilotConversion: item.conversionRate, candidatesToFind: item.candidatesToFind,
-    conversionBlocked: item.conversionBlocked,
-    reserveBasis: item.conversionRate === null ? `candidate pool (${candidatePoolTarget})` : "observed pilot conversion",
-    status: item.exhausted ? "exhausted" : item.conversionBlocked ? "pilot-conversion-zero" : "searchable",
+    historicalScreeningConversion: item.conversionRate,
+    status: item.exhausted ? "exhausted" : "search-to-source-exhaustion",
   }));
   if (!apply) {
-    console.log(JSON.stringify({ mode: "plan_only", launchId: launch.id, launchName: launch.name, pageSize, maxPagesPerBrand, brands: printable }, null, 2));
+    console.log(JSON.stringify({ mode: "plan_only", launchId: launch.id, launchName: launch.name, pageSize,
+      volumeLimit: null, brandTargetsAreGuidanceOnly: true, brands: printable }, null, 2));
     return;
   }
 
-  if (!plan.some((brand) => brand.candidatesToFind > 0)) {
+  if (!plan.some((brand) => !brand.exhausted)) {
     const linkedRunIds = [...new Set((rows ?? []).map((row: Record<string, unknown>) => row.run_id)
       .filter((id: unknown): id is string => typeof id === "string"))];
     const { data: activeRuns, error: activeRunError } = linkedRunIds.length
@@ -162,7 +167,8 @@ async function main() {
     const { data: run, error: runError } = await client.from("chestny_enrichment_runs").insert({
       project: "chestny-prigon", status: "approved", candidate_count: 0, source_file: "local-catalog-launch-search",
       rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version,
-        discoveryOnly: true, transport: transportArgument, publication: "disabled", candidatePoolTarget },
+        discoveryOnly: true, transport: transportArgument, publication: publicationMode,
+        publicationAuthorized: publicationMode === "auto_after_screening", searchMode: "all_eligible_until_source_exhaustion" },
     }).select("id").single();
     if (runError) throw new Error(runError.message);
     runId = run.id;
@@ -174,6 +180,10 @@ async function main() {
   const savedTransport = asRecord(activeRun.rules).transport;
   if (savedTransport && savedTransport !== transportArgument) {
     throw new Error(`Run transport is ${String(savedTransport)}; refusing to search through ${transportArgument}`);
+  }
+  const savedPublication = asRecord(activeRun.rules).publication ?? "disabled";
+  if (savedPublication !== publicationMode) {
+    throw new Error(`Run publication mode is ${String(savedPublication)}; refusing to change it to ${publicationMode} after run creation`);
   }
   if (!savedTransport) {
     if (activeRun.status !== "approved") throw new Error("Cannot set transport on a run that has already started");
@@ -188,9 +198,9 @@ async function main() {
 
   await withEnrichmentWorkerLock({ db: client, runId: activeRunId, task: async (_token, signal) => {
   const summaries: Array<Record<string, unknown>> = [];
-  const searchable = plan.filter((brand) => brand.candidatesToFind > 0 && !brand.exhausted);
+  const searchable = plan.filter((brand) => !brand.exhausted);
   try {
-    await notifyCatalogOwner(`Поиск новой волны запущен: ${searchable.length} марок имеют квотный недобор. Буду сохранять offset после каждой страницы.`);
+    await notifyCatalogOwner(`Поиск Encar запущен по ${searchable.length} маркам. Марочные доли служат ориентиром разнообразия; ищу все подходящие объявления до исчерпания выдачи, сохраняю offset после каждой страницы.`);
   } catch (error) {
     console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -198,7 +208,7 @@ async function main() {
   let foundAcrossBrands = 0;
   for (const brand of plan) {
     if (signal.aborted) throw signal.reason;
-    if (!brand.candidatesToFind || brand.exhausted) continue;
+    if (brand.exhausted) continue;
     const query = createDomesticQuery(CATALOG_POLICY.minYear, new Date().getFullYear(), CATALOG_POLICY.maxMileageKm,
       "Y", primaryManufacturerAlias(brand.manufacturer), null, null);
     let offset = brand.searchOffset;
@@ -212,7 +222,7 @@ async function main() {
     let exhausted = false;
     let filteredByInitialRules = 0;
     let alreadyKnown = 0;
-    while (found < brand.candidatesToFind && !exhausted && pages < maxPagesPerBrand) {
+    while (!exhausted) {
       let page: Awaited<ReturnType<typeof fetchDirectSearchPage>>;
       const requestStartedAt = Date.now();
       try {
@@ -245,8 +255,7 @@ async function main() {
       const knownIds = await existingIdentifiers(client, pageIds);
       alreadyKnown += candidates.filter((candidate) => knownIds.has(candidate.source_listing_id)).length;
       filteredByInitialRules += excludedByInitialRules;
-      const allowance = Math.max(0, brand.candidatesToFind - found);
-      const newCandidates = candidates.filter((candidate) => !knownIds.has(candidate.source_listing_id)).slice(0, allowance);
+      const newCandidates = candidates.filter((candidate) => !knownIds.has(candidate.source_listing_id));
       const nextOffset = offset + pageSize;
       exhausted = page.listings.length < pageSize || nextOffset >= page.total;
       const { data: inserted, error: pageError } = await client.rpc("record_chestny_catalog_search_page", {
@@ -266,15 +275,15 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, CATALOG_POLICY.requestDelayMs));
     }
     summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages,
-      filteredByInitialRules, alreadyKnown, newCandidates: found, exhausted, targetReached: found >= brand.candidatesToFind });
+      filteredByInitialRules, alreadyKnown, newCandidates: found, exhausted, sourceTotalReached: exhausted });
     finishedBrands += 1;
     foundAcrossBrands += found;
     // Report only at stable five-brand milestones. The control task reports the
-    // completed search and worker start, so a short pilot does not emit a
+    // completed search and worker start, so a short run does not emit a
     // redundant per-brand message just before enrichment begins.
     if (finishedBrands % 5 === 0) {
       try {
-        await notifyCatalogOwner(`Поиск квот: обработано марок ${finishedBrands}/${searchable.length}; найдено новых кандидатов ${foundAcrossBrands}. Последняя: ${brand.manufacturer}, offset ${offset}${exhausted ? " (выдача исчерпана)" : ""}.`);
+        await notifyCatalogOwner(`Поиск: проверена выдача ${finishedBrands}/${searchable.length} марок; найдено новых подходящих объявлений ${foundAcrossBrands}. Последняя марка: ${brand.manufacturer}, позиция ${offset}${exhausted ? " (выдача исчерпана)" : ""}.`);
       } catch (error) {
         console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -285,7 +294,8 @@ async function main() {
     .eq("launch_id", launch.id).order("manufacturer");
   if (progressError) throw new Error(progressError.message);
   console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, transport: transportArgument,
-    candidatePoolTarget, pageSize, maxPagesPerBrand, pages: summaries, progress: finalProgress }, null, 2));
+    searchMode: "all_eligible_until_source_exhaustion", volumeLimit: null, pageSize,
+    brandTargetsAreGuidanceOnly: true, pages: summaries, progress: finalProgress }, null, 2));
   } });
 }
 

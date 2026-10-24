@@ -69,6 +69,9 @@ async function main() {
   let evaluatedRows = 0;
   let reusedRows = 0;
   const emptyOptionsRows: Array<{ sourceListingId: string; decision: string; reportStatus: string | null; standardCodeCount: number; equipmentConfirmed: boolean; assumedOptionalSkips: number }> = [];
+  let succeededQueueRows: number | undefined;
+  let stagingRows: number | undefined;
+  let missingStagingCount = 0;
   if (RUN_ID) {
     const sourceIds: string[] = [];
     for (let offset = 0; ; offset += 1_000) {
@@ -82,17 +85,26 @@ async function main() {
       sourceIds.push(...(data ?? []).map((item) => String(item.source_listing_id)));
       if (!data || data.length < 1_000) break;
     }
+    succeededQueueRows = sourceIds.length;
+    const stagingStatuses = new Map<string, string>();
     const changedIds: string[] = [];
     for (let offset = 0; offset < sourceIds.length; offset += 400) {
       const { data, error } = await client.from("chestny_catalog_staging").select("source_listing_id,updated_at,enrichment_status")
         .in("source_listing_id", sourceIds.slice(offset, offset + 400));
       if (error) throw new Error(error.message);
       for (const row of data ?? []) {
+        stagingStatuses.set(String(row.source_listing_id), String(row.enrichment_status ?? "unknown"));
         if (row.enrichment_status !== "succeeded") continue;
         const saved = cache[row.source_listing_id];
         if (saved && saved.updatedAt === row.updated_at && Date.parse(String(saved.evaluated.normalized.sourceUpdatedAt ?? "")) + CATALOG_POLICY.maxListingAgeDays * 86400000 > Date.now()) rows.push({ ...row, cachedEvaluation: saved.evaluated, encar_payload: { runId: RUN_ID } });
         else changedIds.push(row.source_listing_id);
       }
+    }
+    const missingStagingIds = sourceIds.filter((sourceId) => stagingStatuses.get(sourceId) !== "succeeded");
+    stagingRows = stagingStatuses.size;
+    missingStagingCount = missingStagingIds.length;
+    if (missingStagingIds.length) {
+      throw new Error(`Staging reconciliation failed for run ${RUN_ID}${WAVE_ID ? ` wave ${WAVE_ID}` : ""}: ${sourceIds.length} succeeded queue rows, ${stagingStatuses.size} staging rows, ${missingStagingIds.length} missing or not succeeded. Example source IDs: ${missingStagingIds.slice(0, 10).join(", ")}`);
     }
     // Read raw payloads only for new or changed rows.
     for (let offset = 0; offset < changedIds.length; offset += 25) {
@@ -216,6 +228,9 @@ async function main() {
     mode: process.argv.includes("--read-only-audit") ? "read-only-audit" : "local-screening-with-persisted-decisions",
     runId: RUN_ID,
     ...(WAVE_ID ? { waveId: WAVE_ID } : {}),
+    succeededQueueRows,
+    stagingRows,
+    missingStagingCount,
     sourceRows: matchingRunRows,
     payloadRows: matchingRunRows - missingPayload,
     missingPayload,

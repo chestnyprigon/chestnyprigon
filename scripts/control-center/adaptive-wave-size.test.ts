@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chooseNextWaveSize, type WaveCounts } from "./adaptive-wave-size";
 
-const before: WaveCounts = { queued: 500, leased: 0, succeeded: 0, unavailable: 0, failed: 0, cancelled: 0 };
+const before: WaveCounts = { queued: 500, leased: 0, succeeded: 0, unavailable: 0, excluded: 0, failed: 0, cancelled: 0 };
 
 function after(attempted: number, failed = 0): WaveCounts {
-  return { queued: before.queued - attempted, leased: 0, succeeded: attempted - failed, unavailable: 0, failed, cancelled: 0 };
+  return { queued: before.queued - attempted, leased: 0, succeeded: attempted - failed, unavailable: 0, excluded: 0, failed, cancelled: 0 };
 }
 
 test("keeps the current wave limit until three stable full waves finish", () => {

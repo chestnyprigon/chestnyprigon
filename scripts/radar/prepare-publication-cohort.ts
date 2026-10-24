@@ -84,7 +84,7 @@ async function main() {
   if (unfinished.length) throw new Error(`Selected range still has ${unfinished.length} queued or leased candidates`);
 
   const successful = cohort.filter((row) => row.status === "succeeded");
-  const failed = cohort.filter((row) => ["failed", "unavailable", "cancelled"].includes(row.status));
+  const failed = cohort.filter((row) => ["failed", "unavailable", "excluded", "cancelled"].includes(row.status));
   const stageRows: Array<Record<string, unknown>> = [];
   for (const group of chunks(successful.map((row) => String(row.source_listing_id)), 25)) {
     const result = await db.from("chestny_catalog_staging")

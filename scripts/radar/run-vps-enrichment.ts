@@ -3,10 +3,10 @@ import { resolveEquipment } from "../encar/equipment-resolution";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
-import { get as httpsGet } from "node:https";
+import { Agent as HttpsAgent, get as httpsGet } from "node:https";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { accidentSummary, inspectionSummary } from "../encar/enrich";
-import { encarHistoryHeaders, ensureEncarVerified } from "../encar/auth";
+import { encarHeaders, encarHistoryHeaders, ensureEncarVerified } from "../encar/auth";
 import { classifyEndpointProbe, isEndpointCircuitBreaker, shouldRetryEndpoint, type EncarEndpoint, type EndpointOutcome } from "../encar/endpoint-outcomes";
 import { isVerifiedSameCanonicalRefreshSibling, validateEnrichmentIntegrity, validateExistingIdentityLinks, validateQueueIdentity, validateSnapshotAgainstDetail } from "../encar/integrity";
 import { requestEndpointWithRetry } from "../encar/endpoint-retry";
@@ -20,6 +20,20 @@ import { withEnrichmentWorkerLock } from "./enrichment-worker-lock";
 config({ path: ".env", quiet: true });
 const direct = process.env.CHESTNY_ENRICHMENT_DIRECT === "true";
 if (direct) config({ path: ".env.local", quiet: true });
+
+// The local worker processes Encar requests serially. Reuse one idle HTTPS
+// socket where the origin permits it without increasing request concurrency.
+const directHttpsAgent = new HttpsAgent({ keepAlive: true, maxSockets: 1 });
+process.once("exit", () => directHttpsAgent.destroy());
+
+function encarApiHeaders(extra?: Record<string, string>) {
+  return encarHeaders({
+    Accept: "application/json",
+    ...extra,
+    Origin: "https://fem.encar.com",
+    Referer: "https://fem.encar.com/",
+  });
+}
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -127,7 +141,7 @@ async function requestJson(agent: ProxyAgent | null, endpoint: string, headers?:
   if (!agent) {
     return await new Promise<unknown>((resolve, reject) => {
       const signal = lockSignal ? AbortSignal.any([AbortSignal.timeout(25_000), lockSignal]) : AbortSignal.timeout(25_000);
-      const request = httpsGet(endpoint, { headers: headers ?? { Accept: "application/json" }, signal }, (response) => {
+      const request = httpsGet(endpoint, { agent: directHttpsAgent, headers: encarApiHeaders(headers), signal }, (response) => {
         const status = response.statusCode ?? 0;
         if (status < 200 || status >= 300) {
           response.resume();
@@ -151,11 +165,7 @@ async function requestJson(agent: ProxyAgent | null, endpoint: string, headers?:
     });
   }
   const response = await undiciFetch(endpoint, {
-    headers: headers ?? {
-      Accept: "application/json, text/plain, */*",
-      Origin: "https://fem.encar.com",
-      Referer: "https://fem.encar.com/",
-    },
+    headers: encarApiHeaders(headers),
     ...(agent ? { dispatcher: agent } : {}),
     signal: lockSignal ? AbortSignal.any([AbortSignal.timeout(25_000), lockSignal]) : AbortSignal.timeout(25_000),
   });
@@ -248,7 +258,7 @@ async function requeueRetryableFailures(db: Db, scopeWaveId = waveId) {
   return ids.length;
 }
 
-async function complete(db: Db, row: Row, status: "succeeded" | "unavailable" | "failed", result: Record<string, unknown>, payload?: Record<string, unknown>, fuel?: string | null, color?: string | null, images: string[] = [], errorMessage?: string) {
+async function complete(db: Db, row: Row, status: "succeeded" | "unavailable" | "excluded" | "failed", result: Record<string, unknown>, payload?: Record<string, unknown>, fuel?: string | null, color?: string | null, images: string[] = [], errorMessage?: string) {
   const checkpoint = queueCheckpoints.get(row.id);
   const persistedResult = checkpoint && !result.checkpoint
     ? { ...result, checkpoint }
@@ -414,8 +424,8 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
         });
         if (queueIssues.length) {
           const result = { advertisedId, failureClass: "identity_integrity", reasonCodes: queueIssues.map((issue) => issue.code), integrityIssues: queueIssues, retryable: false };
-          await complete(db, row, "failed", result, undefined, undefined, undefined, [], "identity_integrity");
-          results.push({ sourceListingId: advertisedId, status: "failed", ...result });
+          await complete(db, row, "excluded", result);
+          results.push({ sourceListingId: advertisedId, status: "excluded", ...result });
           continue;
         }
         // Resolve the canonical ID from detail before calling any other endpoint.
@@ -433,8 +443,8 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             source: "encar.detail",
           };
           const result = { advertisedId, failureClass: "identity_integrity", reasonCodes: [issue.code], integrityIssues: [issue], retryable: false };
-          await complete(db, row, "failed", result, undefined, undefined, undefined, [], "identity_integrity");
-          results.push({ sourceListingId: advertisedId, status: "failed", ...result });
+          await complete(db, row, "excluded", result);
+          results.push({ sourceListingId: advertisedId, status: "excluded", ...result });
           await sleep(delayMs);
           continue;
         }
@@ -481,8 +491,8 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             integrityIssues: blockingIntegrityIssues,
             retryable: false,
           };
-          await complete(db, row, "failed", result, undefined, undefined, undefined, [], "identity_integrity");
-          results.push({ sourceListingId: advertisedId, status: "failed", ...result });
+          await complete(db, row, "excluded", result);
+          results.push({ sourceListingId: advertisedId, status: "excluded", ...result });
           await sleep(delayMs);
           continue;
         }
@@ -586,8 +596,8 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             integrityIssues: existingIssues,
             retryable: false,
           };
-          await complete(db, row, "failed", result, undefined, undefined, undefined, [], "identity_integrity");
-          results.push({ sourceListingId: advertisedId, status: "failed", ...result });
+          await complete(db, row, "excluded", result);
+          results.push({ sourceListingId: advertisedId, status: "excluded", ...result });
           await sleep(delayMs);
           continue;
         }
@@ -603,9 +613,9 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
             field: priorCanonical.data?.length ? "queue.result.canonicalId" : "vehicle_source_identifiers.source_identifier",
             expected: "new unlinked vehicle", actual: { canonicalId, vehicleNo, prior: priorCanonical.data, links: plateLinks.data },
             source: "supabase.queue / vehicle_source_identifiers" }];
-          await complete(db, row, "failed", { advertisedId, canonicalId, vehicleNo, failureClass: "identity_integrity",
+          await complete(db, row, "excluded", { advertisedId, canonicalId, vehicleNo, failureClass: "identity_integrity",
             retryable: false, integrityIssues: issues, reasonCodes: issues.map(issue => issue.code), supplementalRequests: 0 });
-          results.push({ sourceListingId: advertisedId, status: "failed", failureClass: "identity_integrity", reasonCodes: issues.map(issue => issue.code) });
+          results.push({ sourceListingId: advertisedId, status: "excluded", failureClass: "identity_integrity", reasonCodes: issues.map(issue => issue.code) });
           await sleep(delayMs);
           continue;
         }
@@ -835,7 +845,7 @@ async function processBatch(db: Db, lockSignal: AbortSignal) {
       if (paused.error) throw Error(paused.error.message);
     }
     const completed = preserveRunStatus || pauseAfterCurrent ? false : await maybeFinishRun(db);
-    console.log(JSON.stringify({ runId, ...(waveId ? { waveId } : {}), transport: direct ? "direct" : "proxy", requestedJson, scheduledWaitMs, delayMs, elapsedMs: Date.now() - startedAt, batchSize, retriesScheduled, pendingRetries: await pendingRetries(db), reserved: rows?.length ?? 0, claimed: results.length, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
+    console.log(JSON.stringify({ runId, ...(waveId ? { waveId } : {}), transport: direct ? "direct" : "proxy", requestedJson, scheduledWaitMs, delayMs, elapsedMs: Date.now() - startedAt, batchSize, retriesScheduled, pendingRetries: await pendingRetries(db), reserved: rows?.length ?? 0, claimed: results.length, succeeded: results.filter((r) => r.status === "succeeded").length, unavailable: results.filter((r) => r.status === "unavailable").length, excluded: results.filter((r) => r.status === "excluded").length, failed: results.filter((r) => r.status === "failed").length, completed, results }, null, 2));
   } finally {
     await agent?.close();
     await rm(activePath, { force: true });

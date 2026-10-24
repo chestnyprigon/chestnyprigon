@@ -84,7 +84,7 @@ export function createChestnyPrigonRuntime(input: {
   };
   const countsFor = async (runId: string) => {
     const counts: Record<string, number> = {};
-    for (const status of ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"]) {
+    for (const status of ["queued", "leased", "succeeded", "unavailable", "excluded", "failed", "cancelled"]) {
       const { count, error } = await input.db.from("chestny_enrichment_queue").select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", status);
       if (error) throw new Error(`Could not read queue count ${status}: ${error.message}`);
       counts[status] = count ?? 0;
@@ -99,7 +99,7 @@ export function createChestnyPrigonRuntime(input: {
   };
   const waveCounts = (counts: Record<string, number>): WaveCounts => ({
     queued: counts.queued ?? 0, leased: counts.leased ?? 0, succeeded: counts.succeeded ?? 0,
-    unavailable: counts.unavailable ?? 0, failed: counts.failed ?? 0, cancelled: counts.cancelled ?? 0,
+    unavailable: counts.unavailable ?? 0, excluded: counts.excluded ?? 0, failed: counts.failed ?? 0, cancelled: counts.cancelled ?? 0,
   });
   const readiness = async (task: ControlTask): Promise<Readiness> => {
     try {
@@ -109,13 +109,14 @@ export function createChestnyPrigonRuntime(input: {
         const { data: launch, error } = await input.db.from("chestny_catalog_launches").select("id,status").eq("id", launchId).maybeSingle();
         if (error || !launch) return { ready: false, summary: "План каталога недоступен", blockers: [error?.message ?? "catalog_launch_not_found"], details: {} };
         const ready = ["prepared", "running"].includes(launch.status);
-        return { ready, summary: ready ? "План каталога готов к пилотному поиску" : `План каталога в статусе ${launch.status}`,
+        return { ready, summary: ready ? "План каталога готов к полному поиску" : `План каталога в статусе ${launch.status}`,
           blockers: ready ? [] : [`launch_status:${launch.status}`], details: { launchId, status: launch.status } };
       }
       const run = await runFor(task);
       const intent = String(task.progress.intent ?? "start");
       const counts = await countsFor(run.id);
-      if (intent === "start" && run.status === "completed" && task.parameters.pilotApproved !== true) {
+      if (intent === "start" && run.status === "completed" && task.parameters.pilotApproved !== true
+        && !(run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true)) {
         return { ready: false, summary: "Следующая волна закрыта до подтверждения результата пилота", blockers: ["pilot_approval_required"], details: { runId: run.id } };
       }
       const lock = intent === "resume" ? await activeEnrichmentLock() : null;
@@ -172,7 +173,7 @@ export function createChestnyPrigonRuntime(input: {
   const getStatus = async (task: ControlTask): Promise<ModuleResult> => {
     const run = await runFor(task);
     const counts = await countsFor(run.id);
-    const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+    const processed = counts.succeeded + counts.unavailable + counts.excluded + counts.failed + counts.cancelled;
     return { state: run.status === "approved" ? "ready" : run.status === "running" ? "running" : run.status === "paused" ? "paused" : run.status === "cancelled" ? "cancelled" : "completed",
       summary: `Run ${run.id}: ${run.status}; обработано ${processed}; очередь ${counts.queued}; leased ${counts.leased}`,
       progress: { currentRunId: run.id, runStatus: run.status, processed, queue: counts },
@@ -180,9 +181,9 @@ export function createChestnyPrigonRuntime(input: {
   };
 
   const planNext = async (task: ControlTask): Promise<CoordinatorPlan> => {
-    if (task.progress.searchExhausted === true) return { stage: "search_exhausted", action: null, state: "ready", summary: "В Encar больше не найдено новых кандидатов; задача ждёт изменения квот или источника" };
+    if (task.progress.searchExhausted === true) return { stage: "search_exhausted", action: null, state: "ready", summary: "Доступная выдача Encar исчерпана; поиск можно возобновить после обновления объявлений в источнике" };
     if (!task.externalRef) return { stage: "search_candidates", action: "run", state: "ready",
-      summary: "Начинаю пилот: последовательный поиск по недостающим квотам, затем очередь, обогащение и screening",
+      summary: "Начинаю полный последовательный поиск по сохранённым позициям; марочные доли — ориентир разнообразия",
       progress: { intent: "initial_search" } };
     let run: RunRow;
     try { run = await runFor(task); }
@@ -225,6 +226,11 @@ export function createChestnyPrigonRuntime(input: {
     }
     if (run.status === "cancelled") return { stage: "cancelled", action: null, state: "cancelled", summary: "Задача остановлена" };
     if (run.status === "completed") {
+      if (run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true) {
+        return { stage: "publication_complete", action: null, state: "ready",
+          summary: `Run ${run.id} полностью обработан; screening и публикация прошедших gate карточек выполнялись после каждой волны.`,
+          result: { runId: run.id, publicationMode: "auto_after_screening" } };
+      }
       const pilotApproved = task.parameters.pilotApproved === true;
       if (!pilotApproved && Number(task.progress.waveNumber ?? 1) >= 1) {
         return { stage: "pilot_review", action: null, state: "ready", summary: "Пилотная волна обработана; жду подтверждения результата пилота перед следующими волнами", result: { runId: run.id, awaitingOwnerApproval: true } };
@@ -241,14 +247,12 @@ export function createChestnyPrigonRuntime(input: {
           progress: { intent: "publish", currentRunId: run.id } };
       }
       const launchId = String(task.parameters.launchId ?? run.rules?.catalogLaunchId ?? "");
-      const target = Number(task.parameters.targetPublications ?? 1_000);
       if (!launchId) return { stage: "blocked", action: null, state: "paused", summary: "У задачи не задан catalog launch" };
       const { data: brandRows, error } = await input.db.from("chestny_catalog_brand_search_status").select("published_count").eq("launch_id", launchId);
       if (error) return { stage: "quota_read_error", action: null, state: "paused", summary: `Не удалось проверить цель публикаций: ${error.message}` };
       const published = (brandRows ?? []).reduce((sum, row) => sum + Number(row.published_count ?? 0), 0);
-      if (published >= target) return { stage: "goal_completed", action: null, state: "completed", summary: `Цель достигнута: ${published}/${target} новых публикаций`, result: { published, target } };
-      if (!publishedRunIds.includes(run.id)) return { stage: "publish_wave", action: "run", state: "ready", summary: `Публикую проверенные карточки волны ${Number(task.progress.waveNumber ?? 1)}`, progress: { intent: "publish", currentRunId: run.id, published, target } };
-      return { stage: "search_next_wave", action: "run", state: "ready", summary: `Ищу следующую волну по квотам: опубликовано ${published}/${target}`, progress: { intent: "next_wave", currentRunId: run.id, published, target } };
+      if (!publishedRunIds.includes(run.id)) return { stage: "publish_wave", action: "run", state: "ready", summary: `Публикую прошедшие gate карточки волны ${Number(task.progress.waveNumber ?? 1)}; общего лимита публикаций нет`, progress: { intent: "publish", currentRunId: run.id, published } };
+      return { stage: "search_next_wave", action: "run", state: "ready", summary: `Продолжаю поиск по доступным маркам; опубликовано ${published}, квоты — ориентир разнообразия`, progress: { intent: "next_wave", currentRunId: run.id, published } };
     }
     return { stage: "awaiting_run", action: null, state: "ready", summary: `Run в состоянии ${run.status}; автоматическое действие не выбрано` };
   };

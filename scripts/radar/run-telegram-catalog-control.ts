@@ -48,6 +48,11 @@ async function publicationPolicy(runId: string) {
   const { data: matchedGoal, error } = await db.from("control_center_tasks").select("parameters")
     .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle();
   if (error) throw new Error(`Could not read publication policy for run ${runId}: ${error.message}`);
+  const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("rules").eq("id", runId).maybeSingle();
+  if (runError) throw new Error(`Could not read run publication policy: ${runError.message}`);
+  if (run?.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true) {
+    return "Автопубликация разрешена только после screening каждой сохранённой волны; публикуются карточки, прошедшие полный gate. Общего и марочного лимита нет.";
+  }
   let goal = matchedGoal;
   if (!goal) {
     const { data: run, error: runError } = await db.from("chestny_enrichment_runs").select("rules").eq("id", runId).maybeSingle();
@@ -144,7 +149,7 @@ async function latestCatalogRun(): Promise<ProgressRun | null> {
 }
 
 async function progressCounts(runId: string) {
-  const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
+  const statuses = ["queued", "leased", "succeeded", "unavailable", "excluded", "failed", "cancelled"];
   const values = await Promise.all(statuses.map(async (status) => {
     const { count, error } = await db.from("chestny_enrichment_queue")
       .select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", status);
@@ -213,18 +218,18 @@ async function monitorCatalogProgress() {
   if (!run) return;
 
   const counts = await progressCounts(run.id);
-  const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+  const processed = counts.succeeded + counts.unavailable + counts.excluded + counts.failed + counts.cancelled;
   const previous = snapshot?.runId === run.id ? snapshot : null;
   const locallyMonitored = await isLocalWorkerActive(run.id);
   const terminal = ["completed", "cancelled", "failed"].includes(run.status);
   let message: string | null = null;
 
   if (previous && terminal && previous.status !== run.status && !locallyMonitored) {
-    message = `🏁 Run каталога ${run.id} ${run.status === "completed" ? "завершён" : run.status === "cancelled" ? "отменён" : "остановлен с ошибкой"}.\nОбработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, ошибок ${counts.failed}; осталось ${counts.queued}.`;
+    message = `🏁 Run каталога ${run.id} ${run.status === "completed" ? "завершён" : run.status === "cancelled" ? "отменён" : "остановлен с ошибкой"}.\nОбработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}, недоступно ${counts.unavailable}, исключено как дубли/конфликты ID ${counts.excluded}, технических ошибок ${counts.failed}; осталось ${counts.queued}.`;
   } else if (previous && run.status === "paused" && previous.status !== "paused") {
     message = `⏸ Run каталога ${run.id} приостановлен.\nОбработано ${processed}/${run.candidate_count}; очередь ${counts.queued}; в работе ${counts.leased}.${run.pause_reason ? `\nПричина: ${JSON.stringify(run.pause_reason).slice(0, 350)}` : ""}`;
   } else if (previous && processed - previous.processed >= 50 && !locallyMonitored) {
-    message = `📈 Прогресс каталога\n\nОбработано ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nОшибок: ${counts.failed}\nВ очереди: ${counts.queued}; в работе: ${counts.leased}\nRun: ${run.id}`;
+    message = `📈 Прогресс каталога\n\nОбработано ${processed} из ${run.candidate_count}\nУспешно: ${counts.succeeded}\nНедоступно: ${counts.unavailable}\nИсключено как дубли/конфликты ID: ${counts.excluded}\nТехнических ошибок: ${counts.failed}\nВ очереди: ${counts.queued}; в работе: ${counts.leased}\nRun: ${run.id}`;
   } else if (!previous && !terminal && !locallyMonitored) {
     message = `🚗 Контроль каталога подключён к текущему run ${run.id}.\nСостояние: ${run.status}; обработано ${processed}/${run.candidate_count}; очередь ${counts.queued}, в работе ${counts.leased}.`;
   }
@@ -325,7 +330,7 @@ async function startWorker(command: Command) {
 
 async function searchNextWave(launchId?: string) {
   const output = await new Promise<string>((resolve, reject) => {
-    const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--pilot-candidates=50", "--transport=direct"], {
+    const child = spawn("npm", ["run", "--silent", "catalog:search-local", "--", "--apply", "--transport=direct"], {
       cwd: process.cwd(),
       env: { ...process.env, CHESTNY_ENCAR_TRANSPORT: "direct", ...(launchId ? { CHESTNY_CATALOG_LAUNCH_ID: launchId } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
@@ -385,35 +390,51 @@ async function startPreparedRun(command: Command) {
   }
 }
 
+async function planBalancedWaves(runId: string) {
+  const existing = await db.from("chestny_enrichment_waves").select("id")
+    .eq("run_id", runId).limit(1);
+  if (existing.error) throw new Error(`Could not inspect saved wave plan: ${existing.error.message}`);
+  if (existing.data?.length) return;
+  const { data, error } = await db.rpc("plan_chestny_enrichment_waves", {
+    p_run_id: runId,
+    p_safe_wave_capacity: 500,
+    p_plan: { source: "macmini_managed_catalog_run", searchMode: "all_eligible_until_source_exhaustion",
+      brandDiversity: "weighted_guidance_only", transport: "direct", publication: "run_rules" },
+  });
+  if (error) throw new Error(`Could not persist balanced enrichment waves: ${error.message}`);
+  console.log(JSON.stringify({ event: "catalog_waves_persisted", runId, plan: data }));
+}
+
 async function startInitialWave(task: { id: string; parameters: Record<string, unknown> }) {
   const launchId = String(task.parameters.launchId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(launchId)) throw new Error("Pilot task has an invalid catalog launch id");
-  await sendTelegram(Number(ownerId), "Пилотная цель принята. Начинаю последовательный поиск по квотам; прежний paused run и его очередь не меняю. После поиска запущу обогащение и screening. Публикация выключена.").catch(() => undefined);
+  await sendTelegram(Number(ownerId), "Цель принята. Начинаю последовательный поиск всех подходящих объявлений по маркам; доли марок служат ориентиром разнообразия. После поиска сохраню равномерные волны, затем обогащение, screening и разрешённую run автопубликацию после gate. Прежние запуски не меняю.").catch(() => undefined);
   const search = await searchNextWave(launchId);
   if (!search.runId) {
-    const summary = "Поиск завершён: новых кандидатов для пилотной волны не найдено. Публикация не выполнялась.";
+    const summary = "Поиск завершён: новых подходящих объявлений в доступной выдаче не найдено. Сохранённые позиции марок сохранены.";
     await sendTelegram(Number(ownerId), summary).catch(() => undefined);
     return { runId: null, queued: 0, summary };
   }
   const { count, error } = await db.from("chestny_enrichment_queue")
     .select("id", { count: "exact", head: true }).eq("run_id", search.runId).in("status", ["queued", "leased"]);
-  if (error) throw new Error(`Could not count pilot candidates: ${error.message}`);
+  if (error) throw new Error(`Could not count discovered candidates: ${error.message}`);
   const queued = count ?? 0;
   if (!queued) {
     const { data: discoveredRun, error: runError } = await db.from("chestny_enrichment_runs").select("status").eq("id", search.runId).single();
     if (runError) throw new Error(`Could not inspect the discovered pilot run: ${runError.message}`);
     if (discoveredRun.status === "approved") {
       await setRunStatus(search.runId, "completed", ["approved"]);
-      const summary = "Поиск завершён: новых кандидатов для пилотной волны не найдено. Offset и статусы марок сохранены; публикация не выполнялась.";
+      const summary = "Поиск завершён: новых кандидатов нет. Offset и статусы марок сохранены; публикация не выполнялась.";
       await sendTelegram(Number(ownerId), summary).catch(() => undefined);
       return { runId: null, queued: 0, summary };
     }
     if (discoveredRun.status !== "running") throw new Error(`Discovered pilot run has unexpected status ${discoveredRun.status}`);
   }
-  const preflight = await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 50 });
-  await sendTelegram(Number(ownerId), `Пилот запущен: поиск нашёл ${queued} кандидатов. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Начались обогащение и screening. Публикация выключена.`).catch(() => undefined);
+  await planBalancedWaves(search.runId);
+  const preflight = await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 500 });
+  await sendTelegram(Number(ownerId), `Запуск начат: поиск нашёл ${queued} подходящих кандидатов и сохранил равномерный план волн. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Обогащение и screening идут по очереди; для этого нового run публикация разрешена автоматически только карточкам, прошедшим gate каждой волны.`).catch(() => undefined);
   return { runId: search.runId, queued,
-    summary: `Пилотный поиск завершён: ${queued} кандидатов в run ${search.runId}. Worker запущен; далее обогащение и screening. Публикация выключена.` };
+    summary: `Поиск завершён: ${queued} кандидатов в run ${search.runId}. Worker обрабатывает сохранённые равномерные волны; screening и автопубликация после gate выполняются по каждой волне.` };
 }
 
 async function processCommand(command: Command) {
@@ -432,7 +453,7 @@ async function processCommand(command: Command) {
           if ((queued ?? 0) > 0) throw new Error("Previous wave still has queued or leased candidates; resume it or stop it before starting a new search");
 
           const policy = await publicationPolicy(command.run_id);
-          await sendTelegram(command.telegram_chat_id, `Ищу следующую волну по незакрытым квотам. Поиск идёт последовательно; offset сохраняется после каждой страницы. Затем начнутся обогащение и screening. ${policy}`).catch(() => undefined);
+          await sendTelegram(command.telegram_chat_id, `Ищу все ещё доступные подходящие объявления по сохранённым позициям марок. Доли марок — ориентир разнообразия; offset сохраняется после каждой страницы. ${policy}`).catch(() => undefined);
           const search = await searchNextWave();
           if (!search.runId) {
             return "Поиск завершён: новых кандидатов для следующей волны пока нет. Состояние и offset по маркам сохранены; публикация не выполнялась.";
@@ -444,9 +465,10 @@ async function processCommand(command: Command) {
             await setRunStatus(search.runId, "completed", ["approved"]);
             return `Поиск завершён, но новых кандидатов не найдено. Позиции марок сохранены; следующий поиск начнётся с них. Публикации нет.`;
           }
+          await planBalancedWaves(search.runId);
           const preflight = await startPreparedRun({ ...command, run_id: search.runId });
           const newRunPolicy = await publicationPolicy(search.runId);
-          return `Поиск завершён: в run ${search.runId} добавлено ${queuedCount} новых кандидатов. Предстартовая проверка пройдена через ${preflight.transport === "direct_home_network" ? "домашнюю сеть без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Worker запущен; после обогащения выполнится screening. ${newRunPolicy}`;
+          return `Поиск до конца доступной выдачи завершён: в run ${search.runId} добавлено ${queuedCount} подходящих кандидатов. Сохранены равномерные волны. Предстартовая проверка пройдена через ${preflight.transport === "direct_home_network" ? "домашнюю сеть без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Worker запущен; после screening каждой волны выполнится публикация только прошедших gate карточек. ${newRunPolicy}`;
         }
         if (current.status !== "approved") throw new Error(`Run ${command.run_id} has status ${current.status}; it is not ready to start`);
         const preflight = await startPreparedRun(command);
@@ -545,9 +567,9 @@ async function controlTaskForCommand(command: Command) {
     : run.status === "cancelled" ? "cancelled" : run.status === "completed" ? "ready" : "ready";
   task = await taskRepository.create({
     moduleId: "chestny-prigon.catalog", product: "chestny-prigon", source: "encar",
-    goal: "Найти, обработать и подготовить к публикации 1 000 новых автомобилей по утверждённым квотам",
+    goal: "Найти, обработать и опубликовать все новые автомобили, прошедшие правила проекта; брендовые квоты служат ориентиром разнообразия",
     externalRef: command.run_id, state: initialState,
-    parameters: { launchId, targetPublications: 1_000, pilotApproved: false, publishAuthorized: false, maxItemsPerWave: 50 },
+    parameters: { launchId, targetPublications: null, pilotApproved: false, publishAuthorized: false, maxItemsPerWave: 500 },
     progress: { stage: "queued", intent: command.command, currentRunId: command.run_id, waveNumber: 0 },
   });
   return task;

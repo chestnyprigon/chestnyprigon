@@ -54,6 +54,9 @@ const MENU_COMMANDS: Record<string, string> = {
 
 
 function publicationState(goal: CatalogGoal | null, run?: Run | null) {
+  if (run?.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true) {
+    return "Автопубликация включена: после screening каждой волны будут опубликованы только прошедшие gate карточки; общего и марочного лимита нет.";
+  }
   const parameters = goal?.parameters ?? {};
   if (parameters.publishAuthorized === true && parameters.pilotApproved === true
     && parameters.publicationMode === "current_run_only") {
@@ -214,7 +217,7 @@ async function currentRun(db: ReturnType<typeof database>) {
   if (localLive.data) return localLive.data as Run;
 
   const { data: launch, error: launchError } = await db.from("chestny_catalog_launches")
-    .select("id").eq("name", "local-catalog-1000-20261007").maybeSingle();
+    .select("id").in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1).maybeSingle();
   if (launchError) throw new Error("Could not read catalog launch");
   if (!launch) return null;
 
@@ -236,17 +239,15 @@ async function currentRun(db: ReturnType<typeof database>) {
 
 async function pilotGoalButton(db: ReturnType<typeof database>, chatId: number) {
   const { data: launch, error } = await db.from("chestny_catalog_launches").select("id,name,status")
-    .eq("name", "local-catalog-1000-20261007").maybeSingle();
+    .in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throw new Error("Could not read catalog launch plan");
-  if (!launch || !["prepared", "running"].includes(launch.status)) {
-    return apiResponse("sendMessage", { chat_id: chatId, text: launch
-      ? `План ${launch.name} имеет статус ${launch.status}; новую пилотную цель сейчас создать нельзя.`
-      : "План запуска каталога не найден; новую пилотную цель создать нельзя." });
+  if (!launch) {
+    return apiResponse("sendMessage", { chat_id: chatId, text: "Подготовленный план запуска каталога не найден; сначала создай новый план." });
   }
   return apiResponse("sendMessage", {
     chat_id: chatId,
-    text: "Создать отдельную пилотную цель? Координатор выполнит поиск по недостающим квотам, сформирует новую очередь и проведёт обогащение со screening. Старый paused run и его очередь останутся без изменений. Публикация выключена.",
-    reply_markup: { inline_keyboard: [[{ text: "Создать пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
+    text: "Создать цель полного поиска? Координатор проверит доступную выдачу по всем настроенным маркам, сохранит offset и сформирует равномерные волны. Квоты марок — ориентир разнообразия. Новые подходящие карточки будут обогащаться, проходить screening и публиковаться автоматически только после полного gate. Текущие завершённые run не меняются.",
+    reply_markup: { inline_keyboard: [[{ text: "Создать цель полного поиска", callback_data: `catalog:confirm:goal:${launch.id}:500` }]] },
   });
 }
 
@@ -286,13 +287,12 @@ function goalProgressLabel(goal: CatalogGoal, currentProcessed?: number, current
   if (goal.parameters?.publicationMode === "current_run_only" && currentPublished !== undefined) {
     return `Опубликовано из текущего run: ${currentPublished}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
   }
-  const target = Number(goal.parameters?.targetPublications ?? 1_000);
   const published = Number(goal.progress?.published ?? goal.progress?.publishedCount ?? 0);
-  return `${wave ? `Волна ${wave}. ` : ""}Опубликовано по цели: ${published}/${target}. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
+  return `${wave ? `Волна ${wave}. ` : ""}Опубликовано: ${published}; общего лимита нет. Марочные квоты — ориентир разнообразия. Этап: ${goalStageLabel(goal.progress?.stage)}.`;
 }
 
 async function queueCounts(db: ReturnType<typeof database>, runId: string, waveId?: string) {
-  const statuses = ["queued", "leased", "succeeded", "unavailable", "failed", "cancelled"];
+  const statuses = ["queued", "leased", "succeeded", "unavailable", "excluded", "failed", "cancelled"];
   const entries = await Promise.all(statuses.map(async (status) => {
     let query = db.from("chestny_enrichment_queue")
       .select("id", { count: "exact", head: true }).eq("run_id", runId).eq("status", status);
@@ -495,7 +495,7 @@ function renderReasonGroups(groups: ReasonGroups) {
 
 async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: string): Promise<QueueReasonSummary> {
   const groups: QueueReasonSummary = { failed: new Map(), unavailable: new Map(), identityExcluded: 0, identityReasons: new Map() };
-  for (const status of ["failed", "unavailable"] as const) {
+  for (const status of ["failed", "unavailable", "excluded"] as const) {
     for (let offset = 0; ; offset += 1_000) {
       const { data, error } = await db.from("chestny_enrichment_queue")
         .select("result,last_error").eq("run_id", runId).eq("status", status)
@@ -508,7 +508,7 @@ async function queueOutcomeReasons(db: ReturnType<typeof database>, runId: strin
         const singleCode = typeof result.reasonCode === "string" ? result.reasonCode : null;
         const failureClass = typeof result.failureClass === "string" ? result.failureClass : null;
         const reasons = codes.length ? codes : [singleCode ?? failureClass ?? (row.last_error ? "other_enrichment_error" : "reason_not_recorded")];
-        if (status === "failed" && failureClass === "identity_integrity") {
+        if (status === "excluded" || (status === "failed" && failureClass === "identity_integrity")) {
           groups.identityExcluded += 1;
           addReasonCodes(groups.identityReasons, reasons);
         } else {
@@ -555,7 +555,7 @@ async function enqueue(input: {
     telegram_chat_id: input.chatId,
     command: input.command,
     run_id: input.runId,
-    max_items: 50,
+    max_items: 500,
   });
   if (error && !/duplicate key|unique constraint/i.test(error.message)) {
     throw new Error("Could not queue catalog command");
@@ -605,12 +605,12 @@ async function handleMessage(update: TelegramUpdate) {
       if (error) throw new Error("Could not read catalog goal status");
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML", text: latestGoal
         ? `${reportTitle}\n\n<b>Цель:</b> ${escapeHtml(latestGoal.goal)}\n<b>Состояние:</b> ${goalStateLabel(latestGoal.state)}\n${goalProgressLabel(latestGoal as CatalogGoal)}\n${publicationState(latestGoal as CatalogGoal)}\n<b>Обновлено:</b> ${formatDate(latestGoal.updated_at)}`
-        : "Run каталога пока не найден. Используй /catalog_start, чтобы создать подтверждаемую пилотную цель." });
+        : "Run каталога пока не найден. Используй /catalog_start, чтобы создать цель полного поиска." });
     }
     const counts = await queueCounts(db, run.id);
     const published = await publishedCountForRun(db, run);
     const decisions = await decisionCounts(db, run.id);
-    const processed = counts.succeeded + counts.unavailable + counts.failed + counts.cancelled;
+    const processed = counts.succeeded + counts.unavailable + counts.excluded + counts.failed + counts.cancelled;
     const { data: waves, error: wavesError } = await db.from("chestny_enrichment_waves")
       .select("id,wave_number,candidate_count,status,last_error").eq("run_id", run.id).order("wave_number");
     if (wavesError) throw new Error("Could not read saved wave progress");
@@ -624,7 +624,7 @@ async function handleMessage(update: TelegramUpdate) {
         db.from("chestny_enrichment_queue").select("source_listing_id").eq("run_id", run.id).eq("wave_id", currentWave.id),
       ]);
       if (waveSources.error) throw new Error("Could not read candidate IDs for the current wave");
-      const waveProcessed = waveQueue.succeeded + waveQueue.unavailable + waveQueue.failed + waveQueue.cancelled;
+      const waveProcessed = waveQueue.succeeded + waveQueue.unavailable + waveQueue.excluded + waveQueue.failed + waveQueue.cancelled;
       const waveDecisions = await decisionCounts(db, run.id,
         (waveSources.data ?? []).map((row) => String(row.source_listing_id)));
       const savedError = currentWave.last_error && typeof currentWave.last_error === "object"
@@ -640,7 +640,7 @@ async function handleMessage(update: TelegramUpdate) {
         queueOutcomeReasons(db, run.id), screeningOutcomeReasons(db, run.id),
       ]);
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько кодов.\n\n<b>Итоги очереди</b>\nТехнические ошибки (${Math.max(0, counts.failed - queueReasons.identityExcluded)}): ${renderReasonGroups(queueReasons.failed)}\nИсключено из обогащения: совпадения ID/дубли (${queueReasons.identityExcluded}): ${renderReasonGroups(queueReasons.identityReasons)}\nОбъявление недоступно в источнике (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; обогащено ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько кодов.\n\n<b>Итоги очереди</b>\nТехнические ошибки (${[...queueReasons.failed.values()].reduce((sum, value) => sum + value, 0)}): ${renderReasonGroups(queueReasons.failed)}\nИсключено из обогащения: совпадения ID/дубли (${queueReasons.identityExcluded}): ${renderReasonGroups(queueReasons.identityReasons)}\nОбъявление недоступно в источнике (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; обогащено ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
     }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);
@@ -687,7 +687,8 @@ async function handleMessage(update: TelegramUpdate) {
       launchId = String((latestGoal?.parameters as Record<string, unknown> | null)?.launchId ?? "");
     }
     let launchQuery = db.from("chestny_catalog_launches").select("id,status,name");
-    launchQuery = launchId ? launchQuery.eq("id", launchId) : launchQuery.eq("name", "local-catalog-1000-20261007");
+    if (launchId) launchQuery = launchQuery.eq("id", launchId);
+    else launchQuery = launchQuery.in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1);
     const { data: launch, error: launchError } = await launchQuery.maybeSingle();
     if (launchError) throw new Error("Could not read catalog launch plan");
     if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога пока не найден." });
@@ -700,19 +701,23 @@ async function handleMessage(update: TelegramUpdate) {
         : status === "exhausted" ? "⛔ выдача исчерпана"
           : status === "paused" ? "⏸ поиск на паузе" : "поиск ещё не запускался";
     const allBrands = (brands ?? []) as Record<string, unknown>[];
-    const targetTotal = allBrands.reduce((sum, brand) => sum + Number(brand.target ?? 0), 0);
     const publishedTotal = allBrands.reduce((sum, brand) => sum + Number(brand.published_count ?? 0), 0);
-    const remainingTotal = allBrands.reduce((sum, brand) => sum + Number(brand.remaining_quota ?? 0), 0);
-    const lines = allBrands.filter((brand) => Number(brand.remaining_quota ?? 0) > 0).map((brand) =>
-      `• <b>${escapeHtml(brand.manufacturer)}</b> — ${Number(brand.published_count ?? 0)}/${Number(brand.target ?? 0)} опубликовано; осталось ${Number(brand.remaining_quota ?? 0)}; кандидатов ${Number(brand.candidate_count ?? 0)}; просмотрено ${Number(brand.scanned_count ?? 0)}; позиция ${Number(brand.search_offset ?? 0)} · ${searchStatus(brand.status)}`);
+    const totalWeight = allBrands.reduce((sum, brand) => sum + Number(brand.target ?? 0), 0);
+    const lines = allBrands.map((brand) =>
+      `• <b>${escapeHtml(brand.manufacturer)}</b> — опубликовано ${Number(brand.published_count ?? 0)}; вес в ориентире состава ${(totalWeight ? Number(brand.target ?? 0) / totalWeight * 100 : 0).toFixed(1)}%; кандидатов ${Number(brand.candidate_count ?? 0)}; просмотрено ${Number(brand.scanned_count ?? 0)}; позиция ${Number(brand.search_offset ?? 0)} · ${searchStatus(brand.status)}`);
     return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-      text: `📈 <b>Квоты каталога</b>\nОпубликовано: ${publishedTotal} из ${targetTotal} · осталось ${remainingTotal}\n\n«Кандидатов» — найденные объявления; «просмотрено» — объявления, проверенные при поиске; «позиция» — откуда поиск продолжится.\n\n${lines.join("\n")}` });
+      text: `📈 <b>Разнообразие марок</b>\nОпубликовано: ${publishedTotal}. Общего и марочного лимита нет; опубликованные карточки не останавливают поиск. Указанные доли — только ориентир разнообразия.\n\n«Кандидатов» — найденные подходящие объявления; «просмотрено» — объявления, проверенные при поиске; «позиция» — откуда поиск продолжится.\n\n${lines.join("\n") || "Нет сохранённых брендов для поиска."}` });
   }
 
   if (command === "/catalog_publish") {
     const db = database();
     const run = await currentRun(db);
     const goal = run ? await goalForRun(db, run.id) : null;
+    if (run?.rules?.publication === "auto_after_screening" && run.rules.publicationAuthorized === true) {
+      const published = await publishedCountForRun(db, run);
+      return apiResponse("sendMessage", { chat_id: chatId,
+        text: `${publicationState(goal, run)}\nНа текущий момент опубликовано ${published} карточек. Отдельное подтверждение этой команды не запускает повторную публикацию.${run ? `\nRun: ${run.id} (${run.status}).` : ""}` });
+    }
     if (run?.status === "completed" && goal && Number(goal.progress?.waveNumber ?? 1) >= 1) {
       const { count, error } = await db.from("chestny_catalog_decisions").select("source_listing_id", { count: "exact", head: true })
         .eq("run_id", run.id).eq("decision", "approved");
@@ -741,21 +746,21 @@ async function handleMessage(update: TelegramUpdate) {
       const counts = await queueCounts(database(), run.id);
       if (counts.queued + counts.leased > 0) {
         const { data: launch, error: launchError } = await db.from("chestny_catalog_launches").select("id")
-          .eq("name", "local-catalog-1000-20261007").maybeSingle();
+          .in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1).maybeSingle();
         if (launchError) throw new Error("Could not read catalog launch plan");
-        if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога не найден; отдельную пилотную цель создать нельзя." });
+        if (!launch) return apiResponse("sendMessage", { chat_id: chatId, text: "План запуска каталога не найден; сначала создай план полного поиска." });
         return apiResponse("sendMessage", {
           chat_id: chatId,
-          text: `Старая волна ${run.id} остановлена: ${counts.queued} кандидатов остались в очереди. Можно оставить её как есть и создать отдельную пилотную цель; новый поиск не будет использовать этот run.`,
-          reply_markup: { inline_keyboard: [[{ text: "Создать отдельную пилотную цель", callback_data: `catalog:confirm:goal:${launch.id}:50` }]] },
+          text: `Run ${run.id} остановлен: ${counts.queued} кандидатов остались в сохранённой очереди. Можно сохранить её отдельно и создать новую цель полного поиска.`,
+          reply_markup: { inline_keyboard: [[{ text: "Создать цель полного поиска", callback_data: `catalog:confirm:goal:${launch.id}:500` }]] },
         });
       }
       if (["completed", "cancelled"].includes(run.status)) return pilotGoalButton(db, chatId);
       const goal = await goalForRun(db, run.id);
-      const callbackData = `catalog:confirm:start:${run.id}:50`;
+      const callbackData = `catalog:confirm:start:${run.id}:500`;
       return apiResponse("sendMessage", {
         chat_id: chatId,
-        text: `Предыдущая волна завершена. Подтверди следующую: поиск по недостающим квотам, сверка ID, обогащение и screening до 50 кандидатов. ${publicationState(goal)} При разрешении координатор запустит пакетную публикацию допущенных карточек после screening.`,
+        text: `Предыдущая обработка завершена. Подтверди продолжение: поиск всех новых подходящих объявлений с сохранённых позиций; марочные доли — только ориентир разнообразия. После поиска будут сохранены равномерные волны, обогащение и screening. ${publicationState(goal)}`,
         reply_markup: { inline_keyboard: [[{ text: "Начать следующую волну", callback_data: callbackData }]] },
       });
     }
@@ -778,10 +783,10 @@ async function handleMessage(update: TelegramUpdate) {
     const kind = command === "/catalog_start" ? "start" : command === "/catalog_resume" ? "resume" : "stop";
     const counts = await queueCounts(database(), run.id);
     const goal = await goalForRun(db, run.id);
-    const callbackData = `catalog:confirm:${kind}:${run.id}:50`;
+    const callbackData = `catalog:confirm:${kind}:${run.id}:500`;
     const text = kind === "start"
-      ? `Подтверди обработку уже найденных кандидатов run ${run.id}: до 50 карточек, по одной за раз. Новый поиск эта команда не запускает. ${publicationState(goal)} После screening координатор отдельно отчитается о публикационном этапе.`
-      : kind === "resume" ? `Подтверди продолжение run ${run.id}: до 50 следующих кандидатов из сохранённой очереди. ${publicationState(goal)} После screening координатор отдельно отчитается о публикационном этапе.`
+      ? `Подтверди обработку уже найденных кандидатов run ${run.id} по сохранённым волнам. Новый поиск эта команда не запускает. ${publicationState(goal)} После screening каждой волны координатор выполнит предусмотренную для этого run публикацию.`
+      : kind === "resume" ? `Подтверди продолжение run ${run.id} по сохранённым волнам. ${publicationState(goal)} После screening каждой волны координатор выполнит предусмотренную для этого run публикацию.`
         : `Подтверди отмену run ${run.id}. В очереди ${counts.queued}, leased ${counts.leased}; queued будут отменены.`;
     return apiResponse("sendMessage", {
       chat_id: chatId,
@@ -817,12 +822,12 @@ async function handleCallback(update: TelegramUpdate) {
   if ((publicationAction === "r" || publicationAction === "c") && data.length === 4) {
     const runId = data[2];
     const readyHint = Number(data[3]);
-    if (!/^[0-9a-f-]{36}$/i.test(runId) || !Number.isSafeInteger(readyHint) || readyHint < 1 || readyHint > 5_000) {
+    if (!/^[0-9a-f-]{36}$/i.test(runId) || !Number.isSafeInteger(readyHint) || readyHint < 1) {
       return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная кнопка публикации", show_alert: true });
     }
     const db = database();
     const [runResult, taskResult, counts, approvedResult, lockResult, wavesResult] = await Promise.all([
-      db.from("chestny_enrichment_runs").select("id,status").eq("id", runId).maybeSingle(),
+      db.from("chestny_enrichment_runs").select("id,status,rules").eq("id", runId).maybeSingle(),
       db.from("control_center_tasks").select("id,state,parameters,progress,updated_at")
         .eq("module_id", "chestny-prigon.catalog").eq("external_ref", runId).maybeSingle(),
       queueCounts(db, runId),
@@ -839,6 +844,9 @@ async function handleCallback(update: TelegramUpdate) {
       return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Не удалось проверить безопасность публикации", show_alert: true });
     }
     const task = taskResult.data;
+    if (runResult.data.rules?.publication === "auto_after_screening" && runResult.data.rules?.publicationAuthorized === true) {
+      return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Этот run уже использует автопубликацию после screening каждой волны", show_alert: true });
+    }
     const parameters = (task.parameters ?? {}) as Record<string, unknown>;
     const progress = (task.progress ?? {}) as Record<string, unknown>;
     const activeLock = lockResult.data && Date.parse(lockResult.data.expires_at) > Date.now();
@@ -884,7 +892,7 @@ async function handleCallback(update: TelegramUpdate) {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная команда", show_alert: true });
   }
   const [, , command, runId, itemLimit] = data;
-  if (!(command === "start" || command === "resume" || command === "stop" || command === "goal") || !/^[0-9a-f-]{36}$/i.test(runId) || itemLimit !== "50") {
+  if (!(command === "start" || command === "resume" || command === "stop" || command === "goal") || !/^[0-9a-f-]{36}$/i.test(runId) || !["50", "500"].includes(itemLimit)) {
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Некорректная команда", show_alert: true });
   }
   if (!Number.isSafeInteger(update.update_id) || !chatId) throw new Error("Telegram callback context is incomplete");
@@ -894,7 +902,7 @@ async function handleCallback(update: TelegramUpdate) {
     if (error) return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: `Не удалось создать цель: ${error.message.slice(0, 180)}`, show_alert: true });
     const created = Boolean((data as Record<string, unknown> | null)?.created);
     return apiResponse("answerCallbackQuery", { callback_query_id: callback.id,
-      text: created ? "Пилотная цель сохранена; координатор начнёт с поиска по квотам" : "Такая цель уже создана; координатор продолжит её", show_alert: false });
+      text: created ? "Цель полного поиска сохранена; координатор начнёт поиск по доступным позициям марок" : "Такая цель уже создана; координатор продолжит её", show_alert: false });
   }
   const { data: run, error } = await database().from("chestny_enrichment_runs").select("status").eq("id", runId).maybeSingle();
   if (error || !run) return apiResponse("answerCallbackQuery", { callback_query_id: callback.id, text: "Run не найден", show_alert: true });

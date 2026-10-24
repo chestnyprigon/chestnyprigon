@@ -9,7 +9,7 @@ export function isTerminalRun(status: string) {
 }
 
 export function attemptedEnrichmentItems(counts: Record<string, number>) {
-  return ["succeeded", "unavailable", "failed"].reduce((sum, status) => sum + (counts[status] ?? 0), 0);
+  return ["succeeded", "unavailable", "excluded", "failed"].reduce((sum, status) => sum + (counts[status] ?? 0), 0);
 }
 
 export async function hasPendingEnrichment(db: SupabaseClient, runId: string) {

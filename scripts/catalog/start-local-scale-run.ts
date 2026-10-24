@@ -45,16 +45,17 @@ async function main() {
     .eq("id", runId).single();
   if (run.error) throw new Error(`Could not read run: ${run.error.message}`);
   const rules = run.data.rules as Record<string, unknown>;
-  if (run.data.status !== "approved" || rules.transport !== "direct" || rules.publication !== "disabled"
+  const autoPublication = rules.publication === "auto_after_screening" && rules.publicationAuthorized === true;
+  if (run.data.status !== "approved" || rules.transport !== "direct" || !(rules.publication === "disabled" || autoPublication)
     || rules.discoveryOnly !== true || !rules.catalogLaunchId) {
-    throw new Error("Run must be approved, direct, discovery-only, and have publication disabled");
+    throw new Error("Run must be approved, direct, discovery-only, linked to a catalog launch, and use disabled or explicitly authorized after-screening publication");
   }
-  if (run.data.candidate_count < 1 || run.data.candidate_count > 5_000) {
-    throw new Error(`Expected up to 5,000 newly discovered candidates, found ${run.data.candidate_count}`);
+  if (run.data.candidate_count < 1) {
+    throw new Error(`Expected at least one newly discovered candidate, found ${run.data.candidate_count}`);
   }
   const queued = await count(runId, "queued");
   const leased = await count(runId, "leased");
-  const terminal = (await Promise.all(["succeeded", "unavailable", "failed", "cancelled"].map((status) => count(runId, status))))
+  const terminal = (await Promise.all(["succeeded", "unavailable", "excluded", "failed", "cancelled"].map((status) => count(runId, status))))
     .reduce((sum, value) => sum + value, 0);
   if (queued !== run.data.candidate_count || leased || terminal) {
     throw new Error(`Expected a wholly queued run; queued=${queued}, leased=${leased}, terminal=${terminal}, candidate_count=${run.data.candidate_count}`);
@@ -63,7 +64,7 @@ async function main() {
   const plan = await db.rpc("plan_chestny_enrichment_waves", {
     p_run_id: runId,
     p_safe_wave_capacity: capacity,
-    p_plan: { source: "macmini_scale_run", transport: "direct", publication: "disabled", brandDiversity: "approved_remaining_quota_weights" },
+    p_plan: { source: "macmini_scale_run", transport: "direct", publication: rules.publication, brandDiversity: "approved_brand_mix_guidance" },
   });
   if (plan.error) throw new Error(`Could not persist balanced waves: ${plan.error.message}`);
 
@@ -90,7 +91,7 @@ async function main() {
   }
 
   console.log(JSON.stringify({ started: true, runId, candidateCount: run.data.candidate_count,
-    transport: "direct_home_network", publication: "disabled", wavePlan: plan.data }, null, 2));
+    transport: "direct_home_network", publication: rules.publication, wavePlan: plan.data }, null, 2));
 }
 
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

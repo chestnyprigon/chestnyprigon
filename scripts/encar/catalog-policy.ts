@@ -9,7 +9,6 @@ export const CATALOG_POLICY = Object.freeze({
   reportsRequired: false,
   maxEndpointAttempts: 3,
   requestDelayMs: 10_000,
-  targetPublications: 1_000,
 });
 
 export type DecisionEvidence = {
