@@ -211,9 +211,11 @@ async function publishWaveAfterScreening(wave: WaveRecord) {
 }
 
 async function publicationTotals() {
-  const manifests = await client.from("chestny_catalog_publication_manifests").select("id").eq("run_id", runId);
+  const manifests = await client.from("chestny_catalog_publication_manifests").select("id,last_error").eq("run_id", runId);
   if (manifests.error) throw new Error(`Could not read publication manifests: ${manifests.error.message}`);
-  const ids = (manifests.data ?? []).map((row) => String(row.id));
+  const ids = (manifests.data ?? []).filter((row) =>
+    !(row.last_error && typeof row.last_error === "object" && "supersededByManifestId" in row.last_error),
+  ).map((row) => String(row.id));
   if (!ids.length) return { published: 0, failed: 0, pending: 0 };
   const countStatus = async (status: string) => {
     const result = await client.from("chestny_catalog_publication_manifest_items")

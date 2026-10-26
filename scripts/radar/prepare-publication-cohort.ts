@@ -4,6 +4,8 @@ import path from "node:path";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { screenStaging } from "../encar/staging-gate";
+import { sourceIdentifiers } from "../encar/identity";
+import type { EncarBundle } from "../encar/types";
 
 config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -11,6 +13,7 @@ const RUN_ID = process.argv.find((arg) => arg.startsWith("--run-id="))?.slice("-
 const OFFSET_ARG = process.argv.find((arg) => arg.startsWith("--offset="))?.slice("--offset=".length);
 const SIZE_ARG = process.argv.find((arg) => arg.startsWith("--size="))?.slice("--size=".length);
 const WAVE_NUMBER_ARG = process.argv.find((arg) => arg.startsWith("--wave-number="))?.slice("--wave-number=".length);
+const RECOVERY_MANIFEST_ID = process.argv.find((arg) => arg.startsWith("--recovery-manifest-id="))?.slice("--recovery-manifest-id=".length);
 const OFFSET = OFFSET_ARG === undefined ? Number.NaN : Number(OFFSET_ARG);
 const SIZE = SIZE_ARG === undefined ? Number.NaN : Number(SIZE_ARG);
 const WAVE_NUMBER = WAVE_NUMBER_ARG === undefined ? undefined : Number(WAVE_NUMBER_ARG);
@@ -115,7 +118,7 @@ async function main() {
   }
 
   const byId = new Map(stageRows.map((row) => [String(row.source_listing_id), row]));
-  const passed: Array<{ sourceId: string; canonicalId: string }> = [];
+  const passed: Array<{ sourceId: string; canonicalId: string; identifiers: string[] }> = [];
   const rejectedReasons: Record<string, number> = {};
   const reportCounts: Record<string, number> = {};
   let alreadyPublishedOverlap = 0;
@@ -138,7 +141,9 @@ async function main() {
         const canonicalId = String(evaluation.normalized?.sourceListingId ?? "");
         if (!canonicalId) reason = "canonical_id_missing";
         else {
-          passed.push({ sourceId: id, canonicalId });
+          const identifiers = sourceIdentifiers(row.encar_payload as EncarBundle)
+            .map((identifier) => identifier.value).filter((identifier): identifier is string => Boolean(identifier));
+          passed.push({ sourceId: id, canonicalId, identifiers });
           const reportState = String(row.report_status ?? "missing");
           reportCounts[reportState] = (reportCounts[reportState] ?? 0) + 1;
         }
@@ -159,19 +164,44 @@ async function main() {
     } else firstSourceByCanonical.set(item.canonicalId, item.sourceId);
   }
   const candidateCanonicalIds = [...new Set(passed.map((item) => item.canonicalId))];
+  const candidateIdentityIds = [...new Set(passed.flatMap((item) => item.identifiers))];
   const alreadyCatalogued = new Set<string>();
+  const identityConflicts = new Set<string>();
   const baselineIds = new Set<string>();
   const catalogLaunchId = runResult.data.rules?.catalogLaunchId;
-  for (const group of chunks(candidateCanonicalIds, 200)) {
+  for (const group of chunks(candidateIdentityIds, 200)) {
     const [vehicles, identifiers] = await Promise.all([
       db.from("vehicles").select("source_listing_id").in("source_listing_id", group),
-      db.from("vehicle_source_identifiers").select("source_identifier").in("source_identifier", group),
+      db.from("vehicle_source_identifiers")
+        .select("source_identifier,vehicles!inner(source_listing_id)").in("source_identifier", group),
     ]);
     if (vehicles.error) throw new Error(`Could not check catalogue duplicates: ${vehicles.error.message}`);
     if (identifiers.error) throw new Error(`Could not check identity duplicates: ${identifiers.error.message}`);
     for (const row of vehicles.data ?? []) alreadyCatalogued.add(String(row.source_listing_id));
-    for (const row of identifiers.data ?? []) alreadyCatalogued.add(String(row.source_identifier));
+    for (const row of identifiers.data ?? []) {
+      const sourceIdentifier = String(row.source_identifier);
+      const owner = (row.vehicles as unknown as { source_listing_id: string }).source_listing_id;
+      for (const item of passed) {
+        if (!item.identifiers.includes(sourceIdentifier)) continue;
+        if (item.canonicalId === owner) alreadyCatalogued.add(item.canonicalId);
+        else identityConflicts.add(item.sourceId);
+      }
+    }
   }
+  const ownersByIdentifier = new Map<string, Set<string>>();
+  for (const item of passed) for (const identifier of item.identifiers) {
+    const owners = ownersByIdentifier.get(identifier) ?? new Set<string>();
+    owners.add(item.canonicalId);
+    ownersByIdentifier.set(identifier, owners);
+  }
+  const cohortIdentityConflicts = new Set<string>();
+  for (const item of passed) {
+    if (item.identifiers.some((identifier) => (ownersByIdentifier.get(identifier)?.size ?? 0) > 1)) {
+      cohortIdentityConflicts.add(item.sourceId);
+    }
+  }
+  if (identityConflicts.size) rejectedReasons.identity_identifier_already_linked = identityConflicts.size;
+  if (cohortIdentityConflicts.size) rejectedReasons.identity_identifier_collision_within_cohort = cohortIdentityConflicts.size;
   if (catalogLaunchId) {
     for (const group of chunks(candidateCanonicalIds, 200)) {
       const baseline = await db.from("chestny_catalog_launch_baseline_identifiers")
@@ -182,12 +212,15 @@ async function main() {
   }
   if (baselineIds.size) rejectedReasons.known_before_launch = baselineIds.size;
   if (alreadyCatalogued.size) rejectedReasons.already_in_catalogue = alreadyCatalogued.size;
-  const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId) && !alreadyCatalogued.has(item.canonicalId) && !baselineIds.has(item.canonicalId));
+  const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId)
+    && !alreadyCatalogued.has(item.canonicalId) && !baselineIds.has(item.canonicalId)
+    && !identityConflicts.has(item.sourceId) && !cohortIdentityConflicts.has(item.sourceId));
 
   const sourceIds = cohort.map((row) => String(row.source_listing_id));
   const manifest = {
     status: "prepared",
     runId,
+    ...(RECOVERY_MANIFEST_ID ? { recoveryManifestId: RECOVERY_MANIFEST_ID } : {}),
     ...(waveId ? { waveId, waveNumber: WAVE_NUMBER } : {}),
     cohortSize: size,
     rangeStart: waveScoped ? 1 : offset + 1,

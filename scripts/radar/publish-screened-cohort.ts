@@ -298,6 +298,7 @@ async function main() {
   let failedCount = 0;
   const batchLimit = 10;
   const resumeFailedItems = existingManifest?.status === "paused";
+  let stopAfterBatchFailure = false;
   try {
     while (true) {
       const claimed = await db.rpc("claim_chestny_catalog_publication_items", {
@@ -370,26 +371,73 @@ async function main() {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          for (const sourceId of sourceIds) {
-            if (alreadyPublic.includes(sourceId)) continue;
-            const currentState = await db.from("chestny_catalog_publication_manifest_items")
-              .select("status").eq("manifest_id", publicationManifestId).eq("source_listing_id", sourceId).single();
-            if (currentState.error || currentState.data.status !== "publishing") continue;
-            const finish = await db.rpc("finish_chestny_catalog_publication_item", {
-              p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
-              p_status: "failed", p_vehicle_id: null, p_error: { message, reasonCode: "publication_batch_failed" },
-            });
-            if (finish.error) console.error(`Could not save failed item ${sourceId}: ${finish.error.message}`);
-            else {
-              failedCount += 1;
-              batchFailed += 1;
+          if (/^identity_(?:source_identifier|batch)_collision:/.test(message) && needsPersist.length > 1) {
+            // Identity conflicts are item-local, but persistPilot validates a
+            // whole batch before writing. Retry this exceptional batch one by
+            // one so an already-known physical-car duplicate cannot discard
+            // the other otherwise-safe catalogue cards.
+            for (const item of needsPersist) {
+              const sourceId = ids.find((id) => canonicalBySource.get(id) === String(item.normalized?.sourceListingId ?? ""))!;
+              const canonicalId = canonicalBySource.get(sourceId)!;
+              try {
+                await persistPilot([item], true, {
+                  source: "chestny-screened-cohort", runId: manifest.runId, publicationManifestId,
+                  requested: 1, publish: true, cohortSha256: idsHash, sourceListingIds: [sourceId],
+                  selectedByBrand: { [String(item.normalized?.manufacturer ?? "unknown")]: 1 },
+                  ...(catalogLaunchId ? { catalogLaunchId } : {}),
+                });
+                const verification = await db.from("vehicles").select("id,source_listing_id,is_public")
+                  .eq("source_listing_id", canonicalId).maybeSingle();
+                if (verification.error) throw new Error(`Could not verify isolated publication item: ${verification.error.message}`);
+                if (!verification.data?.is_public) throw new Error("vehicle_not_public_after_identity_recovery");
+                const finished = await db.rpc("finish_chestny_catalog_publication_item", {
+                  p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+                  p_status: "published", p_vehicle_id: verification.data.id, p_error: null,
+                });
+                if (finished.error) throw new Error(`Could not mark recovered item as published: ${finished.error.message}`);
+                publishedCount += 1;
+                batchPublished += 1;
+              } catch (itemError) {
+                const itemMessage = itemError instanceof Error ? itemError.message : String(itemError);
+                const identityConflict = /^identity_(?:source_identifier|batch)_collision:/.test(itemMessage);
+                const finish = await db.rpc("finish_chestny_catalog_publication_item", {
+                  p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+                  p_status: "failed", p_vehicle_id: null,
+                  p_error: { message: itemMessage, reasonCode: identityConflict ? "identity_conflict" : "identity_recovery_failed" },
+                });
+                if (finish.error) {
+                  console.error(`Could not save recovered publication outcome for ${sourceId}: ${finish.error.message}`);
+                  stopAfterBatchFailure = true;
+                } else {
+                  failedCount += 1;
+                  batchFailed += 1;
+                  if (!identityConflict) stopAfterBatchFailure = true;
+                }
+              }
+            }
+          } else {
+            stopAfterBatchFailure = true;
+            for (const sourceId of sourceIds) {
+              if (alreadyPublic.includes(sourceId)) continue;
+              const currentState = await db.from("chestny_catalog_publication_manifest_items")
+                .select("status").eq("manifest_id", publicationManifestId).eq("source_listing_id", sourceId).single();
+              if (currentState.error || currentState.data.status !== "publishing") continue;
+              const finish = await db.rpc("finish_chestny_catalog_publication_item", {
+                p_manifest_id: publicationManifestId, p_source_listing_id: sourceId,
+                p_status: "failed", p_vehicle_id: null, p_error: { message, reasonCode: "publication_batch_failed" },
+              });
+              if (finish.error) console.error(`Could not save failed item ${sourceId}: ${finish.error.message}`);
+              else {
+                failedCount += 1;
+                batchFailed += 1;
+              }
             }
           }
         }
       }
       console.log(JSON.stringify({ publicationManifestId, batchSelected: sourceIds.length,
         batchPublished, batchFailed, publishedCount, failedCount }));
-      if (batchFailed) break;
+      if (stopAfterBatchFailure) break;
     }
     const finalItems = await db.from("chestny_catalog_publication_manifest_items")
       .select("status").eq("manifest_id", publicationManifestId);
