@@ -124,9 +124,14 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
   let facets: MobileDeFacets = {};
   let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
   let error: MobileDeApiError | null = null;
-  try {
-    [facets, catalog] = await Promise.all([getMobileDeFacets(), getMobileDeListings(filters)]);
-  } catch (cause) {
+  const [facetsResult, catalogResult] = await Promise.allSettled([
+    getMobileDeFacets(),
+    getMobileDeListings(filters),
+  ]);
+  if (facetsResult.status === "fulfilled") facets = facetsResult.value;
+  if (catalogResult.status === "fulfilled") catalog = catalogResult.value;
+  else {
+    const cause = catalogResult.reason;
     error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed");
   }
 
