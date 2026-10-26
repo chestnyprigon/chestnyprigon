@@ -34,13 +34,21 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
     });
   } catch (error) {
     if (error instanceof MobileDeApiError) throw error;
+    console.error("[mobile-de] Master API network request failed", {
+      path,
+      reason: error instanceof Error ? error.name : "UnknownError",
+    });
     throw new MobileDeApiError(null, "Master API is unreachable");
   }
 
-  if (!response.ok) throw new MobileDeApiError(response.status, `Master API returned ${response.status}`);
+  if (!response.ok) {
+    console.error("[mobile-de] Master API returned an error", { path, status: response.status });
+    throw new MobileDeApiError(response.status, `Master API returned ${response.status}`);
+  }
   try {
     return await response.json() as T;
   } catch {
+    console.error("[mobile-de] Master API returned invalid JSON", { path, status: response.status });
     throw new MobileDeApiError(response.status, "Master API returned invalid JSON");
   }
 }
