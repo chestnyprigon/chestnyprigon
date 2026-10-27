@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { mobileDeSpecifications } from "@/lib/mobile-de/specifications";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
@@ -18,11 +19,6 @@ function formatMoney(listing: MobileDeListing) {
     currency: listing.price?.currency || "EUR",
     maximumFractionDigits: 0,
   }).format(amount);
-}
-
-function formatNumber(value: number | null | undefined, suffix = "") {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "Не указано";
-  return `${new Intl.NumberFormat("ru-RU").format(value)}${suffix}`;
 }
 
 function optionsList(options: MobileDeListing["options"]) {
@@ -46,27 +42,11 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
   const options = optionsList(listing.options);
   const gallery = galleryImages(listing);
   const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
-  const registrationValue = listing.first_registration?.value;
-  const registration = registrationValue?.match(/^\d{4}-\d{2}$/) ? registrationValue.split("-").reverse().join(".") : registrationValue;
-  const power = listing.power?.value == null
-    ? "Не указана"
-    : `${formatNumber(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}`;
   const availability = listing.freshness?.availability === "unknown"
     ? "Продавец не подтвердил актуальность объявления"
     : "Статус объявления уточняется";
 
-  const specs: Array<[string, string]> = [
-    ["Год выпуска", listing.production_year ? String(listing.production_year) : "Не указан"],
-    ["Первая регистрация", registration || "Не указана"],
-    ["Пробег", formatNumber(listing.mileage_km, " км")],
-    ["Объём двигателя", formatNumber(listing.engine_cc, " см³")],
-    ["Мощность", power],
-    ["Топливо", listing.fuel_type || "Не указано"],
-    ["Коробка передач", listing.transmission || "Не указана"],
-    ["Привод", listing.drive || "Не указан"],
-    ["Кузов", listing.body_type || "Не указан"],
-    ["Цвет", listing.color || "Не указан"],
-  ];
+  const specs = mobileDeSpecifications(listing);
 
   return (
     <main className={`${styles.page} ${styles.detailPage}`}>
@@ -75,7 +55,6 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
       <div className={styles.detailGrid}>
         <section>
           <MobileDeGallery images={gallery.map((image) => image.url)} title={title} />
-          {listing.description && <div className={styles.detailDescription}>{listing.description}</div>}
           {options.length > 0 && <div className={styles.detailOptions}><strong>Комплектация и опции</strong><ul>{options.map((option, index) => <li key={`${index}-${option}`}>{option}</li>)}</ul></div>}
         </section>
         <aside className={styles.detailCard}>

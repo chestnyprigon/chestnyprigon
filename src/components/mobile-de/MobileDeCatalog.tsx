@@ -72,7 +72,7 @@ function ListingCard({ listing }: { listing: MobileDeListing }) {
   return (
     <article className={styles.card}>
       <Link className={styles.cardImage} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`} aria-label={`Открыть ${listing.title}`}>
-        {listing.primary_image?.url ? <img src={listing.primary_image.url} alt={listing.title} loading="lazy" /> : <span className={styles.noImage}>Фото появится позже</span>}
+        {listing.primary_image?.url ? <img referrerPolicy="no-referrer" src={listing.primary_image.url} alt={listing.title} loading="lazy" /> : <span className={styles.noImage}>Фото появится позже</span>}
         <span className={styles.countryTag}>Европа</span>
       </Link>
       <div className={styles.cardBody}>
