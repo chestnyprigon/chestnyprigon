@@ -14,7 +14,10 @@ export function MobileDeImage({ src, alt, size, lazy = false }: { src: string; a
     if (timer.current || exhausted) return;
     timer.current = setTimeout(() => { timer.current = null; setAttempt((current) => current + 1); }, attempt % 2 === 0 ? 500 : 100);
   };
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
   if (exhausted) return <span style={{display:"grid",placeItems:"center",height:"100%",padding:8,color:"#91a0ab",fontSize:11}}>Фото временно недоступно</span>;
   return <img key={`${candidate}-${attempt}`} src={candidate} alt={alt} referrerPolicy="no-referrer" loading={lazy ? "lazy" : "eager"} onError={retry} ref={(element) => { if (element?.complete && !element.naturalWidth) retry(); }} />;
 }
