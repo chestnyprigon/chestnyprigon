@@ -1,6 +1,7 @@
-/* eslint-disable @next/next/no-img-element -- gallery image hosts are supplied by Master DB and are not fixed at build time. */
 import Link from "next/link";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
+import { CatalogNavigation } from "./CatalogNavigation";
+import { MobileDeGallery } from "./MobileDeGallery";
 import styles from "./MobileDeCatalog.module.css";
 
 function sourceUrl(sourceId: string) {
@@ -45,7 +46,8 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
   const options = optionsList(listing.options);
   const gallery = galleryImages(listing);
   const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
-  const registration = listing.first_registration?.value;
+  const registrationValue = listing.first_registration?.value;
+  const registration = registrationValue?.match(/^\d{4}-\d{2}$/) ? registrationValue.split("-").reverse().join(".") : registrationValue;
   const power = listing.power?.value == null
     ? "Не указана"
     : `${formatNumber(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}`;
@@ -68,28 +70,24 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
 
   return (
     <main className={`${styles.page} ${styles.detailPage}`}>
-      <header className={styles.header}>
-        <Link href="/" className={styles.brand}><span className={styles.brandMark}>ЧП</span><span>Честный пригон<small>ЕВРОПЕЙСКИЙ КАТАЛОГ</small></span></Link>
-        <a className={styles.headerLink} href="https://chestnyprigon.com" rel="noreferrer">Основной сайт ↗</a>
-      </header>
+      <CatalogNavigation />
       <Link href="/catalog/europe" className={styles.backLink}>← Вернуться к объявлениям</Link>
       <div className={styles.detailGrid}>
         <section>
-          <div className={styles.gallery}>
-            {gallery.length ? gallery.map((image) => <img src={image.url} alt={title} key={image.url} loading="lazy" />) : <div className={styles.noImage}>Фотографии не указаны</div>}
-          </div>
+          <MobileDeGallery images={gallery.map((image) => image.url)} title={title} />
           {listing.description && <div className={styles.detailDescription}>{listing.description}</div>}
           {options.length > 0 && <div className={styles.detailOptions}><strong>Комплектация и опции</strong><ul>{options.map((option, index) => <li key={`${index}-${option}`}>{option}</li>)}</ul></div>}
         </section>
         <aside className={styles.detailCard}>
-          <span className={styles.eyebrow}>MOBILE.DE · MASTER DB</span>
+          <span className={styles.eyebrow}>АВТОМОБИЛЬ ИЗ ЕВРОПЫ</span>
           <h1>{title}</h1>
           <p className={styles.detailPrice}>{formatMoney(listing)}</p>
-          <p className={styles.filterFootnote}>{availability}</p>
+          <p className={styles.filterFootnote}>Цена продавца в Европе. Доставка, таможня и услуги рассчитываются отдельно.</p><p className={styles.filterFootnote}>{availability}</p>
           <dl className={styles.detailSpecs}>
             {specs.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
           </dl>
-          <a className={styles.sourceButton} href={sourceUrl(listing.source_id)} target="_blank" rel="noreferrer">Открыть объявление на mobile.de ↗</a>
+          <Link className={styles.sourceButton} href="/#contacts">Рассчитать доставку и получить консультацию</Link>
+          <a className={styles.secondaryButton} href={sourceUrl(listing.source_id)} target="_blank" rel="noreferrer">Открыть объявление на mobile.de ↗</a>
         </aside>
       </div>
     </main>

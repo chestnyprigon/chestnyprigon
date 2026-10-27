@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
@@ -58,7 +59,7 @@ export function getMobileDeListings(filters: MobileDeFilters) {
   for (const [key, value] of Object.entries(filters)) {
     if (value) params.set(key, value);
   }
-  return getJson<MobileDeListingPage>("/listings", params);
+  return getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) }));
 }
 
 export function getMobileDeFacets() {
@@ -69,6 +70,6 @@ export function getMobileDeFacets() {
 
 export function getMobileDeListing(masterId: string) {
   return getJson<{ data: MobileDeListing } | MobileDeListing>(`/listings/${encodeURIComponent(masterId)}`).then((payload) =>
-    "data" in payload ? payload.data : payload,
+    normalizeMobileDeListing("data" in payload ? payload.data : payload),
   );
 }

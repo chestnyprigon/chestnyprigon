@@ -6,10 +6,8 @@ import "./globals.css";
 
 const manrope = Manrope({ subsets: ["cyrillic", "latin"], variable: "--font-manrope" });
 const isPreview = process.env.VERCEL_ENV === "preview";
-const siteTitle = isPreview ? "Европейский каталог — Честный пригон" : "Честный пригон — автомобили из Кореи";
-const siteDescription = isPreview
-  ? "Проверка каталога Mobile.de по синхронизированным данным Master DB."
-  : "Подбор, проверка, доставка и растаможка автомобилей из Кореи в Беларусь.";
+const siteTitle = "Честный пригон — автомобили из Кореи и Европы";
+const siteDescription = "Подбор, проверка и доставка автомобилей из Кореи и Европы в Беларусь.";
 const previewUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined;
 
 export const metadata: Metadata = {

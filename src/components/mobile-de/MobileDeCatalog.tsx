@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { MobileDeApiError, getMobileDeFacets, getMobileDeListings } from "@/lib/mobile-de/api";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing } from "@/lib/mobile-de/types";
+import { MobileDeFilterPanel } from "./MobileDeFilterPanel";
+import { CatalogNavigation, CatalogDirections } from "./CatalogNavigation";
 import styles from "./MobileDeCatalog.module.css";
 
 const SORT_OPTIONS = [
@@ -54,12 +56,6 @@ function registrationLabel(listing: MobileDeListing) {
   return month ? `${month}.${year}` : year;
 }
 
-function sourceUrl(sourceId: string) {
-  const url = new URL("https://suchen.mobile.de/fahrzeuge/details.html");
-  url.searchParams.set("id", sourceId);
-  return url.toString();
-}
-
 function ListingCard({ listing }: { listing: MobileDeListing }) {
   const price = listing.price?.amount;
   const currency = listing.price?.currency || "EUR";
@@ -90,7 +86,7 @@ function ListingCard({ listing }: { listing: MobileDeListing }) {
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <strong>{priceLabel}</strong>
-          <a href={sourceUrl(listing.source_id)} target="_blank" rel="noreferrer">Объявление на mobile.de ↗</a>
+          <Link href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`}>Подробнее →</Link>
         </div>
       </div>
     </article>
@@ -98,18 +94,14 @@ function ListingCard({ listing }: { listing: MobileDeListing }) {
 }
 
 export function ApiMessage({ error }: { error: MobileDeApiError }) {
-  const message = error.status === null && error.message.includes("not configured")
-    ? "Для Preview нужен отдельный read-only токен Master API. Добавьте MASTER_MOBILE_DE_API_TOKEN в переменные окружения Preview."
-    : error.status === 401 || error.status === 403
-      ? "У токена Preview нет доступа к Mobile.de API. Нужен scope mobile-de:read."
-      : error.status === 429
-        ? "Временный лимит запросов Master API достигнут. Попробуйте немного позже."
-        : "Сейчас не удалось загрузить объявления из Master DB. Попробуйте обновить страницу позже.";
+  const message = error.status === 429
+    ? "Сервис временно занят. Попробуйте немного позже."
+    : "Не удалось получить объявления. Пожалуйста, попробуйте обновить страницу через несколько минут.";
   return <div className={styles.message} role="status"><strong>Каталог временно недоступен</strong><p>{message}</p></div>;
 }
 
 export function MobileDeUnavailable({ error }: { error: MobileDeApiError }) {
-  return <main className={styles.page}><ApiMessage error={error} /></main>;
+  return <main className={styles.page}><CatalogNavigation /><section className={styles.hero}><div><ApiMessage error={error} /><Link className={styles.backLink} href="/catalog/europe">← Вернуться в каталог</Link></div></section></main>;
 }
 
 export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -144,21 +136,19 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
 
   return (
     <main className={styles.page}>
-      <header className={styles.header}>
-        <Link href="/" className={styles.brand}><span className={styles.brandMark}>ЧП</span><span>Честный пригон<small>ЕВРОПЕЙСКИЙ КАТАЛОГ</small></span></Link>
-        <a className={styles.headerLink} href="https://chestnyprigon.com" rel="noreferrer">Основной сайт ↗</a>
-      </header>
+      <CatalogNavigation />
       <section className={styles.hero}>
         <div className={styles.heroCopy}>
-          <span className={styles.eyebrow}>MOBILE.DE · MASTER DB</span>
+          <span className={styles.eyebrow}>КАТАЛОГ АВТОМОБИЛЕЙ</span>
           <h1>Автомобили из Европы</h1>
-          <p>Объявления из синхронизированной базы. Каталог только читает Master DB и не запускает сбор объявлений.</p>
+          <p>Выберите автомобиль из Европы. Поможем проверить его, рассчитать доставку и оформить покупку.</p>
         </div>
         <div className={styles.heroNote}><span>01 / ИСТОЧНИК</span><strong>Германия и Европа</strong><small>Актуальность продавца может быть неизвестна</small></div>
       </section>
 
+      <CatalogDirections active="europe" />
       <div className={styles.layout}>
-        <form action="/catalog/europe" className={styles.filters}>
+        <MobileDeFilterPanel><form action="/catalog/europe" className={styles.filters}>
           <div className={styles.filterHeading}><span>Параметры поиска</span><Link href="/catalog/europe">Сбросить</Link></div>
           {FILTER_FIELDS.map(([key, label]) => (
             <label className={styles.field} key={key}>
@@ -185,11 +175,11 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
           </label>
           <button className={styles.submit} type="submit">Показать объявления</button>
           <p className={styles.filterFootnote}>Год выпуска и первая регистрация фильтруются отдельно.</p>
-        </form>
+        </form></MobileDeFilterPanel>
 
         <section className={styles.results}>
           <div className={styles.resultsHeading}>
-            <div><span className={styles.eyebrow}>КАТАЛОГ MOBILE.DE</span><h2>{count === null ? "Объявления из Master DB" : `${formatNumber(count)} объявлений`}</h2></div>
+            <div><span className={styles.eyebrow}>КАТАЛОГ MOBILE.DE</span><h2>{count === null ? "Автомобили из Европы" : `${formatNumber(count)} объявлений`}</h2></div>
             <span>{catalog ? `Показано ${catalog.data.length}` : "Только просмотр"}</span>
           </div>
           {error ? <ApiMessage error={error} /> : catalog?.data.length ? (
@@ -200,7 +190,7 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
           ) : <div className={styles.empty}><strong>Пока нет объявлений по этим параметрам</strong><span>Измените фильтры или сбросьте их.</span></div>}
         </section>
       </div>
-      <footer className={styles.footer}><span>Источник данных — синхронизированная Master DB</span><span>Наличие и цена могут измениться на стороне продавца</span></footer>
+      <footer className={styles.footer}><span>Цены продавцов в евро. Доставка и таможня рассчитываются отдельно.</span><span>Наличие и цена могут измениться на стороне продавца</span></footer>
     </main>
   );
 }
