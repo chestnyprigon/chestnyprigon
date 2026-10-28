@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { createShortCache } from "./short-cache";
+import { normalizeMobileDeFacets } from "./facets";
 import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
@@ -68,13 +69,15 @@ export function getMobileDeListings(filters: MobileDeFilters) {
 }
 
 // Only the non-personal dictionary is reused briefly on the backend. Fetch and browser responses remain no-store.
-const facetsCache = createShortCache<MobileDeFacets>(30_000);
-export function getMobileDeFacets() {
+const facetsCache = createShortCache<MobileDeFacets>(30_000, 64);
+export function getMobileDeFacets(make?: string) {
   // A rotated or different consumer token must never reuse another consumer's dictionary.
   const consumer = createHash("sha256").update(token()).digest("hex");
-  return facetsCache(consumer, () => getJson<{ data: MobileDeFacets } | MobileDeFacets>("/facets").then((payload) =>
-    "data" in payload ? payload.data : payload,
-  ));
+  const params = new URLSearchParams();
+  if (make) params.set("make", make);
+  return facetsCache(JSON.stringify([consumer, make || ""]), () =>
+    getJson<unknown>("/facets", params).then(normalizeMobileDeFacets),
+  );
 }
 
 export function getMobileDeListing(masterId: string) {
