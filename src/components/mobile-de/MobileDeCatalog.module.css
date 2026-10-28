@@ -137,3 +137,7 @@
 .filterPanel { min-width:0; }
 .filterToggle { display:none; }
 @media(max-width:920px) { .filterToggle { display:flex; align-items:center; gap:12px; width:100%; padding:16px; background:#0a1824; border:1px solid #203747; border-radius:6px; color:#f7f9fb; font:inherit; font-size:14px; cursor:pointer; } .filterToggle svg:last-child { margin-left:auto; } .filterContent { display:none; } .filterPanel[data-open=true] .filterContent { display:block; margin-top:12px; } }
+.skeletonCard { min-height:300px; border:1px solid #203747; border-radius:7px; padding:12px; background:#0a1824; }
+.skeletonCard > div { aspect-ratio:1.48; background:#162b3b; border-radius:4px; }
+.skeletonCard > span { display:block; width:80%; height:16px; background:#162b3b; margin-top:16px; border-radius:4px; }
+.skeletonCard > span:last-child { width:50%; }

@@ -1,4 +1,6 @@
 import "server-only";
+import { createHash } from "node:crypto";
+import { createShortCache } from "./short-cache";
 import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
@@ -22,6 +24,7 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
   params?.forEach((value, key) => url.searchParams.set(key, value));
   const apiToken = token();
 
+  const started = performance.now();
   let response: Response;
   try {
     response = await fetch(url, {
@@ -41,6 +44,8 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
     });
     throw new MobileDeApiError(null, "Master API is unreachable");
   }
+
+  if (process.env.VERCEL_ENV === "preview") console.info("[mobile-de] API timing", { path: path.startsWith("/listings/") ? "/listings/:id" : path, status: response.status, durationMs: Math.round(performance.now() - started) });
 
   if (!response.ok) {
     console.error("[mobile-de] Master API returned an error", { path, status: response.status });
@@ -62,10 +67,14 @@ export function getMobileDeListings(filters: MobileDeFilters) {
   return getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) }));
 }
 
+// Only the non-personal dictionary is reused briefly on the backend. Fetch and browser responses remain no-store.
+const facetsCache = createShortCache<MobileDeFacets>(30_000);
 export function getMobileDeFacets() {
-  return getJson<{ data: MobileDeFacets } | MobileDeFacets>("/facets").then((payload) =>
+  // A rotated or different consumer token must never reuse another consumer's dictionary.
+  const consumer = createHash("sha256").update(token()).digest("hex");
+  return facetsCache(consumer, () => getJson<{ data: MobileDeFacets } | MobileDeFacets>("/facets").then((payload) =>
     "data" in payload ? payload.data : payload,
-  );
+  ));
 }
 
 export function getMobileDeListing(masterId: string) {

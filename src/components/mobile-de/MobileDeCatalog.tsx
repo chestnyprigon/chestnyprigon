@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element -- image hosts are supplied by Master DB and are not fixed at build time. */
 import Link from "next/link";
+import { Suspense } from "react";
 import { MobileDeApiError, getMobileDeFacets, getMobileDeListings } from "@/lib/mobile-de/api";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing } from "@/lib/mobile-de/types";
 import { MobileDeFilterPanel } from "./MobileDeFilterPanel";
@@ -71,7 +72,7 @@ function ListingCard({ listing }: { listing: MobileDeListing }) {
 
   return (
     <article className={styles.card}>
-      <Link className={styles.cardImage} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`} aria-label={`Открыть ${listing.title}`}>
+      <Link prefetch={false} className={styles.cardImage} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`} aria-label={`Открыть ${listing.title}`}>
         {listing.primary_image?.url ? <img referrerPolicy="no-referrer" src={listing.primary_image.url} alt={listing.title} loading="lazy" /> : <span className={styles.noImage}>Фото появится позже</span>}
         <span className={styles.countryTag}>Европа</span>
       </Link>
@@ -80,13 +81,13 @@ function ListingCard({ listing }: { listing: MobileDeListing }) {
           <span>{listing.make || "Европа"}{listing.model ? ` · ${listing.model}` : ""}</span>
           <span>{listing.freshness?.availability === "unknown" ? "Наличие не подтверждено" : "Данные Master DB"}</span>
         </div>
-        <Link className={styles.cardTitle} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`}>
+        <Link prefetch={false} className={styles.cardTitle} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`}>
           {listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы"}
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <strong>{priceLabel}</strong>
-          <Link href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`}>Подробнее →</Link>
+          <Link prefetch={false} href={`/catalog/europe/${encodeURIComponent(listing.master_id)}`}>Подробнее →</Link>
         </div>
       </div>
     </article>
@@ -113,26 +114,6 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
   filters.sort = SORT_OPTIONS.some(([value]) => value === requestedSort) ? requestedSort : "updated_desc";
   filters.cursor = getString(params, "cursor") || undefined;
 
-  let facets: MobileDeFacets = {};
-  let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
-  let error: MobileDeApiError | null = null;
-  const [facetsResult, catalogResult] = await Promise.allSettled([
-    getMobileDeFacets(),
-    getMobileDeListings(filters),
-  ]);
-  if (facetsResult.status === "fulfilled") facets = facetsResult.value;
-  if (catalogResult.status === "fulfilled") catalog = catalogResult.value;
-  else {
-    const cause = catalogResult.reason;
-    error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed");
-  }
-
-  const nextParams = new URLSearchParams();
-  for (const [key] of FILTER_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
-  for (const [key] of RANGE_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
-  if (filters.sort) nextParams.set("sort", filters.sort);
-  if (catalog?.page.next_cursor) nextParams.set("cursor", catalog.page.next_cursor);
-  const count = typeof facets.ranges?.count === "number" ? facets.ranges.count : null;
 
   return (
     <main className={styles.page}>
@@ -148,13 +129,32 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
 
       <CatalogDirections active="europe" />
       <div className={styles.layout}>
-        <MobileDeFilterPanel><form action="/catalog/europe" className={styles.filters}>
+        <MobileDeFilterPanel>
+          <Suspense fallback={<CatalogFilterForm params={params} filters={filters} facets={{}} pending />}>
+            <CatalogFilters params={params} filters={filters} />
+          </Suspense>
+        </MobileDeFilterPanel>
+        <Suspense key={JSON.stringify(filters)} fallback={<CatalogResultsLoading />}>
+          <CatalogResults filters={filters} />
+        </Suspense>
+      </div>
+      <footer className={styles.footer}><span>Цены продавцов в евро. Доставка и таможня рассчитываются отдельно.</span><span>Наличие и цена могут измениться на стороне продавца</span></footer>
+    </main>
+  );
+}
+
+
+function CatalogFilterForm({ params, filters, facets, pending = false }: { params: SearchParams; filters: MobileDeFilters; facets: MobileDeFacets; pending?: boolean }) {
+  return (
+    <form action="/catalog/europe" className={styles.filters}>
           <div className={styles.filterHeading}><span>Параметры поиска</span><Link href="/catalog/europe">Сбросить</Link></div>
+          {typeof facets.ranges?.count === "number" && <p className={styles.filterFootnote}>Всего в каталоге: {formatNumber(facets.ranges.count)} авто</p>}
           {FILTER_FIELDS.map(([key, label]) => (
             <label className={styles.field} key={key}>
               <span>{label}</span>
               <select name={key} defaultValue={getString(params, key)}>
                 <option value="">Любая</option>
+                {getString(params, key) && !filterOptions(facets, key).includes(getString(params, key)) && <option value={getString(params, key)}>{getString(params, key)}</option>}
                 {filterOptions(facets, key).map((value) => <option value={value} key={value}>{value}</option>)}
               </select>
             </label>
@@ -174,23 +174,46 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
             </select>
           </label>
           <button className={styles.submit} type="submit">Показать объявления</button>
+          {pending && <p className={styles.filterFootnote} role="status">Загружаем марки и модели… Числовые фильтры уже доступны.</p>}
           <p className={styles.filterFootnote}>Год выпуска и первая регистрация фильтруются отдельно.</p>
-        </form></MobileDeFilterPanel>
+        </form>
+  );
+}
+
+async function CatalogFilters({ params, filters }: { params: SearchParams; filters: MobileDeFilters }) {
+  let facets: MobileDeFacets = {};
+  try { facets = await getMobileDeFacets(); } catch { /* Listing results stay independent of the dictionary service. */ }
+  return <CatalogFilterForm params={params} filters={filters} facets={facets} />;
+}
+
+function CatalogResultsLoading() {
+  return <section className={styles.results} aria-busy="true" aria-label="Загрузка объявлений"><div className={styles.resultsHeading}><h2>Автомобили из Европы</h2><span role="status">Загружаем объявления…</span></div><div className={styles.cards}>{Array.from({length:6},(_,index)=><div className={styles.skeletonCard} key={index}><div /><span /><span /></div>)}</div></section>;
+}
+
+async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
+  let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
+  let error: MobileDeApiError | null = null;
+  try { catalog = await getMobileDeListings(filters); }
+  catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed"); }
+  const nextParams = new URLSearchParams();
+  for (const [key] of FILTER_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
+  for (const [key] of RANGE_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
+  if (filters.sort) nextParams.set("sort", filters.sort);
+  if (catalog?.page.next_cursor) nextParams.set("cursor", catalog.page.next_cursor);
+  return (
+
 
         <section className={styles.results}>
           <div className={styles.resultsHeading}>
-            <div><span className={styles.eyebrow}>КАТАЛОГ MOBILE.DE</span><h2>{count === null ? "Автомобили из Европы" : `${formatNumber(count)} объявлений`}</h2></div>
+            <div><span className={styles.eyebrow}>КАТАЛОГ MOBILE.DE</span><h2>Автомобили из Европы</h2></div>
             <span>{catalog ? `Показано ${catalog.data.length}` : "Только просмотр"}</span>
           </div>
           {error ? <ApiMessage error={error} /> : catalog?.data.length ? (
             <>
               <div className={styles.cards}>{catalog.data.map((listing) => <ListingCard listing={listing} key={listing.master_id} />)}</div>
-              {catalog.page.has_more && catalog.page.next_cursor && <Link className={styles.nextPage} href={`/catalog/europe?${nextParams.toString()}`}>Показать следующие объявления <span>→</span></Link>}
+              {catalog.page.has_more && catalog.page.next_cursor && <Link prefetch={false} className={styles.nextPage} href={`/catalog/europe?${nextParams.toString()}`}>Показать следующие объявления <span>→</span></Link>}
             </>
           ) : <div className={styles.empty}><strong>Пока нет объявлений по этим параметрам</strong><span>Измените фильтры или сбросьте их.</span></div>}
         </section>
-      </div>
-      <footer className={styles.footer}><span>Цены продавцов в евро. Доставка и таможня рассчитываются отдельно.</span><span>Наличие и цена могут измениться на стороне продавца</span></footer>
-    </main>
   );
 }
