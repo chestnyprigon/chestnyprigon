@@ -151,3 +151,17 @@
 .gallery .lightbox .imageFrame img { width:100%; height:100%; min-height:0; max-height:none; object-fit:contain; background:transparent; }
 @keyframes image-spin { to { transform:rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .imageSpinner { animation:none; } }
+
+.filterHeading button {
+  border: 0;
+  background: transparent;
+  color: var(--muted, #a8b7c2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.field [aria-invalid="true"] { border-color: #ed382e; }
+.field small { color: #ffa49e; font-size: 12px; line-height: 1.4; }
+.field select:disabled { opacity: .6; cursor: wait; }
+.filterFootnote button { color: inherit; text-decoration: underline; cursor: pointer; }
+.submit:disabled { opacity: .65; cursor: wait; }

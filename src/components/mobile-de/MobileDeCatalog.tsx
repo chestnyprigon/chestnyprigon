@@ -1,50 +1,15 @@
 /* eslint-disable @next/next/no-img-element -- image hosts are supplied by Master DB and are not fixed at build time. */
 import Link from "next/link";
 import { Suspense } from "react";
-import { MobileDeApiError, getMobileDeFacets, getMobileDeListings } from "@/lib/mobile-de/api";
-import type { MobileDeFacets, MobileDeFilters, MobileDeListing } from "@/lib/mobile-de/types";
+import { MobileDeApiError, getMobileDeListings } from "@/lib/mobile-de/api";
+import type { MobileDeFilters, MobileDeListing } from "@/lib/mobile-de/types";
 import { MobileDeFilterPanel } from "./MobileDeFilterPanel";
 import { CatalogNavigation, CatalogDirections } from "./CatalogNavigation";
 import styles from "./MobileDeCatalog.module.css";
 
-const SORT_OPTIONS = [
-  ["updated_desc", "Сначала новые в базе"],
-  ["price_asc", "Сначала дешевле"],
-  ["price_desc", "Сначала дороже"],
-  ["year_desc", "Сначала новее по году"],
-  ["year_asc", "Сначала старше по году"],
-  ["mileage_asc", "Сначала с меньшим пробегом"],
-  ["mileage_desc", "Сначала с большим пробегом"],
-  ["updated_asc", "Сначала давно обновлённые"],
-] as const;
-
-const FILTER_FIELDS: Array<[keyof MobileDeFilters, string]> = [
-  ["make", "Марка"], ["model", "Модель"], ["fuel_type", "Топливо"],
-  ["transmission", "Коробка"], ["body_type", "Кузов"],
-];
-
-const RANGE_FIELDS: Array<[keyof MobileDeFilters, string, string]> = [
-  ["price_min", "Цена от, €", "number"], ["price_max", "Цена до, €", "number"],
-  ["year_min", "Год выпуска от", "number"], ["year_max", "Год выпуска до", "number"],
-  ["registration_year_min", "Первая регистрация от", "number"], ["registration_year_max", "Первая регистрация до", "number"],
-  ["mileage_min", "Пробег от, км", "number"], ["mileage_max", "Пробег до, км", "number"],
-  ["power_min", "Мощность от, л. с.", "number"], ["power_max", "Мощность до, л. с.", "number"],
-];
-
+import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filters";
+import { MobileDeFilterForm } from "./MobileDeFilterForm";
 type SearchParams = Record<string, string | string[] | undefined>;
-
-function getString(params: SearchParams, key: string) {
-  return typeof params[key] === "string" ? params[key] as string : "";
-}
-
-function filterOptions(facets: MobileDeFacets, key: keyof MobileDeFilters): string[] {
-  const values = key === "make" ? facets.makes
-    : key === "model" ? facets.models
-      : key === "fuel_type" ? facets.fuel_types
-        : key === "transmission" ? facets.transmissions
-          : key === "body_type" ? facets.body_types : undefined;
-  return Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : [];
-}
 
 function formatNumber(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? new Intl.NumberFormat("ru-RU").format(value) : null;
@@ -107,13 +72,7 @@ export function MobileDeUnavailable({ error }: { error: MobileDeApiError }) {
 
 export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
-  const filters: MobileDeFilters = { limit: "20" };
-  for (const [key] of FILTER_FIELDS) filters[key] = getString(params, key) || undefined;
-  for (const [key] of RANGE_FIELDS) filters[key] = getString(params, key) || undefined;
-  const requestedSort = getString(params, "sort");
-  filters.sort = SORT_OPTIONS.some(([value]) => value === requestedSort) ? requestedSort : "updated_desc";
-  filters.cursor = getString(params, "cursor") || undefined;
-
+  const {filters, errors, valid} = parseMobileDeFilters(params);
 
   return (
     <main className={styles.page}>
@@ -130,12 +89,10 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
       <CatalogDirections active="europe" />
       <div className={styles.layout}>
         <MobileDeFilterPanel>
-          <Suspense fallback={<CatalogFilterForm params={params} filters={filters} facets={{}} pending />}>
-            <CatalogFilters params={params} filters={filters} />
-          </Suspense>
+          <MobileDeFilterForm key={JSON.stringify(params)} params={params} initialErrors={errors} />
         </MobileDeFilterPanel>
         <Suspense key={JSON.stringify(filters)} fallback={<CatalogResultsLoading />}>
-          <CatalogResults filters={filters} />
+          {valid ? <CatalogResults filters={filters} /> : <section className={styles.results}><div className={styles.message} role="alert"><strong>Проверьте параметры поиска</strong><p>Исправьте отмеченные поля в фильтрах и повторите поиск.</p></div></section>}
         </Suspense>
       </div>
       <footer className={styles.footer}><span>Цены продавцов в евро. Доставка и таможня рассчитываются отдельно.</span><span>Наличие и цена могут измениться на стороне продавца</span></footer>
@@ -143,48 +100,6 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
   );
 }
 
-
-function CatalogFilterForm({ params, filters, facets, pending = false }: { params: SearchParams; filters: MobileDeFilters; facets: MobileDeFacets; pending?: boolean }) {
-  return (
-    <form action="/catalog/europe" className={styles.filters}>
-          <div className={styles.filterHeading}><span>Параметры поиска</span><Link href="/catalog/europe">Сбросить</Link></div>
-          {typeof facets.ranges?.count === "number" && <p className={styles.filterFootnote}>Всего в каталоге: {formatNumber(facets.ranges.count)} авто</p>}
-          {FILTER_FIELDS.map(([key, label]) => (
-            <label className={styles.field} key={key}>
-              <span>{label}</span>
-              <select name={key} defaultValue={getString(params, key)}>
-                <option value="">Любая</option>
-                {getString(params, key) && !filterOptions(facets, key).includes(getString(params, key)) && <option value={getString(params, key)}>{getString(params, key)}</option>}
-                {filterOptions(facets, key).map((value) => <option value={value} key={value}>{value}</option>)}
-              </select>
-            </label>
-          ))}
-          <div className={styles.rangeGrid}>
-            {RANGE_FIELDS.map(([key, label, type]) => (
-              <label className={styles.field} key={key}>
-                <span>{label}</span>
-                <input name={key} type={type} min="0" inputMode="numeric" defaultValue={getString(params, key)} />
-              </label>
-            ))}
-          </div>
-          <label className={styles.field}>
-            <span>Сортировка</span>
-            <select name="sort" defaultValue={filters.sort}>
-              {SORT_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-            </select>
-          </label>
-          <button className={styles.submit} type="submit">Показать объявления</button>
-          {pending && <p className={styles.filterFootnote} role="status">Загружаем марки и модели… Числовые фильтры уже доступны.</p>}
-          <p className={styles.filterFootnote}>Год выпуска и первая регистрация фильтруются отдельно.</p>
-        </form>
-  );
-}
-
-async function CatalogFilters({ params, filters }: { params: SearchParams; filters: MobileDeFilters }) {
-  let facets: MobileDeFacets = {};
-  try { facets = await getMobileDeFacets(); } catch { /* Listing results stay independent of the dictionary service. */ }
-  return <CatalogFilterForm params={params} filters={filters} facets={facets} />;
-}
 
 function CatalogResultsLoading() {
   return <section className={styles.results} aria-busy="true" aria-label="Загрузка объявлений"><div className={styles.resultsHeading}><h2>Автомобили из Европы</h2><span role="status">Загружаем объявления…</span></div><div className={styles.cards}>{Array.from({length:6},(_,index)=><div className={styles.skeletonCard} key={index}><div /><span /><span /></div>)}</div></section>;
@@ -195,11 +110,7 @@ async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
   let error: MobileDeApiError | null = null;
   try { catalog = await getMobileDeListings(filters); }
   catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed"); }
-  const nextParams = new URLSearchParams();
-  for (const [key] of FILTER_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
-  for (const [key] of RANGE_FIELDS) if (filters[key]) nextParams.set(key, filters[key]!);
-  if (filters.sort) nextParams.set("sort", filters.sort);
-  if (catalog?.page.next_cursor) nextParams.set("cursor", catalog.page.next_cursor);
+  const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);
   return (
 
 
