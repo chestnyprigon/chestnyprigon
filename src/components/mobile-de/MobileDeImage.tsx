@@ -1,8 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useRef, useState } from "react";
-import { loadMobileDeImage, loadedMobileDeImage } from "@/lib/mobile-de/image-loader";
-import { mobileDeImageCandidates } from "@/lib/mobile-de/images";
+import { loadMobileDeImage, loadedMobileDeImage, retainMobileDeImage } from "@/lib/mobile-de/image-loader";
 import styles from "./MobileDeCatalog.module.css";
 type Size = "thumbnail" | "main" | "full";
 type Displayed = { source: string; url: string; alt: string; size: Size };
@@ -30,10 +29,11 @@ export function MobileDeImage({ src, alt, size, lazy = false }: { src: string; a
     }, () => { if (!cancelled) setFailed(src); });
     return () => { cancelled = true; };
   }, [src, alt, size, enabled]);
+  useEffect(() => displayed ? retainMobileDeImage(displayed.url) : undefined, [displayed]);
   const loading = displayed?.source !== src || displayed?.size !== size;
   const error = failed === src && loading;
   return <span ref={frame} className={styles.imageFrame} aria-busy={loading && !error}>
-    <img src={displayed?.url || mobileDeImageCandidates(src,size)[0]} alt={displayed?.alt || ""} referrerPolicy="no-referrer" loading={lazy ? "lazy" : "eager"} className={!displayed ? styles.imageHidden : undefined} aria-hidden={!displayed} />
+    {displayed && <img src={displayed.url} alt={displayed.alt} />}
     {loading && <span className={styles.imageStatus} role="status">{error ? "Фото временно недоступно" : <><span className={styles.imageSpinner} />Загружаем фото…</>}</span>}
   </span>;
 }
