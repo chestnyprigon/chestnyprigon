@@ -17,7 +17,7 @@ export function normalizeMobileDeFacets(payload: unknown): MobileDeFacets {
   const result: MobileDeFacets = {};
   for (const [source, target] of Object.entries(fields)) {
     const entries = record[source];
-    if (entries === undefined) continue;
+    if (entries == null) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid facet: ${source}`);
     result[target as typeof fields[keyof typeof fields]] = [...new Set(entries.map(entry => {
       if (!entry || typeof entry !== "object" || typeof entry.value !== "string") {

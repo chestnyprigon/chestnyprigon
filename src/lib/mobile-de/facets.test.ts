@@ -26,3 +26,14 @@ test("rejects malformed dictionary instead of silently showing empty selects", (
     assert.throws(()=>normalizeMobileDeFacets(payload));
   }
 });
+
+test("accepts null dictionaries in global and make-scoped API responses", () => {
+  const global = normalizeMobileDeFacets({data:{make:[{value:"Audi",count:3116},{value:"BMW",count:2629}],model:null,fuel_type:null,transmission:null,body_type:null,ranges:{count:11477}}});
+  assert.deepEqual(global.makes,["Audi","BMW"]);
+  assert.equal(global.models,undefined);
+  assert.equal(global.fuel_types,undefined);
+  const scoped = normalizeMobileDeFacets({data:{make:null,model:[{value:"116d",count:28},{value:"116D",count:4}],fuel_type:[{value:"petrol",count:1}],transmission:[],body_type:[]}});
+  assert.equal(scoped.makes,undefined);
+  assert.deepEqual(scoped.models,["116d","116D"]);
+  assert.deepEqual(scoped.fuel_types,["petrol"]);
+});
