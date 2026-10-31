@@ -1,11 +1,13 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { createShortCache } from "./short-cache";
+import { createStaleCache } from "./stale-cache";
 import { normalizeMobileDeFacets } from "./facets";
 import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
+const catalogCache = createStaleCache<MobileDeListingPage>(60_000, 15 * 60_000, 96);
+const facetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
 
 export class MobileDeApiError extends Error {
   constructor(readonly status: number | null, message: string) {
@@ -28,13 +30,19 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
   const started = performance.now();
   let response: Response;
   try {
-    response = await fetch(url, {
+    const cacheableCatalogRead = path === "/listings" || path === "/facets";
+    const requestInit: RequestInit & { next?: { revalidate: number } } = {
       method: "GET",
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${apiToken}`,
       },
-      cache: "no-store",
+      // Keep public catalog browsing available through a brief Master DB slowdown.
+      // Next serves the last successful response while it refreshes stale entries.
+      ...(cacheableCatalogRead ? { next: { revalidate: 60 } } : { cache: "no-store" as const }),
+    };
+    response = await fetch(url, {
+      ...requestInit,
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
@@ -65,11 +73,15 @@ export function getMobileDeListings(filters: MobileDeFilters) {
   for (const [key, value] of Object.entries(filters)) {
     if (value) params.set(key, value);
   }
-  return getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) }));
+  params.sort();
+  const consumer = createHash("sha256").update(token()).digest("hex");
+  return catalogCache(JSON.stringify([consumer, params.toString()]), () =>
+    getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
+  );
 }
 
-// Only the non-personal dictionary is reused briefly on the backend. Fetch and browser responses remain no-store.
-const facetsCache = createShortCache<MobileDeFacets>(30_000, 64);
+// Facets are public catalogue metadata. Keep the last known-good set available
+// during upstream DB timeouts; never cache details or consumer credentials.
 export function getMobileDeFacets(make?: string) {
   // A rotated or different consumer token must never reuse another consumer's dictionary.
   const consumer = createHash("sha256").update(token()).digest("hex");

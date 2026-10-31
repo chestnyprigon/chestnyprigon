@@ -1,5 +1,5 @@
 import { getMobileDeFacets, MobileDeApiError } from "@/lib/mobile-de/api";
-export const dynamic = "force-dynamic";
+const PUBLIC_FACET_CACHE = { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" };
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const make = params.get("make") || undefined;
@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   }
   try {
     const facets = await getMobileDeFacets(make);
-    return Response.json({data:facets}, {headers:{"Cache-Control":"no-store"}});
+    return Response.json({data:facets}, {headers:PUBLIC_FACET_CACHE});
   } catch (error) {
     const status = error instanceof MobileDeApiError && error.status === 429 ? 429 : 503;
     return Response.json({error:"Не удалось загрузить параметры поиска"},{status,headers:{"Cache-Control":"no-store"}});
