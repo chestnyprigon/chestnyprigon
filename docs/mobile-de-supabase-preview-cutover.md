@@ -22,5 +22,6 @@ Only external image URLs are copied into the `mobile_de_catalog_images` table. I
 
 - Local schema, typed Supabase adapter, and import script are prepared.
 - TypeScript and targeted ESLint checks pass.
-- No Supabase migration or import has been executed yet. The local environment has no Supabase credentials, and the current browser session needs a user sign-in to the Supabase account that owns the project. The source project/recovery export has not been added to this repository.
+- The main project `.env.local` contains Supabase URL and service-role credentials for project `ojnybjomttolhsfgkdqq`; the Supabase REST API returned 200, while `mobile_de_catalog_listings` returned 404 (`PGRST205`), confirming this migration is not applied. No database password, Supabase Management API token, or logged-in SQL Editor session is available locally, and no Supabase CLI is installed. The SQL Editor browser session needs the owner account to sign in.
+- The Master read token exists only as a Vercel Preview Secret, so it cannot be read back from the environment-variable UI. No recovery allow-list is present in this repository. A dedicated local read-only token and the 7,333-ID recovery export are needed for the importer.
 - Master API's exact proof, active, first-registration, price-category, and gallery fields must be matched to a real anonymized detail response before the import can run. The script fails closed if a row does not satisfy these criteria.
