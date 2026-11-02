@@ -25,3 +25,12 @@ export function createSupabasePublicServerClient() {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 }
+
+export function createSupabaseEuropePublicServerClient() {
+  const url = process.env.EUROPE_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key) throw new Error("Europe catalogue Supabase public credentials are not configured");
+  return createClient<Database>(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+}

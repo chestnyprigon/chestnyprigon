@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
+import { createSupabaseEuropePublicServerClient } from "@/lib/supabase/public-client";
 import { mobileDeText } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
@@ -68,11 +68,11 @@ function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string,
 }
 
 export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Promise<MobileDeListingPage> {
-  const client = createSupabaseAdminClient();
+  const client = createSupabaseEuropePublicServerClient();
   const queryKey = normalizedQuery(filters);
   const offset = offsetFromCursor(filters.cursor, queryKey);
   const limit = Math.min(50, Math.max(1, Number(filters.limit) || 20));
-  let query = client.from("mobile_de_catalog_listings").select(listingColumns, { count: "exact" }).eq("catalog_visible", true);
+  let query = client.from("mobile_de_catalog_public_listings").select(listingColumns, { count: "exact" });
 
   if (filters.make) query = query.eq("make", filters.make);
   if (filters.model) query = query.eq("model", filters.model);
@@ -115,17 +115,17 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
 }
 
 export async function getSupabaseMobileDeListing(masterId: string): Promise<MobileDeListing | null> {
-  const client = createSupabaseAdminClient();
-  const { data, error } = await client.from("mobile_de_catalog_listings").select(listingColumns).eq("master_id", masterId).eq("catalog_visible", true).maybeSingle();
+  const client = createSupabaseEuropePublicServerClient();
+  const { data, error } = await client.from("mobile_de_catalog_public_listings").select(listingColumns).eq("master_id", masterId).maybeSingle();
   if (error) throw new Error(`Europe Supabase detail query failed: ${error.message}`);
   if (!data) return null;
-  const imagesResult = await client.from("mobile_de_catalog_images").select("source_url,position,is_primary").eq("master_id", masterId).order("position", { ascending: true });
+  const imagesResult = await client.from("mobile_de_catalog_public_images").select("source_url,position,is_primary").eq("master_id", masterId).order("position", { ascending: true });
   if (imagesResult.error) throw new Error(`Europe Supabase gallery query failed: ${imagesResult.error.message}`);
   return mapListing(data as unknown as Record<string, unknown>, (imagesResult.data ?? []) as unknown as Array<Record<string, unknown>>);
 }
 
 export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDeFacets> {
-  const client = createSupabaseAdminClient();
+  const client = createSupabaseEuropePublicServerClient();
   const { data, error } = await client.rpc("get_mobile_de_catalog_facets", { p_make: make || null });
   if (error) throw new Error(`Europe Supabase facets query failed: ${error.message}`);
   const row = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};

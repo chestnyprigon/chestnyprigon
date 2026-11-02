@@ -211,6 +211,22 @@ export type Database = {
         };
         Relationships: [];
       };
+      mobile_de_catalog_public_listings: {
+        Row: {
+          master_id: string; source_id: string; title: string; make: string; model: string | null;
+          production_year: number | null; first_registration: string; first_registration_precision: string;
+          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
+          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
+          description: string | null; options: Json; source_url: string; primary_image_url: string | null;
+          source_updated_at: string | null; last_seen_at: string | null; verified_at: string | null; updated_at: string;
+        };
+        Relationships: [];
+      };
+      mobile_de_catalog_public_images: {
+        Row: { master_id: string; source_url: string; position: number; is_primary: boolean };
+        Relationships: [];
+      };
     };
     Functions: {
       get_catalog_filter_options: {

@@ -99,7 +99,8 @@ create or replace function public.get_mobile_de_catalog_facets(p_make text defau
 returns jsonb
 language sql
 stable
-set search_path = public
+security definer
+set search_path = pg_catalog, public
 as $$
   with visible as materialized (
     select make, model, fuel_type, transmission, body_type, price_amount,
@@ -136,6 +137,25 @@ as $$
   );
 $$;
 
+create or replace view public.mobile_de_catalog_public_listings
+with (security_barrier = true)
+as
+select master_id, source_id, title, make, model, production_year, first_registration,
+       first_registration_precision, registration_year, mileage_km, engine_cc, power_ps,
+       price_amount, price_currency, price_category, fuel_type, transmission, drive, body_type,
+       color, description, options, source_url, primary_image_url, source_updated_at,
+       last_seen_at, verified_at, updated_at
+from public.mobile_de_catalog_listings
+where catalog_visible;
+
+create or replace view public.mobile_de_catalog_public_images
+with (security_barrier = true)
+as
+select images.master_id, images.source_url, images.position, images.is_primary
+from public.mobile_de_catalog_images as images
+join public.mobile_de_catalog_listings as listings using (master_id)
+where listings.catalog_visible;
+
 alter table public.mobile_de_catalog_listings enable row level security;
 alter table public.mobile_de_catalog_images enable row level security;
 alter table public.mobile_de_catalog_import_runs enable row level security;
@@ -144,11 +164,15 @@ revoke all on function public.get_mobile_de_catalog_facets(text) from public, an
 revoke all on public.mobile_de_catalog_listings from anon, authenticated;
 revoke all on public.mobile_de_catalog_images from anon, authenticated;
 revoke all on public.mobile_de_catalog_import_runs from anon, authenticated;
+revoke all on public.mobile_de_catalog_public_listings from public, anon, authenticated;
+revoke all on public.mobile_de_catalog_public_images from public, anon, authenticated;
+grant select on public.mobile_de_catalog_public_listings to anon, authenticated, service_role;
+grant select on public.mobile_de_catalog_public_images to anon, authenticated, service_role;
 grant all on public.mobile_de_catalog_listings to service_role;
 grant all on public.mobile_de_catalog_images to service_role;
 grant all on public.mobile_de_catalog_import_runs to service_role;
 grant usage, select on sequence public.mobile_de_catalog_images_id_seq to service_role;
-grant execute on function public.get_mobile_de_catalog_facets(text) to service_role;
+grant execute on function public.get_mobile_de_catalog_facets(text) to anon, authenticated, service_role;
 
 comment on table public.mobile_de_catalog_listings is
   'Europe-only Mobile.de catalogue. Rows stay hidden until verified active eligibility is confirmed.';
