@@ -1,6 +1,11 @@
-import "dotenv/config";
-
+import { config as loadEnv } from "dotenv";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+
+const envCandidates = [process.env.DOTENV_CONFIG_PATH, ".env.local", "../../.env.local", ".env"]
+  .filter((path): path is string => Boolean(path));
+for (const path of envCandidates) if (existsSync(path)) loadEnv({ path });
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
 const required = (name: string) => {
@@ -23,7 +28,10 @@ const allowlistPath = process.env.MOBILE_DE_PROVEN_ALLOWLIST_PATH?.trim();
 if (!allowlistPath) throw new Error("MOBILE_DE_PROVEN_ALLOWLIST_PATH must point to the recovery export containing the exact 7,333 PROVEN/VERIFIED active Master IDs");
 
 const fs = await import("node:fs/promises");
-const allowlist = JSON.parse(await fs.readFile(allowlistPath, "utf8")) as unknown;
+const allowlistCandidates = [resolve(allowlistPath), resolve("../../", allowlistPath)];
+const allowlistFile = allowlistCandidates.find(existsSync);
+if (!allowlistFile) throw new Error(`Allow-list file not found in the project or worktree: ${allowlistPath}`);
+const allowlist = JSON.parse(await fs.readFile(allowlistFile, "utf8")) as unknown;
 const ids = Array.isArray(allowlist) ? allowlist : allowlist && typeof allowlist === "object" && "master_ids" in allowlist ? (allowlist as { master_ids: unknown }).master_ids : null;
 if (!Array.isArray(ids) || ids.length !== 7_333 || ids.some((id) => typeof id !== "string") || new Set(ids).size !== ids.length) {
   throw new Error("Allow-list must contain exactly 7,333 unique Master IDs");
