@@ -14,7 +14,7 @@ Scope: only the Europe/Mobile.de catalogue, the existing Chestny Prigon Supabase
 
 ## Importer input and safety
 
-`MOBILE_DE_PROVEN_ALLOWLIST_PATH` must point to a local JSON file with either a string array or `{ "master_ids": [...] }`. It must contain exactly 7,333 unique Master IDs. Keep that recovery file outside Git and do not log raw descriptions or personal seller data. The importer runs in dry-run mode unless `--write=true` is explicitly supplied. `--limit=100` is the maximum pilot batch. Detail requests are paced below the consumer's 60 requests/minute limit; reading 7,333 records through the detail API will take about 2 hours. The full import requires `--confirm=mobile-de-full-import-7333` and refuses to write if any approved ID fails the strict data checks.
+`MOBILE_DE_PROVEN_ALLOWLIST_PATH` must point to a local JSON file with either a string array or `{ "master_ids": [...] }`. It must contain exactly 7,333 unique Master IDs. Keep that recovery file in ignored `.local/` and do not log raw descriptions or personal seller data. The API token, Supabase URL, service key, and allow-list path can be set in ignored `.env.local`; never commit or paste credentials into chat. The importer runs in dry-run mode unless `--write=true` is explicitly supplied. `--limit=100` is the maximum pilot batch. Detail requests are paced below the consumer's 60 requests/minute limit; reading 7,333 records through the detail API will take about 2 hours. The full import requires `--confirm=mobile-de-full-import-7333` and refuses to write if any approved ID fails the strict data checks.
 
 Only external image URLs are copied into the `mobile_de_catalog_images` table. Image bytes remain on the source CDN; this import does not upload media into Supabase Storage.
 
@@ -22,5 +22,5 @@ Only external image URLs are copied into the `mobile_de_catalog_images` table. I
 
 - Local schema, typed Supabase adapter, and import script are prepared.
 - TypeScript and targeted ESLint checks pass.
-- No Supabase migration or import has been executed yet. The local environment has no Supabase credentials, and the signed-in Safari session currently has no access to the Supabase organization/project. The source project/recovery export has not been added to this repository.
+- No Supabase migration or import has been executed yet. The local environment has no Supabase credentials, and the current browser session needs a user sign-in to the Supabase account that owns the project. The source project/recovery export has not been added to this repository.
 - Master API's exact proof, active, first-registration, price-category, and gallery fields must be matched to a real anonymized detail response before the import can run. The script fails closed if a row does not satisfy these criteria.
