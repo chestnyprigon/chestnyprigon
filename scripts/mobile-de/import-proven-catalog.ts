@@ -28,16 +28,26 @@ const ids = Array.isArray(allowlist) ? allowlist : allowlist && typeof allowlist
 if (!Array.isArray(ids) || ids.length !== 7_333 || ids.some((id) => typeof id !== "string") || new Set(ids).size !== ids.length) {
   throw new Error("Allow-list must contain exactly 7,333 unique Master IDs");
 }
-const requestedIds = (ids as string[]).slice(0, limit);
+const requestedIds = [...(ids as string[])].sort().slice(0, limit);
 
 const priceCategories = new Set(["Sehr guter Preis", "Guter Preis", "Fairer Preis"]);
-const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VERIFIED", "PROVEN", "VERIFIED"]);
+const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VERIFIED"]);
 
-async function getJson(path: string) {
+let nextApiRequestAt = 0;
+async function getJson(path: string): Promise<unknown> {
+  const delay = Math.max(0, nextApiRequestAt - Date.now());
+  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+  nextApiRequestAt = Date.now() + 1_050;
   const response = await fetch(`${API_ROOT}${path}`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(20_000),
   });
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const backoff = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : 60_000;
+    nextApiRequestAt = Math.max(nextApiRequestAt, Date.now() + backoff);
+    return getJson(path);
+  }
   if (!response.ok) throw new Error(`Master API ${response.status} for ${path}`);
   return response.json() as Promise<unknown>;
 }
@@ -50,8 +60,10 @@ function text(value: unknown) { return typeof value === "string" && value.trim()
 function number(value: unknown) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function array(value: unknown) { return Array.isArray(value) ? value : []; }
 function proofStatus(item: Record<string, unknown>) {
-  const proof = text(item.proof_status ?? item.verification_status ?? item.status);
-  return proof && proofAliases.has(proof) ? "proven_verified" : null;
+  const quality = record(item.quality);
+  const proof = text(item.proof_status ?? item.verification_status ?? quality.proof_status ?? quality.verification_status ?? item.status);
+  const bothExplicitFlags = (item.proven === true || quality.proven === true) && (item.verified === true || quality.verified === true);
+  return (proof && proofAliases.has(proof)) || bothExplicitFlags ? "proven_verified" : null;
 }
 function eligible(item: Record<string, unknown>) {
   const masterId = text(item.master_id);
@@ -62,7 +74,7 @@ function eligible(item: Record<string, unknown>) {
   const precision = text(registration.precision);
   const registrationYear = regValue ? Number(regValue.slice(0, 4)) : null;
   const price = nested(item, "price");
-  const priceType = text(price.category ?? price.type);
+  const priceType = text(price.category ?? price.evaluation ?? item.price_category ?? price.type);
   const priceAmount = number(price.amount);
   const power = nested(item, "power");
   const powerValue = number(power.value);
@@ -78,7 +90,8 @@ function eligible(item: Record<string, unknown>) {
     return [{ master_id: masterId!, source_url: url, position: number(image.position) ?? 0, is_primary: image.is_primary === true }];
   });
   const verified = proofStatus(item);
-  const active = normalizedSourceStatus === "active" || item.active === true || item.is_active === true;
+  const active = item.active === true || item.is_active === true || normalizedSourceStatus === "active" ||
+    (verified === "proven_verified" && (!normalizedSourceStatus || normalizedSourceStatus === "unknown"));
 
   if (!masterId || !sourceId || !make || !verified || !active || !regValue || !precision || ["unknown", "year", "neuwagen"].includes(precision.toLowerCase()) || !registrationYear || registrationYear < 2022 || registrationYear > 2025 ||
     !priceCategories.has(priceType || "") || !priceAmount || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
@@ -119,8 +132,9 @@ for (const id of requestedIds) {
   batch.push(mapped);
 }
 
-const summary = { mode: write ? "write" : "dry-run", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skipped, photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
+const summary = { mode: write ? "write" : "dry-run", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
 if (!write) { console.log(JSON.stringify(summary, null, 2)); process.exit(0); }
+if (limit === 7_333 && skipped.length) throw new Error(`Full import stopped before writing: ${skipped.length} allow-listed records failed strict eligibility`);
 if (args.get("confirm") !== "mobile-de-test-import" && limit <= 100) throw new Error("Writing the test batch requires --confirm=mobile-de-test-import");
 if (limit > 100 && args.get("confirm") !== "mobile-de-full-import-7333") throw new Error("Writing all selected listings requires --confirm=mobile-de-full-import-7333");
 

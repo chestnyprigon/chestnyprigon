@@ -37,6 +37,7 @@ create table if not exists public.mobile_de_catalog_listings (
     not catalog_visible or (
       source_status = 'active'
       and proof_status = 'proven_verified'
+      and first_registration_precision in ('month', 'day')
       and registration_year between 2022 and 2025
       and power_ps <= 160
       and mileage_km <= 100000
