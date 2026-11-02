@@ -117,6 +117,44 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      mobile_de_catalog_listings: {
+        Row: {
+          master_id: string; source_id: string; title: string; make: string; model: string | null;
+          production_year: number | null; first_registration: string; first_registration_precision: string;
+          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
+          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
+          description: string | null; options: Json; source_url: string; primary_image_url: string | null;
+          source_status: string; proof_status: string; is_new_vehicle: boolean; catalog_visible: boolean;
+          source_updated_at: string | null; last_seen_at: string | null; verified_at: string | null;
+          source_payload: Json; imported_at: string; updated_at: string;
+        };
+        Insert: {
+          master_id: string; source_id: string; title: string; make: string; model?: string | null;
+          production_year?: number | null; first_registration: string; first_registration_precision: string;
+          registration_year: number; mileage_km: number; engine_cc?: number | null; power_ps: number;
+          price_amount: number; price_currency?: string; price_category: string; fuel_type?: string | null;
+          transmission?: string | null; drive?: string | null; body_type?: string | null; color?: string | null;
+          description?: string | null; options?: Json; source_url: string; primary_image_url?: string | null;
+          source_status: string; proof_status: string; is_new_vehicle?: boolean; catalog_visible?: boolean;
+          source_updated_at?: string | null; last_seen_at?: string | null; verified_at?: string | null;
+          source_payload?: Json; imported_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["mobile_de_catalog_listings"]["Insert"]>;
+        Relationships: [];
+      };
+      mobile_de_catalog_images: {
+        Row: { id: number; master_id: string; source_url: string; position: number; is_primary: boolean; created_at: string };
+        Insert: { master_id: string; source_url: string; position: number; is_primary?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["mobile_de_catalog_images"]["Insert"]>;
+        Relationships: [{ foreignKeyName: "mobile_de_catalog_images_master_id_fkey"; columns: ["master_id"]; isOneToOne: false; referencedRelation: "mobile_de_catalog_listings"; referencedColumns: ["master_id"] }];
+      };
+      mobile_de_catalog_import_runs: {
+        Row: { id: string; status: string; source_candidate_count: number; fetched_count: number; proven_count: number; rejected_count: number; upserted_count: number; cursor: string | null; error_summary: Json; started_at: string; finished_at: string | null };
+        Insert: { status?: string; source_candidate_count?: number; fetched_count?: number; proven_count?: number; rejected_count?: number; upserted_count?: number; cursor?: string | null; error_summary?: Json; started_at?: string; finished_at?: string | null };
+        Update: Partial<Database["public"]["Tables"]["mobile_de_catalog_import_runs"]["Insert"]>;
+        Relationships: [];
+      };
       pricing_profiles: {
         Row: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at: string };
         Insert: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at?: string };
@@ -177,6 +215,10 @@ export type Database = {
     Functions: {
       get_catalog_filter_options: {
         Args: { p_brand?: string | null; p_model?: string | null };
+        Returns: Json;
+      };
+      get_mobile_de_catalog_facets: {
+        Args: { p_make?: string | null };
         Returns: Json;
       };
     };

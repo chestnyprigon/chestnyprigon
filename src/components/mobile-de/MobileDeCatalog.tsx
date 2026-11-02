@@ -109,7 +109,7 @@ async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
   let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
   let error: MobileDeApiError | null = null;
   try { catalog = await getMobileDeListings(filters); }
-  catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed"); }
+  catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Europe catalogue request failed"); }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);
   return (
 

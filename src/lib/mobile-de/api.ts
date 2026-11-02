@@ -5,9 +5,15 @@ import { normalizeMobileDeFacets } from "./facets";
 import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
+function shouldUseSupabaseCatalog() {
+  return process.env.EUROPE_CATALOG_SOURCE === "supabase";
+}
+
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
 const catalogCache = createStaleCache<MobileDeListingPage>(60_000, 15 * 60_000, 96);
 const facetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
+const supabaseCatalogCache = createStaleCache<MobileDeListingPage>(60_000, 5 * 60_000, 96);
+const supabaseFacetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
 
 export class MobileDeApiError extends Error {
   constructor(readonly status: number | null, message: string) {
@@ -69,6 +75,14 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
 }
 
 export function getMobileDeListings(filters: MobileDeFilters) {
+  if (shouldUseSupabaseCatalog()) {
+    const key = JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([name, value]) => name !== "cursor" && value).sort(([left], [right]) => left.localeCompare(right))));
+    return supabaseCatalogCache(key, () =>
+      import("./supabase-catalog").then(({ getSupabaseMobileDeListings }) =>
+        getSupabaseMobileDeListings(filters).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
+      ),
+    );
+  }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (value) params.set(key, value);
@@ -83,6 +97,11 @@ export function getMobileDeListings(filters: MobileDeFilters) {
 // Facets are public catalogue metadata. Keep the last known-good set available
 // during upstream DB timeouts; never cache details or consumer credentials.
 export function getMobileDeFacets(make?: string) {
+  if (shouldUseSupabaseCatalog()) {
+    return supabaseFacetsCache(make || "", () =>
+      import("./supabase-catalog").then(({ getSupabaseMobileDeFacets }) => getSupabaseMobileDeFacets(make)),
+    );
+  }
   // A rotated or different consumer token must never reuse another consumer's dictionary.
   const consumer = createHash("sha256").update(token()).digest("hex");
   const params = new URLSearchParams();
@@ -93,6 +112,13 @@ export function getMobileDeFacets(make?: string) {
 }
 
 export function getMobileDeListing(masterId: string) {
+  if (shouldUseSupabaseCatalog()) {
+    return import("./supabase-catalog").then(async ({ getSupabaseMobileDeListing }) => {
+      const listing = await getSupabaseMobileDeListing(masterId);
+      if (!listing) throw new MobileDeApiError(404, "Europe catalogue listing not found");
+      return normalizeMobileDeListing(listing);
+    });
+  }
   return getJson<{ data: MobileDeListing } | MobileDeListing>(`/listings/${encodeURIComponent(masterId)}`).then((payload) =>
     normalizeMobileDeListing("data" in payload ? payload.data : payload),
   );
