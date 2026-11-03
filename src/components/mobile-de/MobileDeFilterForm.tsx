@@ -16,7 +16,10 @@ const rangeGroups = [
   [["mileage_min", "Пробег от, км"], ["mileage_max", "Пробег до, км"]],
   [["power_min", "Мощность от, л. с."], ["power_max", "Мощность до, л. с."]],
 ] as const;
-const engineSizeOptions = [800, 1000, 1200, 1300, 1400, 1500, 1600, 1800, 2000, 2200, 2500, 3000, 3500, 4000, 5000, 6000, 7000, 8000];
+const engineSizeOptions = [0.8, 1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 2, 2.2, 2.5, 3, 3.5, 4, 5, 6, 7, 8].map((litres) => {
+  const nominalCc = Math.round(litres * 1000);
+  return { litres, minimumCc: nominalCc - 50, maximumCc: nominalCc + 49 };
+});
 
 type DictionaryState = { key: string; data: MobileDeFacets; status: "ready" | "error" };
 
@@ -178,7 +181,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
         </select>{errors[key] && <small role="alert">{errors[key]}</small>}</label>;
       })}</div>
       <div className={styles.rangePair}>{([["engine_cc_min", "Объём от, л"], ["engine_cc_max", "Объём до, л"]] as const).map(([key, label]) => <label className={styles.field} key={key}>
-        <span>{label}</span><select value={values[key] || ""} onChange={(event) => update(key, event.target.value)}><option value="">Любой</option>{values[key] && !engineSizeOptions.includes(Number(values[key])) && <option value={values[key]}>{(Number(values[key]) / 1000).toFixed(1)} л</option>}{engineSizeOptions.map((cc) => <option value={cc} key={cc}>{(cc / 1000).toFixed(1)} л</option>)}</select>{errors[key] && <small role="alert">{errors[key]}</small>}
+        <span>{label}</span><select value={values[key] || ""} onChange={(event) => update(key, event.target.value)}><option value="">Любой</option>{values[key] && !engineSizeOptions.some((option) => Number(values[key]) === (key === "engine_cc_min" ? option.minimumCc : option.maximumCc)) && <option value={values[key]}>{((Number(values[key]) + (key === "engine_cc_min" ? 50 : -49)) / 1000).toFixed(1)} л</option>}{engineSizeOptions.map((option) => <option value={key === "engine_cc_min" ? option.minimumCc : option.maximumCc} key={option.litres}>{option.litres.toFixed(1)} л</option>)}</select>{errors[key] && <small role="alert">{errors[key]}</small>}
       </label>)}</div>
     </div>
     <div className={styles.rangeGroups}>
