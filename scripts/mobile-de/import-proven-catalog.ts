@@ -9,6 +9,7 @@ const envCandidates = [process.env.DOTENV_CONFIG_PATH, ".env.local", "../../.env
 for (const path of envCandidates) if (existsSync(path)) loadEnv({ path });
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
+const IMPORT_CONCURRENCY = 12;
 const required = (name: string) => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -217,7 +218,7 @@ async function worker() {
     await checkListing(index);
   }
 }
-const workerResults = await Promise.allSettled(Array.from({ length: Math.min(4, requestedIds.length) }, () => worker()));
+const workerResults = await Promise.allSettled(Array.from({ length: Math.min(IMPORT_CONCURRENCY, requestedIds.length) }, () => worker()));
 const workerFailure = workerResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
 if (workerFailure) throw workerFailure.reason;
 const batch = results.flatMap((result) => result.mapped ? [result.mapped] : []);
