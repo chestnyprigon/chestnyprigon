@@ -98,7 +98,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   function update(key: keyof FilterValues, value: string) {
     const nextValues = { ...values, [key]: value, ...(key === "make" ? { model: "" } : {}) };
     setValues(nextValues);
-    setErrors((current) => ({ ...current, [key]: undefined, ...(key === "make" ? { model: undefined } : {}) }));
+    setErrors(parseMobileDeFilters(nextValues).errors);
     setMatchingCount(null);
     setCountPending(parseMobileDeFilters(nextValues).valid);
   }
@@ -184,16 +184,15 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
     <div className={styles.rangeGroups}>
       {rangeGroups.map((group) => <div className={styles.rangePair} key={group[0][0]}>{group.map(([key, label]) => <label className={styles.field} key={key}>
         <span>{label}</span>
-        <input name={key} type="number" min="0" inputMode="numeric" value={values[key] || ""} onChange={(event) => update(key, event.target.value)} aria-invalid={Boolean(errors[key])} placeholder="Любой" />
+        <input name={key} type="number" min="0" step={key.startsWith("price_") ? "0.01" : "1"} inputMode="numeric" value={values[key] || ""} onChange={(event) => update(key, event.target.value)} aria-invalid={Boolean(errors[key])} placeholder="Любой" />
         {errors[key] && <small role="alert">{errors[key]}</small>}
       </label>)}</div>)}
     </div>
 
     <label className={styles.field}><span>Сортировка</span><select name="sort" value={values.sort || "updated_desc"} onChange={(event) => update("sort", event.target.value)}>{SORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{errors.sort && <small role="alert">{errors.sort}</small>}</label>
     {globalDictionary.status === "error" && <p className={styles.filterFootnote}>Не удалось получить марки. Повторите загрузку справочника или введите точную марку в поиск.</p>}
-    <button className={styles.submit} type="submit" disabled={pending || Object.keys(errors).length > 0}>
+    <button className={styles.submit} type="submit" disabled={pending}>
       {pending ? "Загружаем…" : countPending ? "Считаем автомобили…" : matchingCount === null ? "Показать автомобили" : `Показать ${new Intl.NumberFormat("ru-RU").format(matchingCount)} авто`}<ArrowRight size={18} />
     </button>
-    <p className={styles.filterFootnote}>Используйте первую регистрацию из объявления. Цена указана в евро без доставки и таможни.</p>
   </form>;
 }

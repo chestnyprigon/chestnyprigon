@@ -11,7 +11,7 @@ test("preserves exact dictionaries, zero and separate years",()=>{
  assert.equal(result.filters.model,"A 200");
 });
 test("rejects all reversed ranges",()=>{
- for(const prefix of ["price","year","registration_year","mileage","power"]){
+ for(const prefix of ["price","registration_year","mileage","power","engine_cc"]){
   const result=parseMobileDeFilters({[`${prefix}_min`]:"2025",[`${prefix}_max`]:"2020"});
   assert.equal(result.valid,false,prefix);
   assert.ok(result.errors[`${prefix}_min` as keyof typeof result.errors]);
