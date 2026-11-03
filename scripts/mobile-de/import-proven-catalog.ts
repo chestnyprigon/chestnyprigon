@@ -45,11 +45,23 @@ const priceCategories = new Set(["Sehr guter Preis", "Guter Preis", "Fairer Prei
 const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VERIFIED"]);
 
 let nextApiRequestAt = 0;
-async function getJson(path: string): Promise<unknown> {
-  for (let attempt = 1; attempt <= 8; attempt++) {
+let requestSchedule = Promise.resolve();
+async function reserveApiRequestSlot() {
+  const previous = requestSchedule;
+  let release!: () => void;
+  requestSchedule = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
     const delay = Math.max(0, nextApiRequestAt - Date.now());
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     nextApiRequestAt = Date.now() + 1_050;
+  } finally {
+    release();
+  }
+}
+async function getJson(path: string): Promise<unknown> {
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    await reserveApiRequestSlot();
     try {
       const response = await fetch(`${API_ROOT}${path}`, {
         headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
@@ -160,12 +172,13 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
   };
 }
 
-const batch = [];
-const skipped: Array<{ id: string; reason: string }> = [];
 const cacheDirectory = resolve(".local/mobile-de-import-cache");
 await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
 let cacheHits = 0;
-for (let index = 0; index < requestedIds.length; index++) {
+let checkedCount = 0;
+let nextIndex = 0;
+const results: Array<{ id: string; mapped: ReturnType<typeof eligible>; reason: string | null }> = new Array(requestedIds.length);
+async function checkListing(index: number) {
   const id = requestedIds[index];
   const cacheFile = resolve(cacheDirectory, `${id}.json`);
   let payload: unknown;
@@ -187,14 +200,28 @@ for (let index = 0; index < requestedIds.length; index++) {
   if (!mapped) {
     const price = nested(item, "price");
     const category = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
-    skipped.push({ id, reason: category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" });
-    continue;
+    results[index] = { id, mapped: null, reason: category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" };
+  } else {
+    results[index] = { id, mapped, reason: null };
   }
-  batch.push(mapped);
-  if ((index + 1) % 100 === 0 || index + 1 === requestedIds.length) {
-    console.log(`Checked ${index + 1}/${requestedIds.length} listings (${cacheHits} resumed from local cache; ${batch.length} eligible)`);
+  checkedCount++;
+  if (checkedCount % 100 === 0 || checkedCount === requestedIds.length) {
+    const accepted = results.reduce((count, result) => count + (result?.mapped ? 1 : 0), 0);
+    console.log(`Checked ${checkedCount}/${requestedIds.length} listings (${cacheHits} resumed from local cache; ${accepted} eligible)`);
   }
 }
+async function worker() {
+  while (true) {
+    const index = nextIndex++;
+    if (index >= requestedIds.length) return;
+    await checkListing(index);
+  }
+}
+const workerResults = await Promise.allSettled(Array.from({ length: Math.min(4, requestedIds.length) }, () => worker()));
+const workerFailure = workerResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+if (workerFailure) throw workerFailure.reason;
+const batch = results.flatMap((result) => result.mapped ? [result.mapped] : []);
+const skipped = results.flatMap((result) => result.reason ? [{ id: result.id, reason: result.reason }] : []);
 
 const summary = { mode: write ? "write" : "dry-run", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
 if (!write) { console.log(JSON.stringify(summary, null, 2)); process.exit(0); }
