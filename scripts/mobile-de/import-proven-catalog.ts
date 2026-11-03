@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
@@ -17,6 +18,8 @@ const token = required("MASTER_MOBILE_DE_API_TOKEN");
 const supabase = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+
+async function main() {
 const args = new Map(process.argv.slice(2).map((value) => {
   const [key, ...rest] = value.replace(/^--/, "").split("=");
   return [key, rest.join("=")];
@@ -27,16 +30,16 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 7_333) throw new Error("--l
 const allowlistPath = process.env.MOBILE_DE_PROVEN_ALLOWLIST_PATH?.trim();
 if (!allowlistPath) throw new Error("MOBILE_DE_PROVEN_ALLOWLIST_PATH must point to the recovery export containing the exact 7,333 PROVEN/VERIFIED active Master IDs");
 
-const fs = await import("node:fs/promises");
 const allowlistCandidates = [resolve(allowlistPath), resolve("../../", allowlistPath)];
 const allowlistFile = allowlistCandidates.find(existsSync);
 if (!allowlistFile) throw new Error(`Allow-list file not found in the project or worktree: ${allowlistPath}`);
-const allowlist = JSON.parse(await fs.readFile(allowlistFile, "utf8")) as unknown;
+const allowlist = JSON.parse(await readFile(allowlistFile, "utf8")) as unknown;
 const ids = Array.isArray(allowlist) ? allowlist : allowlist && typeof allowlist === "object" && "master_ids" in allowlist ? (allowlist as { master_ids: unknown }).master_ids : null;
 if (!Array.isArray(ids) || ids.length !== 7_333 || ids.some((id) => typeof id !== "string") || new Set(ids).size !== ids.length) {
   throw new Error("Allow-list must contain exactly 7,333 unique Master IDs");
 }
 const requestedIds = [...(ids as string[])].sort().slice(0, limit);
+const allowlistedMasterIds = new Set(ids as string[]);
 
 const priceCategories = new Set(["Sehr guter Preis", "Guter Preis", "Fairer Preis"]);
 const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VERIFIED"]);
@@ -64,16 +67,25 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 function nested(value: unknown, key: string) { return record(record(value)[key]); }
-function text(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
+function text(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  const object = record(value);
+  for (const key of ["label_ru", "text_ru", "value", "name", "original", "code"]) {
+    if (typeof object[key] === "string" && (object[key] as string).trim()) return (object[key] as string).trim();
+  }
+  return null;
+}
 function number(value: unknown) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function array(value: unknown) { return Array.isArray(value) ? value : []; }
-function proofStatus(item: Record<string, unknown>) {
+function proofStatus(item: Record<string, unknown>, allowlistedMasterIds: Set<string>) {
+  const masterId = text(item.master_id);
+  if (masterId && allowlistedMasterIds.has(masterId)) return "proven_verified";
   const quality = record(item.quality);
   const proof = text(item.proof_status ?? item.verification_status ?? quality.proof_status ?? quality.verification_status ?? item.status);
   const bothExplicitFlags = (item.proven === true || quality.proven === true) && (item.verified === true || quality.verified === true);
   return (proof && proofAliases.has(proof)) || bothExplicitFlags ? "proven_verified" : null;
 }
-function eligible(item: Record<string, unknown>) {
+function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<string>) {
   const masterId = text(item.master_id);
   const sourceId = text(item.source_id);
   const make = text(item.make);
@@ -82,7 +94,10 @@ function eligible(item: Record<string, unknown>) {
   const precision = text(registration.precision);
   const registrationYear = regValue ? Number(regValue.slice(0, 4)) : null;
   const price = nested(item, "price");
-  const priceType = text(price.category ?? price.evaluation ?? item.price_category ?? price.type);
+  const priceCategory = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
+  const priceCategoryEligible = priceCategory
+    ? priceCategories.has(priceCategory)
+    : Boolean(masterId && allowlistedMasterIds.has(masterId));
   const priceAmount = number(price.amount);
   const power = nested(item, "power");
   const powerValue = number(power.value);
@@ -97,12 +112,12 @@ function eligible(item: Record<string, unknown>) {
     if (!url) return [];
     return [{ master_id: masterId!, source_url: url, position: number(image.position) ?? 0, is_primary: image.is_primary === true }];
   });
-  const verified = proofStatus(item);
+  const verified = proofStatus(item, allowlistedMasterIds);
   const active = item.active === true || item.is_active === true || normalizedSourceStatus === "active" ||
     (verified === "proven_verified" && (!normalizedSourceStatus || normalizedSourceStatus === "unknown"));
 
   if (!masterId || !sourceId || !make || !verified || !active || !regValue || !precision || ["unknown", "year", "neuwagen"].includes(precision.toLowerCase()) || !registrationYear || registrationYear < 2022 || registrationYear > 2025 ||
-    !priceCategories.has(priceType || "") || !priceAmount || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
+    !priceCategoryEligible || !priceAmount || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
   const title = text(item.title) || [make, text(item.model)].filter(Boolean).join(" ");
   const sourceUrl = text(item.source_url) || `https://suchen.mobile.de/fahrzeuge/details.html?id=${encodeURIComponent(sourceId)}`;
   return {
@@ -111,9 +126,10 @@ function eligible(item: Record<string, unknown>) {
       production_year: number(item.production_year), first_registration: regValue,
       first_registration_precision: precision, registration_year: registrationYear,
       mileage_km: mileage, engine_cc: number(item.engine_cc), power_ps: powerValue,
-      price_amount: priceAmount, price_currency: text(price.currency) || "EUR", price_category: priceType,
-      fuel_type: text(item.fuel_type), transmission: text(item.transmission), drive: text(item.drive),
-      body_type: text(item.body_type), color: text(item.color), description: text(item.description),
+      price_amount: priceAmount, price_currency: text(price.currency) || "EUR", price_category: priceCategory,
+      price_category_eligible: priceCategoryEligible,
+      fuel_type: text(item.fuel_type ?? item.fuel), transmission: text(item.transmission), drive: text(item.drive),
+      body_type: text(item.body_type ?? item.body), color: text(item.color ?? item.color_ru), description: text(item.description),
       options: Array.isArray(item.options) ? item.options : [], source_url: sourceUrl,
       primary_image_url: text(nested(item, "primary_image").url) || images[0]?.source_url || null,
       source_status: "active", proof_status: "proven_verified", is_new_vehicle: false,
@@ -123,6 +139,7 @@ function eligible(item: Record<string, unknown>) {
         proof_status: text(item.proof_status ?? item.verification_status),
         source_status: sourceStatus,
         proof_reference: text(item.proof_reference ?? item.proof_id),
+        price_category_eligibility_basis: priceCategory ? "master_api_detail" : "filtered_candidate_cohort_allowlist",
         verified_at: text(freshness.last_successful_source_check_at),
       },
     },
@@ -135,8 +152,13 @@ const skipped: Array<{ id: string; reason: string }> = [];
 for (const id of requestedIds) {
   const payload = record(await getJson(`/listings/${encodeURIComponent(id)}`));
   const item = record(payload.data ?? payload);
-  const mapped = eligible(item);
-  if (!mapped) { skipped.push({ id, reason: "Missing/failed strict active, proof, date, power, mileage, price or required-field check" }); continue; }
+  const mapped = eligible(item, allowlistedMasterIds);
+  if (!mapped) {
+    const price = nested(item, "price");
+    const category = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
+    skipped.push({ id, reason: category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" });
+    continue;
+  }
   batch.push(mapped);
 }
 
@@ -168,3 +190,9 @@ try {
   throw error;
 }
 console.log(JSON.stringify({ ...summary, runId: run.id, upserted: batch.length }, null, 2));
+}
+
+void main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : "Unknown import error");
+  process.exitCode = 1;
+});
