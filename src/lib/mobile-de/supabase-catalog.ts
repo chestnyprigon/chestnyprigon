@@ -114,6 +114,29 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   };
 }
 
+export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promise<number> {
+  const client = createSupabaseEuropePublicServerClient();
+  let query = client.from("mobile_de_catalog_public_listings").select("master_id", { count: "exact", head: true });
+  if (filters.make) query = query.eq("make", filters.make);
+  if (filters.model) query = query.eq("model", filters.model);
+  if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
+  if (filters.transmission) query = query.eq("transmission", filters.transmission);
+  if (filters.body_type) query = query.eq("body_type", filters.body_type);
+  if (filters.price_min) query = query.gte("price_amount", Number(filters.price_min));
+  if (filters.price_max) query = query.lte("price_amount", Number(filters.price_max));
+  if (filters.year_min) query = query.gte("production_year", Number(filters.year_min));
+  if (filters.year_max) query = query.lte("production_year", Number(filters.year_max));
+  if (filters.registration_year_min) query = query.gte("registration_year", Number(filters.registration_year_min));
+  if (filters.registration_year_max) query = query.lte("registration_year", Number(filters.registration_year_max));
+  if (filters.mileage_min) query = query.gte("mileage_km", Number(filters.mileage_min));
+  if (filters.mileage_max) query = query.lte("mileage_km", Number(filters.mileage_max));
+  if (filters.power_min) query = query.gte("power_ps", Number(filters.power_min));
+  if (filters.power_max) query = query.lte("power_ps", Number(filters.power_max));
+  const { count, error } = await query;
+  if (error) throw new Error(`Europe Supabase count query failed: ${error.message}`);
+  return count ?? 0;
+}
+
 export async function getSupabaseMobileDeListing(masterId: string): Promise<MobileDeListing | null> {
   const client = createSupabaseEuropePublicServerClient();
   const { data, error } = await client.from("mobile_de_catalog_public_listings").select(listingColumns).eq("master_id", masterId).maybeSingle();

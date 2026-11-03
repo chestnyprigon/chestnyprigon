@@ -111,6 +111,22 @@ export function getMobileDeFacets(make?: string) {
   );
 }
 
+export function getMobileDeCount(filters: MobileDeFilters) {
+  if (shouldUseSupabaseCatalog()) {
+    return import("./supabase-catalog").then(({ getSupabaseMobileDeCount }) => getSupabaseMobileDeCount(filters));
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (key !== "cursor" && key !== "limit" && value) params.set(key, value);
+  }
+  params.sort();
+  return getJson<{ data?: { count?: number }; count?: number }>("/count", params).then((payload) => {
+    const count = payload.data?.count ?? payload.count;
+    if (!Number.isSafeInteger(count) || count! < 0) throw new MobileDeApiError(null, "Master API returned an invalid count");
+    return count!;
+  });
+}
+
 export function getMobileDeListing(masterId: string) {
   if (shouldUseSupabaseCatalog()) {
     return import("./supabase-catalog").then(async ({ getSupabaseMobileDeListing }) => {

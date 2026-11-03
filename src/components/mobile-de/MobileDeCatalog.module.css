@@ -165,3 +165,39 @@
 .field select:disabled { opacity: .6; cursor: wait; }
 .filterFootnote button { color: inherit; text-decoration: underline; cursor: pointer; }
 .submit:disabled { opacity: .65; cursor: wait; }
+.filters { align-content: start; }
+.filterHeading > span { align-items: center; display: inline-flex; gap: 9px; }
+.filterHeading > span svg { color: #ef4b43; }
+.filterFootnote { margin-top: 0; }
+.makeSearch .searchInput { align-items: center; background: #050e17; border: 1px solid #203747; border-radius: 6px; display: flex; gap: 9px; height: 44px; padding: 0 11px; }
+.makeSearch .searchInput svg { color: #82939e; flex: 0 0 auto; }
+.makeSearch .searchInput input { background: transparent; border: 0; height: 100%; min-width: 0; outline: 0; padding: 0; }
+.makeSearch .searchInput:focus-within { border-color: #ef4b43; }
+.pillGroup { border: 0; margin: 4px 0 0; min-width: 0; padding: 0; }
+.pillGroup legend { color: #91a0ab; font-size: 10px; font-weight: 800; letter-spacing: .06em; margin-bottom: 9px; text-transform: uppercase; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pills button { background: #050e17; border: 1px solid #203747; border-radius: 5px; color: #9aa8b2; cursor: pointer; font: inherit; font-size: 10px; line-height: 1.3; padding: 9px 10px; }
+.pills button:hover,.pills button.selectedPill { background: rgba(228,59,52,.1); border-color: rgba(228,59,52,.65); color: #fff; }
+.pills button:disabled { cursor: not-allowed; opacity: .5; }
+.pillGroup small { color: #91a0ab; display: block; font-size: 11px; line-height: 1.45; margin-top: 7px; }
+.pillGroup small button { background: transparent; border: 0; color: inherit; cursor: pointer; text-decoration: underline; }
+.dictionaryGrid { display: grid; gap: 12px; }
+.rangeGroups { display: grid; gap: 13px; }
+.rangePair { display: grid; gap: 8px; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+.rangePair .field > span { font-size: 10px; }
+.rangePair input { appearance: textfield; }
+.rangePair input::-webkit-inner-spin-button,.rangePair input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.rangePair input::placeholder { color: #627481; }
+.submit { align-items: center; display: flex; gap: 9px; justify-content: center; }
+.submit svg { flex: 0 0 auto; }
+@media(max-width:920px) {
+  .filterContent { min-width: 0; }
+  .filters { grid-template-columns: minmax(0,1fr); padding: 16px; }
+  .dictionaryGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:620px) {
+  .filters { grid-template-columns: minmax(0,1fr); padding: 15px; }
+  .dictionaryGrid { grid-template-columns: minmax(0,1fr); }
+  .rangePair { gap: 8px; }
+  .rangePair .field > span { min-height: 26px; line-height: 1.25; }
+}
