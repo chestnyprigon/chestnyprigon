@@ -89,6 +89,8 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   if (filters.mileage_max) query = query.lte("mileage_km", Number(filters.mileage_max));
   if (filters.power_min) query = query.gte("power_ps", Number(filters.power_min));
   if (filters.power_max) query = query.lte("power_ps", Number(filters.power_max));
+  if (filters.engine_cc_min) query = query.gte("engine_cc", Number(filters.engine_cc_min));
+  if (filters.engine_cc_max) query = query.lte("engine_cc", Number(filters.engine_cc_max));
 
   const sort = filters.sort || "updated_desc";
   const sortBy: Record<string, { column: string; ascending: boolean }> = {
@@ -132,6 +134,8 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
   if (filters.mileage_max) query = query.lte("mileage_km", Number(filters.mileage_max));
   if (filters.power_min) query = query.gte("power_ps", Number(filters.power_min));
   if (filters.power_max) query = query.lte("power_ps", Number(filters.power_max));
+  if (filters.engine_cc_min) query = query.gte("engine_cc", Number(filters.engine_cc_min));
+  if (filters.engine_cc_max) query = query.lte("engine_cc", Number(filters.engine_cc_max));
   const { count, error } = await query;
   if (error) throw new Error(`Europe Supabase count query failed: ${error.message}`);
   return count ?? 0;

@@ -11,6 +11,7 @@ export const RANGE_FIELDS = [
   ["registration_year_min","Первая регистрация от",1886,2100],["registration_year_max","Первая регистрация до",1886,2100],
   ["mileage_min","Пробег от, км",0,10_000_000],["mileage_max","Пробег до, км",0,10_000_000],
   ["power_min","Мощность от, л. с.",0,5000],["power_max","Мощность до, л. с.",0,5000],
+  ["engine_cc_min","Объём от, см³",500,10000],["engine_cc_max","Объём до, см³",500,10000],
 ] as const;
 export type FilterValues = Partial<Record<keyof MobileDeFilters,string>>;
 export type FilterErrors = Partial<Record<keyof MobileDeFilters,string>>;
@@ -32,7 +33,7 @@ export function parseMobileDeFilters(search: FilterSearch) {
     if(!valid||!Number.isFinite(Number(value))||Number(value)<min||Number(value)>max){errors[key]=`${label}: укажите ${key.startsWith("price_")?"число":"целое число"} от ${min} до ${max}`;continue;}
     filters[key]=String(Number(value));
   }
-  for(const prefix of ["price","year","registration_year","mileage","power"] as const){
+  for(const prefix of ["price","year","registration_year","mileage","power","engine_cc"] as const){
     const from=`${prefix}_min` as keyof MobileDeFilters,to=`${prefix}_max` as keyof MobileDeFilters;
     if(filters[from]!==undefined&&filters[to]!==undefined&&Number(filters[from])>Number(filters[to])){errors[from]="Значение «от» не должно превышать «до»";errors[to]="Значение «до» не должно быть меньше «от»";}
   }

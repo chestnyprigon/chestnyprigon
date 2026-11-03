@@ -93,6 +93,8 @@ export type MobileDeFilters = {
   mileage_max?: string;
   power_min?: string;
   power_max?: string;
+  engine_cc_min?: string;
+  engine_cc_max?: string;
   sort?: string;
   limit?: string;
   cursor?: string;
