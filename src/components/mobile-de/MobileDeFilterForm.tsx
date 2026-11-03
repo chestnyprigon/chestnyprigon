@@ -54,11 +54,11 @@ function useDictionary(make?: string, enabled = true) {
 }
 
 function yearOptions(minimum: unknown, maximum: unknown) {
-  const current = new Date().getFullYear();
-  const min = typeof minimum === "number" ? minimum : current - 30;
-  const max = typeof maximum === "number" ? maximum : current;
+  if (typeof minimum !== "number" || typeof maximum !== "number") return [];
+  const min = minimum;
+  const max = maximum;
   const start = Math.max(1886, Math.min(min, max));
-  const end = Math.min(current + 1, Math.max(min, max));
+  const end = Math.max(min, max);
   return Array.from({ length: Math.min(80, end - start + 1) }, (_, index) => end - index);
 }
 
@@ -181,7 +181,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
         const options = group.years;
         const selected = values[key];
         return <label className={styles.field} key={key}><span>{group.labels[index]}</span><select value={selected || ""} onChange={(event) => update(key, event.target.value)}>
-          <option value="">Любой</option>
+          <option value="">{options.length ? "Любой" : key.startsWith("registration_") ? "Нет данных о регистрации" : "Нет данных о годе"}</option>
           {selected && !options.includes(Number(selected)) && <option value={selected}>{selected}</option>}
           {options.map((year) => <option value={year} key={year}>{year}</option>)}
         </select>{errors[key] && <small role="alert">{errors[key]}</small>}</label>;
@@ -190,6 +190,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
         <span>{label}</span><select value={values[key] || ""} onChange={(event) => update(key, event.target.value)}><option value="">Любой</option>{values[key] && !engineSizeOptions.includes(Number(values[key])) && <option value={values[key]}>{(Number(values[key]) / 1000).toFixed(1)} л</option>}{engineSizeOptions.map((cc) => <option value={cc} key={cc}>{(cc / 1000).toFixed(1)} л</option>)}</select>{errors[key] && <small role="alert">{errors[key]}</small>}
       </label>)}</div>
     </div>
+    {!productionYears.length && <p className={styles.filterFootnote} role="status">Год выпуска пока не заполнен в объявлениях. Для отбора используйте отдельный фильтр первой регистрации.</p>}
 
     <div className={styles.rangeGroups}>
       {rangeGroups.map((group) => <div className={styles.rangePair} key={group[0][0]}>{group.map(([key, label]) => <label className={styles.field} key={key}>
