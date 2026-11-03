@@ -1,6 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
@@ -46,21 +46,34 @@ const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VE
 
 let nextApiRequestAt = 0;
 async function getJson(path: string): Promise<unknown> {
-  const delay = Math.max(0, nextApiRequestAt - Date.now());
-  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-  nextApiRequestAt = Date.now() + 1_050;
-  const response = await fetch(`${API_ROOT}${path}`, {
-    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (response.status === 429) {
-    const retryAfter = Number(response.headers.get("retry-after"));
-    const backoff = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : 60_000;
-    nextApiRequestAt = Math.max(nextApiRequestAt, Date.now() + backoff);
-    return getJson(path);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    const delay = Math.max(0, nextApiRequestAt - Date.now());
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    nextApiRequestAt = Date.now() + 1_050;
+    try {
+      const response = await fetch(`${API_ROOT}${path}`, {
+        headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const backoff = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : Math.min(60_000, 2_000 * 2 ** (attempt - 1));
+        nextApiRequestAt = Math.max(nextApiRequestAt, Date.now() + backoff);
+        if (attempt === 8) throw new Error(`Master API rate limit persisted for ${path}`);
+        continue;
+      }
+      if (response.status >= 500 && attempt < 8) {
+        nextApiRequestAt = Math.max(nextApiRequestAt, Date.now() + Math.min(60_000, 2_000 * 2 ** (attempt - 1)));
+        continue;
+      }
+      if (!response.ok) throw new Error(`Master API ${response.status} for ${path}`);
+      return await response.json() as unknown;
+    } catch (error) {
+      if (attempt === 8 || (error instanceof Error && error.message.startsWith("Master API "))) throw error;
+      nextApiRequestAt = Math.max(nextApiRequestAt, Date.now() + Math.min(60_000, 2_000 * 2 ** (attempt - 1)));
+    }
   }
-  if (!response.ok) throw new Error(`Master API ${response.status} for ${path}`);
-  return response.json() as Promise<unknown>;
+  throw new Error(`Master API request exhausted retries for ${path}`);
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -149,9 +162,27 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
 
 const batch = [];
 const skipped: Array<{ id: string; reason: string }> = [];
-for (const id of requestedIds) {
-  const payload = record(await getJson(`/listings/${encodeURIComponent(id)}`));
-  const item = record(payload.data ?? payload);
+const cacheDirectory = resolve(".local/mobile-de-import-cache");
+await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
+let cacheHits = 0;
+for (let index = 0; index < requestedIds.length; index++) {
+  const id = requestedIds[index];
+  const cacheFile = resolve(cacheDirectory, `${id}.json`);
+  let payload: unknown;
+  if (existsSync(cacheFile)) {
+    try {
+      payload = JSON.parse(await readFile(cacheFile, "utf8")) as unknown;
+      cacheHits++;
+    } catch {
+      payload = await getJson(`/listings/${encodeURIComponent(id)}`);
+      await writeFile(cacheFile, JSON.stringify(payload), { mode: 0o600 });
+    }
+  } else {
+    payload = await getJson(`/listings/${encodeURIComponent(id)}`);
+    await writeFile(cacheFile, JSON.stringify(payload), { mode: 0o600 });
+  }
+  const payloadRecord = record(payload);
+  const item = record(payloadRecord.data ?? payloadRecord);
   const mapped = eligible(item, allowlistedMasterIds);
   if (!mapped) {
     const price = nested(item, "price");
@@ -160,6 +191,9 @@ for (const id of requestedIds) {
     continue;
   }
   batch.push(mapped);
+  if ((index + 1) % 100 === 0 || index + 1 === requestedIds.length) {
+    console.log(`Checked ${index + 1}/${requestedIds.length} listings (${cacheHits} resumed from local cache; ${batch.length} eligible)`);
+  }
 }
 
 const summary = { mode: write ? "write" : "dry-run", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
