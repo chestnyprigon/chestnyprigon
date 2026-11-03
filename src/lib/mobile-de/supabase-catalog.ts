@@ -81,8 +81,6 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
   if (filters.price_min) query = query.gte("price_amount", Number(filters.price_min));
   if (filters.price_max) query = query.lte("price_amount", Number(filters.price_max));
-  if (filters.year_min) query = query.gte("production_year", Number(filters.year_min));
-  if (filters.year_max) query = query.lte("production_year", Number(filters.year_max));
   if (filters.registration_year_min) query = query.gte("registration_year", Number(filters.registration_year_min));
   if (filters.registration_year_max) query = query.lte("registration_year", Number(filters.registration_year_max));
   if (filters.mileage_min) query = query.gte("mileage_km", Number(filters.mileage_min));
@@ -95,7 +93,6 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   const sort = filters.sort || "updated_desc";
   const sortBy: Record<string, { column: string; ascending: boolean }> = {
     price_asc: { column: "price_amount", ascending: true }, price_desc: { column: "price_amount", ascending: false },
-    year_asc: { column: "production_year", ascending: true }, year_desc: { column: "production_year", ascending: false },
     mileage_asc: { column: "mileage_km", ascending: true }, mileage_desc: { column: "mileage_km", ascending: false },
     updated_asc: { column: "source_updated_at", ascending: true }, updated_desc: { column: "source_updated_at", ascending: false },
   };
@@ -126,8 +123,6 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
   if (filters.price_min) query = query.gte("price_amount", Number(filters.price_min));
   if (filters.price_max) query = query.lte("price_amount", Number(filters.price_max));
-  if (filters.year_min) query = query.gte("production_year", Number(filters.year_min));
-  if (filters.year_max) query = query.lte("production_year", Number(filters.year_max));
   if (filters.registration_year_min) query = query.gte("registration_year", Number(filters.registration_year_min));
   if (filters.registration_year_max) query = query.lte("registration_year", Number(filters.registration_year_max));
   if (filters.mileage_min) query = query.gte("mileage_km", Number(filters.mileage_min));

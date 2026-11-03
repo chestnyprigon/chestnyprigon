@@ -3,11 +3,10 @@ import assert from "node:assert/strict";
 import { parseMobileDeFilters, mobileDeFilterParams } from "./filters";
 
 test("preserves exact dictionaries, zero and separate years",()=>{
- const result=parseMobileDeFilters({make:"Mercedes-Benz",model:"A 200",price_min:"0",year_min:"2020",registration_year_min:"2021",price_max:"30000,50"});
+ const result=parseMobileDeFilters({make:"Mercedes-Benz",model:"A 200",price_min:"0",registration_year_min:"2021",price_max:"30000,50"});
  assert.equal(result.valid,true);
  assert.equal(result.filters.price_min,"0");
  assert.equal(result.filters.price_max,"30000.5");
- assert.equal(result.filters.year_min,"2020");
  assert.equal(result.filters.registration_year_min,"2021");
  assert.equal(result.filters.model,"A 200");
 });
@@ -19,7 +18,7 @@ test("rejects all reversed ranges",()=>{
  }
 });
 test("rejects malformed numbers, duplicate params and unsupported sorting",()=>{
- for(const params of [{mileage_min:"1e4"},{year_min:"2020.5"},{price_min:"-1"},{make:["BMW","Audi"]},{sort:"random"},{model:"Golf"}])assert.equal(parseMobileDeFilters(params).valid,false);
+ for(const params of [{mileage_min:"1e4"},{registration_year_min:"2020.5"},{price_min:"-1"},{make:["BMW","Audi"]},{sort:"random"},{model:"Golf"}])assert.equal(parseMobileDeFilters(params).valid,false);
 });
 test("new search drops old cursor and pagination preserves filters",()=>{
  const filters=parseMobileDeFilters({make:"BMW",price_min:"0",sort:"price_asc",cursor:"old/+=token"}).filters;

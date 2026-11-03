@@ -1,13 +1,11 @@
 import type { MobileDeFilters } from "./types";
 export const SORT_OPTIONS = [
   ["updated_desc", "Сначала новые в базе"], ["price_asc", "Сначала дешевле"], ["price_desc", "Сначала дороже"],
-  ["year_desc", "Сначала новее по году выпуска"], ["year_asc", "Сначала старше по году выпуска"],
   ["mileage_asc", "Сначала с меньшим пробегом"], ["mileage_desc", "Сначала с большим пробегом"], ["updated_asc", "Сначала давно обновлённые"],
 ] as const;
 export const FILTER_FIELDS = [["make","Марка"],["model","Модель"],["fuel_type","Топливо"],["transmission","Коробка передач"],["body_type","Кузов"]] as const;
 export const RANGE_FIELDS = [
   ["price_min","Цена от, €",0,1_000_000_000],["price_max","Цена до, €",0,1_000_000_000],
-  ["year_min","Год выпуска от",1886,2100],["year_max","Год выпуска до",1886,2100],
   ["registration_year_min","Первая регистрация от",1886,2100],["registration_year_max","Первая регистрация до",1886,2100],
   ["mileage_min","Пробег от, км",0,10_000_000],["mileage_max","Пробег до, км",0,10_000_000],
   ["power_min","Мощность от, л. с.",0,5000],["power_max","Мощность до, л. с.",0,5000],
@@ -33,11 +31,11 @@ export function parseMobileDeFilters(search: FilterSearch) {
     if(!valid||!Number.isFinite(Number(value))||Number(value)<min||Number(value)>max){errors[key]=`${label}: укажите ${key.startsWith("price_")?"число":"целое число"} от ${min} до ${max}`;continue;}
     filters[key]=String(Number(value));
   }
-  for(const prefix of ["price","year","registration_year","mileage","power","engine_cc"] as const){
+  for(const prefix of ["price","registration_year","mileage","power","engine_cc"] as const){
     const from=`${prefix}_min` as keyof MobileDeFilters,to=`${prefix}_max` as keyof MobileDeFilters;
     if(filters[from]!==undefined&&filters[to]!==undefined&&Number(filters[from])>Number(filters[to])){errors[from]="Значение «от» не должно превышать «до»";errors[to]="Значение «до» не должно быть меньше «от»";}
   }
-  const sort=read("sort");if(sort){if(SORT_OPTIONS.some(([value])=>value===sort))filters.sort=sort;else errors.sort="Выберите доступную сортировку";}
+  const sort=read("sort");if(sort){if(sort==="year_asc"||sort==="year_desc")filters.sort="updated_desc";else if(SORT_OPTIONS.some(([value])=>value===sort))filters.sort=sort;else errors.sort="Выберите доступную сортировку";}
   const cursor=read("cursor");if(cursor){if(cursor.length>8192)errors.cursor="Некорректная ссылка на страницу";else filters.cursor=cursor;}
   return {filters,errors,valid:Object.keys(errors).length===0};
 }

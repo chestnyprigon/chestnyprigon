@@ -53,15 +53,6 @@ function useDictionary(make?: string, enabled = true) {
   };
 }
 
-function yearOptions(minimum: unknown, maximum: unknown) {
-  if (typeof minimum !== "number" || typeof maximum !== "number") return [];
-  const min = minimum;
-  const max = maximum;
-  const start = Math.max(1886, Math.min(min, max));
-  const end = Math.max(min, max);
-  return Array.from({ length: Math.min(80, end - start + 1) }, (_, index) => end - index);
-}
-
 export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSearch; initialErrors: FilterErrors }) {
   const router = useRouter();
   const [values, setValues] = useState<FilterValues>(() => Object.fromEntries(Object.entries(params).filter(([, value]) => typeof value === "string")));
@@ -74,12 +65,12 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   const makeDictionary = useDictionary(values.make?.trim(), Boolean(values.make?.trim()));
   const facets = globalDictionary.data;
   const scoped = makeDictionary.data;
-  const productionYears = useMemo(() => yearOptions(facets.ranges?.year_min, facets.ranges?.year_max), [facets.ranges?.year_min, facets.ranges?.year_max]);
-  const registrationYears = useMemo(() => yearOptions(facets.ranges?.registration_year_min, facets.ranges?.registration_year_max), [facets.ranges?.registration_year_min, facets.ranges?.registration_year_max]);
-  const yearGroups = [
-    { keys: ["year_min", "year_max"] as const, labels: ["Год выпуска от", "Год выпуска до"] as const, years: productionYears },
-    { keys: ["registration_year_min", "registration_year_max"] as const, labels: ["Регистрация от", "Регистрация до"] as const, years: registrationYears },
-  ];
+  const registrationYears = useMemo(() => {
+    const min = facets.ranges?.registration_year_min;
+    const max = facets.ranges?.registration_year_max;
+    if (typeof min !== "number" || typeof max !== "number") return [];
+    return Array.from({ length: Math.min(80, max - min + 1) }, (_, index) => max - index);
+  }, [facets.ranges?.registration_year_min, facets.ranges?.registration_year_max]);
 
   const makeOptions = useMemo(() => [...new Set(facets.makes || [])].sort((a, b) => a.localeCompare(b, "ru")), [facets.makes]);
   const visibleMakes = useMemo(() => makeOptions.filter((make) => make.toLocaleLowerCase("ru").includes(makeSearch.trim().toLocaleLowerCase("ru"))), [makeOptions, makeSearch]);
@@ -177,21 +168,19 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
     </div>
 
     <div className={styles.selectPairs}>
-      {yearGroups.map((group) => <div className={styles.rangePair} key={group.keys[0]}>{group.keys.map((key, index) => {
-        const options = group.years;
+      <div className={styles.rangePair}>{([["registration_year_min", "Регистрация от"], ["registration_year_max", "Регистрация до"]] as const).map(([key, label]) => {
+        const options = registrationYears;
         const selected = values[key];
-        return <label className={styles.field} key={key}><span>{group.labels[index]}</span><select value={selected || ""} onChange={(event) => update(key, event.target.value)}>
-          <option value="">{options.length ? "Любой" : key.startsWith("registration_") ? "Нет данных о регистрации" : "Нет данных о годе"}</option>
+        return <label className={styles.field} key={key}><span>{label}</span><select value={selected || ""} onChange={(event) => update(key, event.target.value)}>
+          <option value="">{options.length ? "Любой" : "Нет данных о регистрации"}</option>
           {selected && !options.includes(Number(selected)) && <option value={selected}>{selected}</option>}
           {options.map((year) => <option value={year} key={year}>{year}</option>)}
         </select>{errors[key] && <small role="alert">{errors[key]}</small>}</label>;
-      })}</div>)}
+      })}</div>
       <div className={styles.rangePair}>{([["engine_cc_min", "Объём от, л"], ["engine_cc_max", "Объём до, л"]] as const).map(([key, label]) => <label className={styles.field} key={key}>
         <span>{label}</span><select value={values[key] || ""} onChange={(event) => update(key, event.target.value)}><option value="">Любой</option>{values[key] && !engineSizeOptions.includes(Number(values[key])) && <option value={values[key]}>{(Number(values[key]) / 1000).toFixed(1)} л</option>}{engineSizeOptions.map((cc) => <option value={cc} key={cc}>{(cc / 1000).toFixed(1)} л</option>)}</select>{errors[key] && <small role="alert">{errors[key]}</small>}
       </label>)}</div>
     </div>
-    {!productionYears.length && <p className={styles.filterFootnote} role="status">Год выпуска пока не заполнен в объявлениях. Для отбора используйте отдельный фильтр первой регистрации.</p>}
-
     <div className={styles.rangeGroups}>
       {rangeGroups.map((group) => <div className={styles.rangePair} key={group[0][0]}>{group.map(([key, label]) => <label className={styles.field} key={key}>
         <span>{label}</span>
@@ -205,6 +194,6 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
     <button className={styles.submit} type="submit" disabled={pending || Object.keys(errors).length > 0}>
       {pending ? "Загружаем…" : countPending ? "Считаем автомобили…" : matchingCount === null ? "Показать автомобили" : `Показать ${new Intl.NumberFormat("ru-RU").format(matchingCount)} авто`}<ArrowRight size={18} />
     </button>
-    <p className={styles.filterFootnote}>Год выпуска и первая регистрация — разные фильтры. Цена указана в евро без доставки и таможни.</p>
+    <p className={styles.filterFootnote}>Используйте первую регистрацию из объявления. Цена указана в евро без доставки и таможни.</p>
   </form>;
 }
