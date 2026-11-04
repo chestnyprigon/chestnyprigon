@@ -53,10 +53,7 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
       <CatalogNavigation />
       <Link href="/catalog/europe" className={styles.backLink}>← Вернуться к объявлениям</Link>
       <div className={styles.detailGrid}>
-        <section>
-          <MobileDeGallery images={gallery.map((image) => image.url)} title={title} />
-          {options.length > 0 && <div className={styles.detailOptions}><strong>Комплектация и опции</strong><ul>{options.map((option, index) => <li key={`${index}-${option}`}>{option}</li>)}</ul></div>}
-        </section>
+        <MobileDeGallery images={gallery.map((image) => image.url)} title={title} />
         <aside className={styles.detailCard}>
           <span className={styles.eyebrow}>АВТОМОБИЛЬ ИЗ ЕВРОПЫ</span>
           <h1>{title}</h1>
@@ -68,6 +65,7 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
           <Link className={styles.sourceButton} href="/#contacts">Рассчитать доставку и получить консультацию</Link>
           <a className={styles.secondaryButton} href={sourceUrl(listing.source_id)} target="_blank" rel="noreferrer">Открыть объявление на mobile.de ↗</a>
         </aside>
+        {options.length > 0 && <section className={styles.detailOptions}><strong>Комплектация и опции</strong><ul>{options.map((option, index) => <li key={`${index}-${option}`}>{option}</li>)}</ul></section>}
       </div>
     </main>
   );

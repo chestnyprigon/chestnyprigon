@@ -19,7 +19,7 @@ const known = (value: string | null | undefined) => value && !/^(не указа
 export function mobileDeSpecifications(listing: MobileDeListing): Array<[string, string]> {
   const parsed = new Map<string, string>();
   const aliases: Record<string, string> = {
-    "год выпуска": "Год выпуска", "первая регистрация": "Первая регистрация", "пробег": "Пробег",
+    "первая регистрация": "Первая регистрация", "пробег": "Пробег",
     "объём двигателя": "Объём двигателя", "объем двигателя": "Объём двигателя", "мощность": "Мощность",
     "топливо": "Топливо", "тип топлива": "Топливо", "коробка передач": "Коробка передач", "привод": "Привод",
     "кузов": "Кузов", "тип кузова": "Кузов", "цвет": "Цвет", "количество дверей": "Количество дверей",
@@ -46,7 +46,6 @@ export function mobileDeSpecifications(listing: MobileDeListing): Array<[string,
   }
   const registration = listing.first_registration?.value;
   const structured: Array<[string, string | null | undefined]> = [
-    ["Год выпуска", listing.production_year ? String(listing.production_year) : null],
     ["Первая регистрация", registration?.match(/^\d{4}-\d{2}$/) ? registration.split("-").reverse().join(".") : registration],
     ["Пробег", listing.mileage_km == null ? null : `${number(listing.mileage_km)} км`],
     ["Объём двигателя", listing.engine_cc == null ? null : `${number(listing.engine_cc)} см³`],
