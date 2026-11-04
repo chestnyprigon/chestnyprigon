@@ -4,6 +4,7 @@ import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SORT_OPTIONS, mobileDeFilterParams, parseMobileDeFilters, type FilterErrors, type FilterSearch, type FilterValues } from "@/lib/mobile-de/filters";
+import { mobileDeModelKey, normalizeMobileDeModels } from "@/lib/mobile-de/models";
 import type { MobileDeFacets } from "@/lib/mobile-de/types";
 import styles from "./MobileDeCatalog.module.css";
 
@@ -77,6 +78,8 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
 
   const makeOptions = useMemo(() => [...new Set(facets.makes || [])].sort((a, b) => a.localeCompare(b, "ru")), [facets.makes]);
   const visibleMakes = useMemo(() => makeOptions.filter((make) => make.toLocaleLowerCase("ru").includes(makeSearch.trim().toLocaleLowerCase("ru"))), [makeOptions, makeSearch]);
+  const modelOptions = useMemo(() => normalizeMobileDeModels(scoped.models || []), [scoped.models]);
+  const selectedModel = modelOptions.find((model) => mobileDeModelKey(model) === mobileDeModelKey(values.model || ""));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -107,9 +110,11 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   }
 
   function apply() {
-    const parsed = parseMobileDeFilters({ ...values, cursor: undefined });
+    const normalizedValues = selectedModel ? { ...values, model: selectedModel } : values;
+    const parsed = parseMobileDeFilters({ ...normalizedValues, cursor: undefined });
     setErrors(parsed.errors);
     if (!parsed.valid) return;
+    if (normalizedValues !== values) setValues(normalizedValues);
     const query = mobileDeFilterParams(parsed.filters);
     startTransition(() => router.push(`/catalog/europe${query.size ? `?${query.toString()}` : ""}`, { scroll: false }));
   }
@@ -144,10 +149,10 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
 
     <label className={styles.field}>
       <span>Модель</span>
-      <select name="model" value={values.model || ""} onChange={(event) => update("model", event.target.value)} disabled={!values.make || makeDictionary.status !== "ready"} aria-invalid={Boolean(errors.model)}>
+      <select name="model" value={selectedModel || values.model || ""} onChange={(event) => update("model", event.target.value)} disabled={!values.make || makeDictionary.status !== "ready"} aria-invalid={Boolean(errors.model)}>
         <option value="">{!values.make ? "Сначала выберите марку" : makeDictionary.status === "loading" ? "Загружаем модели…" : "Все модели"}</option>
-        {values.model && !valueOptions("model").includes(values.model) && <option value={values.model}>{values.model}</option>}
-        {valueOptions("model").map((model) => <option value={model} key={model}>{model}</option>)}
+        {values.model && !selectedModel && !modelOptions.includes(values.model) && <option value={values.model}>{values.model}</option>}
+        {modelOptions.map((model) => <option value={model} key={mobileDeModelKey(model)}>{model}</option>)}
       </select>
       {errors.model && <small role="alert">{errors.model}</small>}
     </label>

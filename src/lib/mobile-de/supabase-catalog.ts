@@ -33,6 +33,10 @@ function offsetFromCursor(cursor: string | undefined, query: string) {
   }
 }
 
+function literalIlikePattern(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/([%_])/g, "\\$1");
+}
+
 function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string, unknown>>): MobileDeListing {
   const options = Array.isArray(row.options) ? row.options.flatMap((item) => mobileDeText(item) || []) : [];
   const images = gallery?.map((item) => ({
@@ -75,7 +79,7 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   let query = client.from("mobile_de_catalog_public_listings").select(listingColumns, { count: "exact" });
 
   if (filters.make) query = query.eq("make", filters.make);
-  if (filters.model) query = query.eq("model", filters.model);
+  if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
@@ -117,7 +121,7 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
   const client = createSupabaseEuropePublicServerClient();
   let query = client.from("mobile_de_catalog_public_listings").select("master_id", { count: "exact", head: true });
   if (filters.make) query = query.eq("make", filters.make);
-  if (filters.model) query = query.eq("model", filters.model);
+  if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
