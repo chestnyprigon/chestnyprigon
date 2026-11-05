@@ -79,7 +79,7 @@ async function EuropeIntro() {
       <Link href="/"><ArrowLeft size={16} />На главную</Link>
       <p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p>
       <h1>Автомобили<br />из Европы</h1>
-      <p>Объявления Mobile.de с фотографиями и характеристиками. Цена указана продавцом в евро.</p>
+      <p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p>
     </div>
     <div className={styles.europeIntroStat}>
       <strong>{typeof total === "number" ? `${new Intl.NumberFormat("ru-RU").format(total)} авто` : "Европа"}</strong>
@@ -91,7 +91,7 @@ async function EuropeIntro() {
 
 function EuropeIntroFallback() {
   return <section className={styles.europeIntro}>
-    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Объявления Mobile.de с фотографиями и характеристиками. Цена указана продавцом в евро.</p></div>
+    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p></div>
     <div className={styles.europeIntroStat}><strong>Европа</strong><span>каталог автомобилей</span><small>Цены продавца в евро. Доставка и таможня рассчитываются отдельно.</small></div>
   </section>;
 }
