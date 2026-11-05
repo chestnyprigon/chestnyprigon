@@ -16,8 +16,8 @@ export const metadata: Metadata = {
   description: siteDescription,
   ...(isPreview ? { robots: { index: false, follow: false } } : {}),
   icons: {
-    icon: "/logo.jpeg",
-    apple: "/logo.jpeg",
+    icon: [{ url: "/assets/brand-icon.png", type: "image/png", sizes: "1254x1254" }],
+    apple: [{ url: "/assets/brand-icon.png", type: "image/png", sizes: "1254x1254" }],
   },
   openGraph: {
     title: siteTitle,
@@ -28,18 +28,18 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/logo.jpeg",
-        width: 1280,
-        height: 1280,
+        url: "/assets/logo-social.png",
+        width: 1733,
+        height: 907,
         alt: "Логотип Честный пригон",
       },
     ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: siteTitle,
     description: siteDescription,
-    images: ["/logo.jpeg"],
+    images: ["/assets/logo-social.png"],
   },
 };
 
