@@ -338,3 +338,30 @@
   .cardFooter { align-items: flex-start; flex-direction: column; }
   .cardFooter strong { font-size: 17px; }
 }
+
+@media (min-width: 1001px) {
+  .europeIntroStat {
+    align-items: center;
+    background: rgba(6,17,27,.32);
+    border-color: rgba(160,184,204,.18);
+    border-radius: 999px;
+    bottom: 22px;
+    display: inline-flex;
+    flex-direction: row;
+    gap: 9px;
+    justify-self: auto;
+    left: max(32px,calc((100vw - 1240px)/2));
+    max-width: calc(50% - 32px);
+    padding: 8px 12px;
+    position: absolute;
+    width: auto;
+  }
+  .europeIntroStat strong { font-size: 17px; line-height: 1; white-space: nowrap; }
+  .europeIntroStat span { font-size: 10px; line-height: 1.2; margin: 0; white-space: nowrap; }
+  .europeIntroStat small { display: none; }
+}
+@media (min-width: 641px) and (max-width: 1000px) {
+  .europeIntroStat { max-width: 220px; padding: 14px; }
+  .europeIntroStat strong { font-size: 21px; }
+  .europeIntroStat small { display: none; }
+}
