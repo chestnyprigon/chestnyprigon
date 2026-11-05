@@ -392,8 +392,7 @@ a { color: inherit; text-decoration: none; }
 .home-showcase { margin:0 auto; max-width:1320px; padding:48px 28px 26px; }
 .home-showcase + .home-showcase { border-top:1px solid rgba(134,158,176,.12); margin-top:20px; padding-top:58px; }
 .home-showcase-heading { align-items:center; display:flex; gap:28px; justify-content:space-between; margin-bottom:24px; }
-.home-showcase-heading .premium-kicker { margin-bottom:8px; }
-.home-showcase-heading p:not(.premium-kicker) { color:#91a0ab; font-size:14px; line-height:1.55; margin:0; max-width:620px; }
+.home-showcase-heading .premium-kicker { margin-bottom:0; }
 .home-showcase-all { align-items:center; color:#f0f4f6; display:flex; flex:0 0 auto; font-size:12px; font-weight:800; gap:12px; padding:12px 0; }
 .home-showcase-all span,.home-showcase-card footer>a span { color:#ef443f; font-size:18px; }
 .home-showcase-grid { display:grid; gap:14px; grid-template-columns:repeat(4,minmax(0,1fr)); }

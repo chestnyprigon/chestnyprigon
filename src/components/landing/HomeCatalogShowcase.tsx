@@ -26,7 +26,6 @@ type ShowcaseCard = {
 type ShowcaseSectionProps = {
   id: string;
   country: string;
-  description: string;
   href: string;
   action: string;
   cards: ShowcaseCard[];
@@ -74,10 +73,10 @@ function europeCard(listing: MobileDeListing): ShowcaseCard {
   };
 }
 
-function ShowcaseSection({ id, country, description, href, action, cards }: ShowcaseSectionProps) {
+function ShowcaseSection({ id, country, href, action, cards }: ShowcaseSectionProps) {
   return <section className="home-showcase" id={id}>
     <div className="home-showcase-heading">
-      <div><p className="premium-kicker"><span />{country}</p><p>{description}</p></div>
+      <div><p className="premium-kicker"><span />{country}</p></div>
       <Link className="home-showcase-all" href={href}>{action}<span aria-hidden="true">→</span></Link>
     </div>
     {cards.length ? <div className="home-showcase-grid">{cards.map((card) => <article className="home-showcase-card" key={card.id}>
@@ -97,7 +96,6 @@ function ShowcaseSkeleton({ country }: { country: string }) {
 
 async function KoreaShowcase() {
   let cards: ShowcaseCard[] = [];
-  let description = "Подборка актуальных объявлений Encar с фотографиями, историей и ориентировочной стоимостью.";
   try {
     const catalog = await loadCatalogPage({
       homepageMix: true,
@@ -114,23 +112,20 @@ async function KoreaShowcase() {
     cards = catalog.cars.map(koreaCard);
   } catch (error) {
     console.error("[home-showcase] Korea catalogue unavailable", error instanceof Error ? error.message : "Unknown error");
-    description = "Подборка объявлений Encar.";
   }
-  return <ShowcaseSection id="catalog-korea" country="Каталог Южной Кореи" description={description} href="/catalog" action="Все автомобили из Кореи" cards={cards} />;
+  return <ShowcaseSection id="catalog-korea" country="Каталог Южной Кореи" href="/catalog" action="Все автомобили из Кореи" cards={cards} />;
 }
 
 async function EuropeShowcase() {
   let cards: ShowcaseCard[] = [];
-  let description = "Объявления Mobile.de с фотографиями, характеристиками и ценой продавца в евро.";
   try {
     const listings = await getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" });
     cards = listings.data.map(europeCard);
   } catch (error) {
     const reason = error instanceof MobileDeApiError ? `status ${error.status ?? "network"}` : "catalog request failed";
     console.error("[home-showcase] Europe catalogue unavailable", reason);
-    description = "Объявления Mobile.de с фотографиями и характеристиками.";
   }
-  return <ShowcaseSection id="catalog-europe" country="Каталог Европы" description={description} href="/catalog/europe" action="Все автомобили из Европы" cards={cards} />;
+  return <ShowcaseSection id="catalog-europe" country="Каталог Европы" href="/catalog/europe" action="Все автомобили из Европы" cards={cards} />;
 }
 
 export function HomeCatalogShowcase() {
