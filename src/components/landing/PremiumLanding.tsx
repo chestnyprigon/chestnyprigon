@@ -27,24 +27,8 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import type { CatalogCar } from "@/data/cars";
-import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
-import { CatalogDirections } from "@/components/mobile-de/CatalogNavigation";
-import { HomeCatalog } from "@/components/catalog/HomeCatalog";
 import { currentMarketingParams, trackMetrikaGoal } from "@/lib/analytics/metrika";
-
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const distance = new Intl.NumberFormat("ru-RU");
-
-function historyBadge(car: CatalogCar) {
-  if (car.accidents?.accidentCount) return { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" };
-  if (car.accidents?.available) return { label: "Без ДТП", tone: "is-clear" };
-  return { label: "Нет данных Encar", tone: "is-neutral" };
-}
-
-function catalogPrice(car: CatalogCar) {
-  return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
-}
+import type { ReactNode } from "react";
 
 const processSteps = [
   { title: "Консультация", short: "Уточняем запрос и подбираем направление", icon: MessageCircle, text: "Фиксируем марку, модель, бюджет, сроки и ключевые пожелания. Показываем понятный маршрут сделки до старта работы.", points: ["Первичная подборка вариантов", "Понятные сроки и следующие шаги", "Связь удобным для вас способом"] },
@@ -76,7 +60,7 @@ const faqs = [
   ["Вы помогаете с постановкой на учёт?", "Подскажем порядок действий и необходимый комплект документов после выдачи автомобиля."],
 ];
 
-export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
+export function PremiumLanding({ catalogShowcase }: { catalogShowcase: ReactNode }) {
   const [processOpen, setProcessOpen] = useState(0);
   const [faqOpen, setFaqOpen] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -130,8 +114,7 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
       <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="neutral-route-icon"><Globe2 size={21} /></span><b>Из-за рубежа → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
-    <section className="catalog-direction-home" id="catalog-directions"><h2>Выберите направление</h2><p>Автомобили из Кореи и Европы</p><CatalogDirections /></section>
-    <HomeCatalog key={JSON.stringify(initialSearch)} catalog={catalog} initialSearch={initialSearch} />
+    {catalogShowcase}
 
     <section className="premium-process premium-section" id="services"><div className="premium-section-copy"><p className="premium-kicker"><span />Как мы работаем</p><h2>Маршрут сделки<br />от заявки до ключей</h2><p>Вы сразу видите последовательность работы, документы и действия на каждом этапе.</p></div><div className="process-list">{processSteps.map((step, index) => { const Icon = step.icon; const open = processOpen === index; return <article className={open ? "process-item is-open" : "process-item"} key={step.title}><button type="button" onClick={() => setProcessOpen(open ? -1 : index)}><span className="process-number">{String(index + 1).padStart(2, "0")}</span><Icon size={18} /><b>{step.title}</b><em>{step.short}</em><span className="process-toggle">{open ? "×" : "+"}</span></button>{open && <div className="process-details"><p>{step.text}</p><ul>{step.points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul></div>}</article>; })}</div></section>
 

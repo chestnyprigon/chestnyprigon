@@ -17,6 +17,8 @@ type VehicleReportRow = Database["public"]["Tables"]["vehicle_reports"]["Row"];
 
 export type CatalogSearch = {
   homepageMix?: boolean;
+  includeCount?: boolean;
+  includeBrands?: boolean;
   page?: number;
   perPage?: number;
   query?: string;
@@ -402,6 +404,8 @@ function mapVehicleRows(
 function normalizedSearch(search: CatalogSearch) {
   return {
     homepageMix: search.homepageMix ?? false,
+    includeCount: search.includeCount ?? true,
+    includeBrands: search.includeBrands ?? true,
     page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
     query: search.query?.trim() ?? "", brand: search.brand ?? "", model: search.model ?? "", generation: search.generation ?? "", trim: search.trim ?? "", fuel: search.fuel ?? "",
     yearFrom: search.yearFrom ?? catalogYearFrom(), yearTo: search.yearTo ?? catalogYearTo(), minPrice: search.minPrice ?? 0,
@@ -469,13 +473,13 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   const client = createSupabasePublicServerClient();
   // Begin independent reads together. In particular, pricing must never block
   // the catalogue query while it waits for the daily currency cache.
-  const pricingContextPromise = loadPricingContext();
-  const publicBrandsPromise = loadCatalogFilterOptions();
   const input = normalizedSearch(search);
+  const pricingContextPromise = loadPricingContext();
+  const publicBrandsPromise = input.includeBrands ? loadCatalogFilterOptions() : Promise.resolve({ brands: [] as string[] });
   const from = (input.page - 1) * input.perPage;
   let query = client
     .from("vehicles")
-    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", { count: "exact" })
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", input.includeCount ? { count: "exact" } : {})
     .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
     .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
     .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
