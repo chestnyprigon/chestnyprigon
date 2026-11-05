@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SORT_OPTIONS, mobileDeFilterParams, parseMobileDeFilters, type FilterErrors, type FilterSearch, type FilterValues } from "@/lib/mobile-de/filters";
@@ -61,7 +61,6 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   const router = useRouter();
   const [values, setValues] = useState<FilterValues>(() => Object.fromEntries(Object.entries(params).filter(([, value]) => typeof value === "string")));
   const [errors, setErrors] = useState(initialErrors);
-  const [makeSearch, setMakeSearch] = useState("");
   const [matchingCount, setMatchingCount] = useState<number | null>(null);
   const [countPending, setCountPending] = useState(() => parseMobileDeFilters(params).valid);
   const [pending, startTransition] = useTransition();
@@ -77,7 +76,6 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   }, [facets.ranges?.registration_year_min, facets.ranges?.registration_year_max]);
 
   const makeOptions = useMemo(() => [...new Set(facets.makes || [])].sort((a, b) => a.localeCompare(b, "ru")), [facets.makes]);
-  const visibleMakes = useMemo(() => makeOptions.filter((make) => make.toLocaleLowerCase("ru").includes(makeSearch.trim().toLocaleLowerCase("ru"))), [makeOptions, makeSearch]);
   const modelOptions = useMemo(() => normalizeMobileDeModels(scoped.models || []), [scoped.models]);
   const selectedModel = modelOptions.find((model) => mobileDeModelKey(model) === mobileDeModelKey(values.model || ""));
 
@@ -120,58 +118,38 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   }
 
   const valueOptions = (key: keyof typeof dictionaryKeys) => {
-    const dictionary = key === "make" ? facets : key === "model" ? scoped : (scoped[dictionaryKeys[key]] !== undefined ? scoped : facets);
+    if (key === "make") return makeOptions;
+    if (key === "model") return modelOptions;
+    const dictionary = scoped[dictionaryKeys[key]] !== undefined ? scoped : facets;
     const values = dictionary[dictionaryKeys[key]] || [];
     return [...new Set(values)].sort((a, b) => a.localeCompare(b, "ru"));
   };
 
+  const dictionaryState = (key: keyof typeof dictionaryKeys) => key === "make" ? globalDictionary.status : key === "model" || (values.make && scoped[dictionaryKeys[key]] === undefined) ? makeDictionary.status : globalDictionary.status;
+
   return <form className={styles.filters} onSubmit={(event) => { event.preventDefault(); apply(); }}>
     <div className={styles.filterHeading}>
       <span><SlidersHorizontal size={17} /> Фильтры</span>
-      <button type="button" onClick={() => { setValues({}); setErrors({}); setMakeSearch(""); setMatchingCount(null); setCountPending(true); startTransition(() => router.push("/catalog/europe", { scroll: false })); }}>Сбросить</button>
+      <button type="button" onClick={() => { setValues({}); setErrors({}); setMatchingCount(null); setCountPending(true); startTransition(() => router.push("/catalog/europe", { scroll: false })); }}>Сбросить</button>
     </div>
     <p className={styles.filterFootnote}>В каталоге: {typeof facets.ranges?.count === "number" ? new Intl.NumberFormat("ru-RU").format(facets.ranges.count) : "—"} автомобилей</p>
 
-    <label className={`${styles.field} ${styles.makeSearch}`}>
-      <span>Поиск марки</span>
-      <span className={styles.searchInput}><Search size={17} /><input value={makeSearch} onChange={(event) => { const value = event.target.value; setMakeSearch(value); const exact = makeOptions.find((make) => make.toLocaleLowerCase("ru") === value.trim().toLocaleLowerCase("ru")); if (exact) update("make", exact); }} placeholder="Марка автомобиля" autoComplete="off" /></span>
-    </label>
-    <fieldset className={styles.pillGroup}>
-      <legend>Марка</legend>
-      <div className={styles.pills}>
-        <button type="button" className={!values.make ? styles.selectedPill : ""} aria-pressed={!values.make} onClick={() => update("make", "")}>Все</button>
-        {visibleMakes.map((make) => <button type="button" key={make} className={values.make === make ? styles.selectedPill : ""} aria-pressed={values.make === make} onClick={() => update("make", make)}>{make}</button>)}
-        {makeSearch.trim() && !makeOptions.some((make) => make.toLocaleLowerCase("ru") === makeSearch.trim().toLocaleLowerCase("ru")) && <button type="button" onClick={() => update("make", makeSearch.trim())}>Использовать «{makeSearch.trim()}»</button>}
-        {values.make && !makeOptions.includes(values.make) && <button type="button" className={styles.selectedPill} onClick={() => update("make", values.make!)}>{values.make}</button>}
-      </div>
-      {errors.make && <small role="alert">{errors.make}</small>}
-    </fieldset>
-
-    <label className={styles.field}>
-      <span>Модель</span>
-      <select name="model" value={selectedModel || values.model || ""} onChange={(event) => update("model", event.target.value)} disabled={!values.make || makeDictionary.status !== "ready"} aria-invalid={Boolean(errors.model)}>
-        <option value="">{!values.make ? "Сначала выберите марку" : makeDictionary.status === "loading" ? "Загружаем модели…" : "Все модели"}</option>
-        {values.model && !selectedModel && !modelOptions.includes(values.model) && <option value={values.model}>{values.model}</option>}
-        {modelOptions.map((model) => <option value={model} key={mobileDeModelKey(model)}>{model}</option>)}
-      </select>
-      {errors.model && <small role="alert">{errors.model}</small>}
-    </label>
-
     <div className={styles.dictionaryGrid}>
-      {filterGroups.filter(([key]) => key !== "make" && key !== "model").map(([key, label]) => {
+      {filterGroups.map(([key, label]) => {
         const options = valueOptions(key);
-        const loading = key === "model" ? makeDictionary.status === "loading" : globalDictionary.status === "loading";
-        const unavailable = key === "model" ? makeDictionary.status === "error" : globalDictionary.status === "error";
-        return <fieldset className={styles.pillGroup} key={key}>
-          <legend>{label}</legend>
-          <div className={styles.pills}>
-            <button type="button" className={!values[key] ? styles.selectedPill : ""} aria-pressed={!values[key]} onClick={() => update(key, "")} disabled={key === "model" && !values.make}>{key === "model" && !values.make ? "Сначала марка" : "Любая"}</button>
-            {options.map((option) => <button type="button" key={option} className={values[key] === option ? styles.selectedPill : ""} aria-pressed={values[key] === option} onClick={() => update(key, option)} disabled={key === "model" && !values.make}>{option}</button>)}
-          </div>
-          {loading && <small role="status">Загружаем варианты…</small>}
-          {unavailable && <small role="status">Список временно недоступен. <button type="button" onClick={key === "model" ? makeDictionary.retry : globalDictionary.retry}>Повторить</button></small>}
+        const status = dictionaryState(key);
+        const disabled = (key === "model" && !values.make) || status === "loading" || status === "error";
+        const selectedValue = key === "model" ? selectedModel || values.model || "" : values[key] || "";
+        return <label className={styles.field} key={key}>
+          <span>{label}</span>
+          <select name={key} value={selectedValue} onChange={(event) => update(key, event.target.value)} disabled={disabled} aria-invalid={Boolean(errors[key])}>
+            <option value="">{key === "make" ? "Все марки" : key === "model" ? !values.make ? "Сначала выберите марку" : status === "loading" ? "Загружаем модели…" : "Все модели" : status === "loading" ? "Загружаем варианты…" : "Любое"}</option>
+            {selectedValue && !options.includes(selectedValue) && <option value={selectedValue}>{selectedValue}</option>}
+            {options.map((option) => <option value={option} key={key === "model" ? mobileDeModelKey(option) : option}>{option}</option>)}
+          </select>
+          {status === "error" && <small role="status">Список временно недоступен. <button type="button" onClick={key === "model" ? makeDictionary.retry : globalDictionary.retry}>Повторить</button></small>}
           {errors[key] && <small role="alert">{errors[key]}</small>}
-        </fieldset>;
+        </label>;
       })}
     </div>
 
