@@ -72,14 +72,9 @@ export function MobileDeUnavailable({ error }: { error: MobileDeApiError }) {
 }
 
 async function EuropeIntro() {
-  const [facetsResult, imageResult] = await Promise.allSettled([
-    getMobileDeFacets(),
-    getMobileDeListings({ limit: "1", sort: "updated_desc" }),
-  ]);
+  const [facetsResult] = await Promise.allSettled([getMobileDeFacets()]);
   const total = facetsResult.status === "fulfilled" ? facetsResult.value.ranges?.count : undefined;
-  const backgroundImage = imageResult.status === "fulfilled" ? imageResult.value.data[0]?.primary_image?.url : null;
   return <section className={styles.europeIntro}>
-    {backgroundImage && <div className={styles.europeIntroBackdrop}><img src={backgroundImage} alt="" aria-hidden="true" /></div>}
     <div className={styles.europeIntroCopy}>
       <Link href="/"><ArrowLeft size={16} />На главную</Link>
       <p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p>

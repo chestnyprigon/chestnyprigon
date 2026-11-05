@@ -165,10 +165,8 @@
 .field select:disabled { opacity: .6; cursor: wait; }
 .filterFootnote button { color: inherit; text-decoration: underline; cursor: pointer; }
 .submit:disabled { opacity: .65; cursor: wait; }
-.page > .europeIntro { background: #030a11; border-bottom: 1px solid #203747; display: grid; gap: 48px; grid-template-columns: minmax(0,1fr) minmax(260px,340px); min-height: 390px; max-width: none; margin-left: calc(50% - 50vw); margin-right: 0; overflow: hidden; padding: 50px max(24px,calc((100vw - 1240px)/2)); position: relative; width: 100vw; }
+.page > .europeIntro { background-color: #030a11; background-image: url("/assets/hero/brand-import-v1.webp"); background-position: center 56%; background-size: cover; border-bottom: 1px solid #203747; display: grid; gap: 48px; grid-template-columns: minmax(0,1fr) minmax(260px,340px); min-height: 390px; max-width: none; margin-left: calc(50% - 50vw); margin-right: 0; overflow: hidden; padding: 50px max(24px,calc((100vw - 1240px)/2)); position: relative; width: 100vw; }
 .europeIntro::after { background: linear-gradient(90deg,rgba(3,10,16,.96) 0%,rgba(3,10,16,.76) 55%,rgba(3,10,16,.48) 100%),linear-gradient(0deg,rgba(3,10,16,.55),transparent 65%); content: ""; inset: 0; pointer-events: none; position: absolute; }
-.europeIntroBackdrop { inset: 0; opacity: .55; position: absolute; }
-.europeIntroBackdrop img { height: 100%; object-fit: cover; object-position: center 55%; width: 100%; }
 .europeIntroCopy,.europeIntroStat { position: relative; z-index: 1; }
 .europeIntroCopy > a { align-items: center; color: #91a0ab; display: inline-flex; font-size: 13px; gap: 8px; margin-bottom: 34px; text-decoration: none; }
 .europeIntroKicker { align-items: center; color: #ef4b43; display: flex; font-size: 14px; font-weight: 800; gap: 14px; letter-spacing: .16em; margin: 0 0 24px; text-transform: uppercase; }
@@ -219,7 +217,7 @@
   .dictionaryGrid { grid-template-columns: minmax(0,1fr); }
   .rangePair { gap: 8px; }
   .rangePair .field > span { min-height: 26px; line-height: 1.25; }
-  .page > .europeIntro { gap: 25px; padding: 36px 24px 30px; }
+  .page > .europeIntro { background-position: 67% center; gap: 25px; padding: 36px 24px 30px; }
   .europeIntroCopy > a { font-size: 14px; margin-bottom: 30px; }
   .europeIntroKicker { font-size: 11px; gap: 10px; letter-spacing: .13em; margin-bottom: 19px; }
   .europeIntroKicker > span { width: 32px; }
