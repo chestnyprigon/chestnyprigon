@@ -26,7 +26,6 @@ type ShowcaseCard = {
 type ShowcaseSectionProps = {
   id: string;
   country: string;
-  title: string;
   description: string;
   href: string;
   action: string;
@@ -75,10 +74,10 @@ function europeCard(listing: MobileDeListing): ShowcaseCard {
   };
 }
 
-function ShowcaseSection({ id, country, title, description, href, action, cards }: ShowcaseSectionProps) {
+function ShowcaseSection({ id, country, description, href, action, cards }: ShowcaseSectionProps) {
   return <section className="home-showcase" id={id}>
     <div className="home-showcase-heading">
-      <div><p className="premium-kicker"><span />{country}</p><h2>{title}</h2><p>{description}</p></div>
+      <div><p className="premium-kicker"><span />{country}</p><p>{description}</p></div>
       <Link className="home-showcase-all" href={href}>{action}<span aria-hidden="true">→</span></Link>
     </div>
     {cards.length ? <div className="home-showcase-grid">{cards.map((card) => <article className="home-showcase-card" key={card.id}>
@@ -93,7 +92,7 @@ function ShowcaseSection({ id, country, title, description, href, action, cards 
 }
 
 function ShowcaseSkeleton({ country }: { country: string }) {
-  return <section className="home-showcase" aria-label={`Загрузка каталога ${country}`} aria-busy="true"><div className="home-showcase-heading"><div><p className="premium-kicker"><span />{country}</p><h2>Подборка автомобилей</h2></div></div><div className="home-showcase-grid">{Array.from({ length: 4 }, (_, index) => <div className="home-showcase-skeleton" key={index}><div /><span /><span /></div>)}</div></section>;
+  return <section className="home-showcase" aria-label={`Загрузка каталога ${country}`} aria-busy="true"><div className="home-showcase-heading"><div><p className="premium-kicker"><span />{country}</p></div></div><div className="home-showcase-grid">{Array.from({ length: 4 }, (_, index) => <div className="home-showcase-skeleton" key={index}><div /><span /><span /></div>)}</div></section>;
 }
 
 async function KoreaShowcase() {
@@ -117,7 +116,7 @@ async function KoreaShowcase() {
     console.error("[home-showcase] Korea catalogue unavailable", error instanceof Error ? error.message : "Unknown error");
     description = "Подборка объявлений Encar.";
   }
-  return <ShowcaseSection id="catalog-korea" country="Каталог Южной Кореи" title="Автомобили из Кореи" description={description} href="/catalog" action="Все автомобили из Кореи" cards={cards} />;
+  return <ShowcaseSection id="catalog-korea" country="Каталог Южной Кореи" description={description} href="/catalog" action="Все автомобили из Кореи" cards={cards} />;
 }
 
 async function EuropeShowcase() {
@@ -131,7 +130,7 @@ async function EuropeShowcase() {
     console.error("[home-showcase] Europe catalogue unavailable", reason);
     description = "Объявления Mobile.de с фотографиями и характеристиками.";
   }
-  return <ShowcaseSection id="catalog-europe" country="Каталог Европы" title="Автомобили из Европы" description={description} href="/catalog/europe" action="Все автомобили из Европы" cards={cards} />;
+  return <ShowcaseSection id="catalog-europe" country="Каталог Европы" description={description} href="/catalog/europe" action="Все автомобили из Европы" cards={cards} />;
 }
 
 export function HomeCatalogShowcase() {
