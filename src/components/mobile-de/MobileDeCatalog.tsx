@@ -105,7 +105,7 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
       <CatalogNavigation />
       <Suspense fallback={<EuropeIntroFallback />}><EuropeIntro /></Suspense>
 
-      <CatalogDirections active="europe" />
+      <CatalogDirections active="europe" preserveScroll />
       <div className={styles.layout}>
         <MobileDeFilterPanel>
           <MobileDeFilterForm key={JSON.stringify(params)} params={params} initialErrors={errors} />

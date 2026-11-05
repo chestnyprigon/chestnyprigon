@@ -387,18 +387,62 @@ a { color: inherit; text-decoration: none; }
 .catalog-direction-home h2 { font-size:28px; margin:0 0 8px; letter-spacing:-.04em; }
 .catalog-direction-home > p { color:#91a0ab; font-size:14px; margin:0 0 20px; }
 
-/* Keep Korea's count panel compact and translucent on every screen size. */
+/* Shared masthead scale for the Korea and Europe catalogs. */
+.catalog-intro {
+  align-items: center;
+  background-image: linear-gradient(90deg,rgba(3,10,16,.96) 0%,rgba(3,10,16,.78) 42%,rgba(3,10,16,.42) 74%,rgba(3,10,16,.24) 100%),linear-gradient(0deg,rgba(3,10,16,.72),transparent 55%),url("/assets/hero/brand-import-v1.webp");
+  background-position: center 54%;
+  gap: 48px;
+  grid-template-columns: minmax(0,1fr) minmax(260px,300px);
+  min-height: 390px;
+  padding: 50px max(32px,calc((100vw - 1240px)/2));
+}
+.catalog-intro>div:first-child>a { font-size: 10px; margin-bottom: 22px; }
+.catalog-intro .premium-kicker { font-size: 11px; gap: 10px; letter-spacing: .17em; margin-bottom: 18px; }
+.catalog-intro .premium-kicker>span { height: 2px; width: 24px; }
+.catalog-intro h1 { font-size: clamp(40px,4vw,60px); line-height: .94; }
+.catalog-intro>div:first-child>p:last-child { font-size: 13px; line-height: 1.6; margin-top: 20px; max-width: 500px; }
 .catalog-intro-stat {
-  align-self: start;
-  background: rgba(6, 17, 27, .46);
-  border-color: rgba(160, 184, 204, .24);
+  align-self: center;
+  background: rgba(6,17,27,.46);
+  border-color: rgba(160,184,204,.24);
+  border-radius: 12px;
+  justify-self: end;
+  max-width: 300px;
   padding: 18px;
+  width: 100%;
 }
 .catalog-intro-stat strong { font-size: 27px; }
+.catalog-intro-stat span { font-size: 11px; margin-top: 6px; }
 .catalog-intro-stat small { font-size: 8px; margin-top: 12px; padding-top: 10px; }
+@media (max-width: 1000px) {
+  .catalog-intro { gap: 34px; grid-template-columns: minmax(0,1fr) 270px; padding-left: 28px; padding-right: 28px; }
+}
 @media (max-width: 640px) {
-  .catalog-intro-stat { max-width: min(100%, 340px); padding: 12px 14px; }
+  .catalog-intro {
+    align-content: stretch;
+    align-items: stretch;
+    background-position: center 54%;
+    gap: 16px;
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: 1fr auto;
+    min-height: 460px;
+    padding: 36px 24px 28px;
+  }
+  .catalog-intro>div:first-child>a { font-size: 13px; margin-bottom: 30px; }
+  .catalog-intro .premium-kicker { font-size: 11px; gap: 10px; letter-spacing: .13em; margin-bottom: 19px; }
+  .catalog-intro .premium-kicker>span { width: 32px; }
+  .catalog-intro h1 { font-size: clamp(42px,11vw,52px); line-height: .94; }
+  .catalog-intro>div:first-child>p:last-child { font-size: 14px; line-height: 1.6; margin-top: 18px; }
+  .catalog-intro-stat {
+    align-self: end;
+    justify-self: start;
+    max-width: min(100%,250px);
+    padding: 12px 14px;
+    width: 250px;
+  }
   .catalog-intro-stat strong { font-size: 24px; }
-  .catalog-intro-stat span { font-size: 10px; margin-top: 3px; }
+  .catalog-intro-stat span { font-size: 11px; margin-top: 3px; }
   .catalog-intro-stat small { display: none; }
+  .result-car-media { aspect-ratio: 1.25; height: auto; }
 }

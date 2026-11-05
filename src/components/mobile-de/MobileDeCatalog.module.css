@@ -249,3 +249,92 @@
   .europeIntroStat span { font-size: 11px; margin-top: 3px; }
   .europeIntroStat small { display: none; }
 }
+
+/* Match the Korea catalog's shared masthead, spacing, controls and card rhythm. */
+.page > .europeIntro {
+  align-items: center;
+  background-position: center 54%;
+  gap: 48px;
+  grid-template-columns: minmax(0,1fr) minmax(260px,300px);
+  min-height: 390px;
+  padding: 50px max(32px,calc((100vw - 1240px)/2));
+}
+.europeIntro::after {
+  background: linear-gradient(90deg,rgba(3,10,16,.96) 0%,rgba(3,10,16,.78) 42%,rgba(3,10,16,.42) 74%,rgba(3,10,16,.24) 100%),linear-gradient(0deg,rgba(3,10,16,.72),transparent 55%);
+}
+.europeIntroCopy > a { font-size: 10px; margin-bottom: 22px; }
+.europeIntroKicker { font-size: 11px; gap: 10px; letter-spacing: .17em; margin-bottom: 18px; }
+.europeIntroKicker > span { height: 2px; width: 24px; }
+.europeIntroCopy h1 { font-size: clamp(40px,4vw,60px); line-height: .94; }
+.europeIntroCopy > p:last-child { font-size: 13px; line-height: 1.6; margin-top: 20px; max-width: 500px; }
+.europeIntroStat {
+  align-self: center;
+  background: rgba(6,17,27,.46);
+  border-color: rgba(160,184,204,.24);
+  border-radius: 12px;
+  justify-self: end;
+  max-width: 300px;
+  padding: 18px;
+  width: 100%;
+}
+.europeIntroStat strong { font-size: 27px; }
+.europeIntroStat span { font-size: 11px; margin-top: 6px; }
+.europeIntroStat small { font-size: 8px; margin-top: 12px; padding-top: 10px; }
+.directions { box-sizing: border-box; margin: 36px auto 24px; max-width: 1240px; padding: 0; width: 100%; }
+.page > .directions { padding: 0 24px; }
+.layout { gap: 26px; grid-template-columns: 270px minmax(0,1fr); margin: 0 auto; max-width: 1300px; padding: 42px 28px 100px; }
+.page > .layout { max-width: 1300px; width: 100%; }
+.filterToggle { align-items: center; border-radius: 7px; font-size: 10px; gap: 8px; min-height: 48px; padding: 0 13px; }
+.resultsHeading { align-items: center; margin: 4px 0 18px; min-height: 43px; }
+.resultsHeading .eyebrow { display: none; }
+.resultsHeading h2 { font-size: 17px; letter-spacing: -.04em; margin: 0; }
+.cards { gap: 14px; }
+.cardImage { aspect-ratio: 1.48; }
+.cardTitle { font-size: 17px; }
+.specs { font-size: 9px; line-height: 1.5; }
+.cardFooter strong { font-size: 19px; }
+
+@media (max-width: 1000px) {
+  .page > .europeIntro { gap: 34px; grid-template-columns: minmax(0,1fr) 270px; padding-left: 28px; padding-right: 28px; }
+  .layout { gap: 26px; grid-template-columns: 230px minmax(0,1fr); }
+}
+@media (min-width: 641px) and (max-width: 920px) {
+  .filterToggle { display: none; }
+  .filterContent { display: block; }
+  .filters { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 640px) {
+  .page > .europeIntro {
+    align-content: stretch;
+    align-items: stretch;
+    background-position: center 54%;
+    gap: 16px;
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: 1fr auto;
+    min-height: 460px;
+    padding: 36px 24px 28px;
+  }
+  .europeIntroCopy > a { font-size: 13px; margin-bottom: 30px; }
+  .europeIntroKicker { font-size: 11px; gap: 10px; letter-spacing: .13em; margin-bottom: 19px; }
+  .europeIntroKicker > span { width: 32px; }
+  .europeIntroCopy h1 { font-size: clamp(42px,11vw,52px); line-height: .94; }
+  .europeIntroCopy > p:last-child { font-size: 14px; line-height: 1.6; margin-top: 18px; }
+  .europeIntroStat { align-self: end; justify-self: start; max-width: min(100%,250px); padding: 12px 14px; width: 250px; }
+  .europeIntroStat strong { font-size: 24px; }
+  .europeIntroStat span { font-size: 11px; margin-top: 3px; }
+  .europeIntroStat small { display: none; }
+  .directions { padding: 0; }
+  .page > .directions { margin: 36px auto 24px; padding: 0; width: calc(100% - 48px); }
+  .directions a { padding: 14px; }
+  .page > .layout { gap: 15px; grid-template-columns: minmax(0,1fr); margin: 0 auto; max-width: none; padding: 20px 0 72px; width: calc(100% - 36px); }
+  .filterToggle { border-radius: 7px; min-height: 48px; }
+  .resultsHeading { align-items: center; margin: 4px 0 18px; min-height: 52px; }
+  .resultsHeading > span { font-size: 10px; }
+  .cards { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .cardImage { aspect-ratio: 1.25; }
+  .cardBody { padding: 10px; }
+  .cardTitle { font-size: 16px; margin-top: 9px; }
+  .specs { font-size: 9px; line-height: 1.45; min-height: 58px; }
+  .cardFooter { align-items: flex-start; flex-direction: column; }
+  .cardFooter strong { font-size: 17px; }
+}
