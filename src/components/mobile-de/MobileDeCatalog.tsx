@@ -74,27 +74,25 @@ export function MobileDeUnavailable({ error }: { error: MobileDeApiError }) {
 async function EuropeIntro() {
   const [facetsResult] = await Promise.allSettled([getMobileDeFacets()]);
   const total = facetsResult.status === "fulfilled" ? facetsResult.value.ranges?.count : undefined;
-  return <section className="catalog-brand-hero">
-    <div className="catalog-brand-copy">
+  return <section className={styles.europeIntro}>
+    <div className={styles.europeIntroCopy}>
       <Link href="/"><ArrowLeft size={16} />На главную</Link>
-      <p className="premium-kicker"><span />Каталог автомобилей из Европы</p>
+      <p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p>
       <h1>Автомобили<br />из Европы</h1>
       <p>Объявления Mobile.de с фотографиями и характеристиками. Цена указана продавцом в евро.</p>
     </div>
-    <div className="catalog-brand-stat">
+    <div className={styles.europeIntroStat}>
       <strong>{typeof total === "number" ? `${new Intl.NumberFormat("ru-RU").format(total)} авто` : "Европа"}</strong>
       <span>{typeof total === "number" ? "доступны в каталоге" : "каталог автомобилей"}</span>
       <small>Актуальность объявления подтверждается продавцом отдельно. Доставка и таможня рассчитываются отдельно.</small>
     </div>
-    <div className="catalog-brand-visual" aria-hidden="true" />
   </section>;
 }
 
 function EuropeIntroFallback() {
-  return <section className="catalog-brand-hero">
-    <div className="catalog-brand-copy"><Link href="/"><ArrowLeft size={16} />На главную</Link><p className="premium-kicker"><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Объявления Mobile.de с фотографиями и характеристиками. Цена указана продавцом в евро.</p></div>
-    <div className="catalog-brand-stat"><strong>Европа</strong><span>каталог автомобилей</span><small>Цены продавца в евро. Доставка и таможня рассчитываются отдельно.</small></div>
-    <div className="catalog-brand-visual" aria-hidden="true" />
+  return <section className={styles.europeIntro}>
+    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Объявления Mobile.de с фотографиями и характеристиками. Цена указана продавцом в евро.</p></div>
+    <div className={styles.europeIntroStat}><strong>Европа</strong><span>каталог автомобилей</span><small>Цены продавца в евро. Доставка и таможня рассчитываются отдельно.</small></div>
   </section>;
 }
 
@@ -107,7 +105,7 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
       <CatalogNavigation />
       <Suspense fallback={<EuropeIntroFallback />}><EuropeIntro /></Suspense>
 
-      <div className="catalog-direction-home"><CatalogDirections active="europe" preserveScroll /></div>
+      <CatalogDirections active="europe" />
       <div className={styles.layout}>
         <MobileDeFilterPanel>
           <MobileDeFilterForm key={JSON.stringify(params)} params={params} initialErrors={errors} />

@@ -69,7 +69,6 @@
 
 .page { padding: 0 0 36px; background: #050e17; }
 .page > :not(:global(.catalog-header)) { max-width: 1240px; margin-left: auto; margin-right: auto; }
-.page > :global(.catalog-brand-hero) { max-width: none; width: 100%; margin-left: 0; margin-right: 0; }
 .page > .hero,.page > .layout,.page > .directions,.page > .footer,.page > .backLink,.page > .detailGrid { width: calc(100% - 48px); }
 .hero { padding: 44px 0 28px; }
 .hero h1 { font-size: clamp(32px,4vw,48px); letter-spacing: -.05em; line-height: 1.15; }
@@ -166,6 +165,18 @@
 .field select:disabled { opacity: .6; cursor: wait; }
 .filterFootnote button { color: inherit; text-decoration: underline; cursor: pointer; }
 .submit:disabled { opacity: .65; cursor: wait; }
+.page > .europeIntro { background-color: #030a11; background-image: url("/assets/hero/brand-import-v1.webp"); background-position: center 56%; background-size: cover; border-bottom: 1px solid #203747; display: grid; gap: 48px; grid-template-columns: minmax(0,1fr) minmax(260px,340px); min-height: 390px; max-width: none; margin-left: calc(50% - 50vw); margin-right: 0; overflow: hidden; padding: 50px max(24px,calc((100vw - 1240px)/2)); position: relative; width: 100vw; }
+.europeIntro::after { background: linear-gradient(90deg,rgba(3,10,16,.96) 0%,rgba(3,10,16,.76) 55%,rgba(3,10,16,.48) 100%),linear-gradient(0deg,rgba(3,10,16,.55),transparent 65%); content: ""; inset: 0; pointer-events: none; position: absolute; }
+.europeIntroCopy,.europeIntroStat { position: relative; z-index: 1; }
+.europeIntroCopy > a { align-items: center; color: #91a0ab; display: inline-flex; font-size: 13px; gap: 8px; margin-bottom: 34px; text-decoration: none; }
+.europeIntroKicker { align-items: center; color: #ef4b43; display: flex; font-size: 14px; font-weight: 800; gap: 14px; letter-spacing: .16em; margin: 0 0 24px; text-transform: uppercase; }
+.europeIntroKicker > span { background: #ef4b43; display: inline-block; height: 3px; width: 40px; }
+.europeIntroCopy h1 { font-size: clamp(48px,7vw,82px); font-weight: 400; letter-spacing: -.065em; line-height: .9; margin: 0; text-transform: uppercase; }
+.europeIntroCopy > p:last-child { color: #a1adb7; font-size: 16px; line-height: 1.6; margin: 24px 0 0; max-width: 640px; }
+.europeIntroStat { align-self: end; backdrop-filter: blur(12px); background: rgba(6,17,27,.78); border: 1px solid #344655; border-radius: 14px; display: flex; flex-direction: column; padding: 24px; }
+.europeIntroStat strong { color: #ef4b43; font-size: clamp(28px,4vw,42px); letter-spacing: -.05em; }
+.europeIntroStat span { font-size: 15px; line-height: 1.5; margin-top: 8px; }
+.europeIntroStat small { border-top: 1px solid #263846; color: #8595a1; font-size: 12px; line-height: 1.55; margin-top: 18px; padding-top: 14px; }
 .selectPairs { display: grid; gap: 12px; }
 .selectPairs .rangePair select { padding-right: 28px; }
 .filters { align-content: start; }
@@ -197,10 +208,23 @@
   .filterContent { min-width: 0; }
   .filters { grid-template-columns: minmax(0,1fr); padding: 16px; }
   .dictionaryGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .page > .europeIntro { gap: 30px; grid-template-columns: 1fr; min-height: 0; padding: 42px 24px; }
+  .europeIntroCopy > a { margin-bottom: 27px; }
+  .europeIntroStat { max-width: 580px; width: 100%; }
 }
 @media(max-width:620px) {
   .filters { grid-template-columns: minmax(0,1fr); padding: 15px; }
   .dictionaryGrid { grid-template-columns: minmax(0,1fr); }
   .rangePair { gap: 8px; }
   .rangePair .field > span { min-height: 26px; line-height: 1.25; }
+  .page > .europeIntro { background-position: 67% center; gap: 25px; padding: 36px 24px 30px; }
+  .europeIntroCopy > a { font-size: 14px; margin-bottom: 30px; }
+  .europeIntroKicker { font-size: 11px; gap: 10px; letter-spacing: .13em; margin-bottom: 19px; }
+  .europeIntroKicker > span { width: 32px; }
+  .europeIntroCopy h1 { font-size: clamp(44px,12vw,62px); }
+  .europeIntroCopy > p:last-child { font-size: 15px; margin-top: 18px; }
+  .europeIntroStat { border-radius: 12px; padding: 18px; }
+  .europeIntroStat strong { font-size: 32px; }
+  .europeIntroStat span { font-size: 14px; }
+  .europeIntroStat small { font-size: 11px; }
 }

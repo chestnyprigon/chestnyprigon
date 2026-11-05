@@ -184,13 +184,12 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
         <button className="premium-menu-button" type="button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Меню">{menuOpen ? <X /> : <Menu />}</button>
       </header>
 
-      <section className="catalog-brand-hero">
-        <div className="catalog-brand-copy"><Link href="/"><ArrowLeft size={15} />На главную</Link><p className="premium-kicker"><span />Каталог Южной Кореи</p><h1>Авто из Кореи<br />под ключ</h1><p>Проверенные объявления Encar с подробной карточкой, опциями и предварительной стоимостью под ключ.</p></div>
-        <div className="catalog-brand-stat"><strong>{catalog.total} авто</strong><span>прошли автоматическую проверку</span><small>Исключаем аренду, такси и коммерческий транспорт. Историю ДТП и страховых выплат показываем открыто.</small></div>
-        <div className="catalog-brand-visual" aria-hidden="true" />
+      <section className="catalog-intro">
+        <div><Link href="/"><ArrowLeft size={15} />На главную</Link><p className="premium-kicker"><span />Каталог Южной Кореи</p><h1>Авто из Кореи<br />под ключ</h1><p>Проверенные объявления Encar с подробной карточкой, опциями и предварительной стоимостью под ключ.</p></div>
+        <div className="catalog-intro-stat"><strong>{catalog.total} авто</strong><span>прошли автоматическую проверку</span><small>Исключаем аренду, такси и коммерческий транспорт. Историю ДТП и страховых выплат показываем открыто.</small></div>
       </section>
 
-      <div className="catalog-direction-home"><CatalogDirections preserveScroll /></div>
+      <div className="catalog-direction-home"><CatalogDirections /></div>
       <section className="catalog-workspace" id="catalog-list">
         <button className="mobile-filter-trigger" type="button" onClick={() => setFiltersOpen(!filtersOpen)}><Filter size={17} />Фильтры <ChevronDown size={16} /></button>
         <aside className={filtersOpen ? "catalog-filters is-open" : "catalog-filters"}>
