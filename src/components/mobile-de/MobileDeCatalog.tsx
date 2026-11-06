@@ -56,7 +56,7 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
-          <div className={styles.cardEstimate}><span>Предварительно под ключ</span><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong></div>
+          <div className={styles.cardEstimate}><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong><small>под ключ в Минске</small></div>
           <Link prefetch={false} href={href}>Подробнее →</Link>
         </div>
       </div>
