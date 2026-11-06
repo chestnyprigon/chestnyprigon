@@ -7,6 +7,9 @@ import { catalogYearFrom, catalogYearTo, CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRI
 import { formatUsdWithByn } from "@/lib/pricing/display";
 import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
+import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
+import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
+import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 
 const cardLimit = 12;
 const distance = new Intl.NumberFormat("ru-RU");
@@ -48,18 +51,12 @@ function koreaCard(car: CatalogCar): ShowcaseCard {
   };
 }
 
-function euroPrice(listing: MobileDeListing) {
-  const amount = listing.price?.amount;
-  if (typeof amount !== "number") return "Цена уточняется";
-  const currency = listing.price?.currency || "EUR";
-  try {
-    return new Intl.NumberFormat("ru-RU", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
-  } catch {
-    return `${distance.format(amount)} ${currency}`;
-  }
-}
-
-function europeCard(listing: MobileDeListing): ShowcaseCard {
+function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | null): ShowcaseCard {
+  const firstRegistration = listing.first_registration?.value;
+  const netPrice = listing.net_price;
+  const calculation = exchangeRates && typeof netPrice?.amount === "number" && netPrice.basis === "netto" && netPrice.status === "source_reported" && netPrice.source_path === "price.nt.amount" && firstRegistration && listing.engine_cc
+    ? calculateEuropeBelarusPrice({ netPriceEur: netPrice.amount, firstRegistration, engineCc: listing.engine_cc, exchangeRates })
+    : null;
   return {
     id: listing.master_id,
     href: `/catalog/europe/${encodeURIComponent(listing.master_id)}`,
@@ -68,8 +65,8 @@ function europeCard(listing: MobileDeListing): ShowcaseCard {
     eyebrow: "Mobile.de",
     title: listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы",
     details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${distance.format(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
-    price: euroPrice(listing),
-    priceNote: "Цена продавца",
+    price: calculation ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: "BYN", maximumFractionDigits: 0 }).format(calculation.totalByn) : "",
+    priceNote: "Предварительно под ключ",
   };
 }
 
@@ -119,8 +116,8 @@ async function KoreaShowcase() {
 async function EuropeShowcase() {
   let cards: ShowcaseCard[] = [];
   try {
-    const listings = await getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" });
-    cards = listings.data.map(europeCard);
+    const [listings, exchangeRates] = await Promise.all([getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }), fetchNbrbRates()]);
+    cards = listings.data.map((listing) => europeCard(listing, exchangeRates));
   } catch (error) {
     const reason = error instanceof MobileDeApiError ? `status ${error.status ?? "network"}` : "catalog request failed";
     console.error("[home-showcase] Europe catalogue unavailable", reason);

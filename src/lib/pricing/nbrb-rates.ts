@@ -18,5 +18,5 @@ export async function fetchNbrbRates(signal?: AbortSignal): Promise<ExchangeRate
   const usdByn = decimal(usd?.Cur_OfficialRate) && decimal(usd?.Cur_Scale) ? Number(usd!.Cur_OfficialRate) / Number(usd!.Cur_Scale) : null;
   const eurByn = decimal(eur?.Cur_OfficialRate) && decimal(eur?.Cur_Scale) ? Number(eur!.Cur_OfficialRate) / Number(eur!.Cur_Scale) : null;
   if (!usdByn || !eurByn) throw new Error("NBRB daily USD/EUR rates are unavailable");
-  return { usdByn, eurByn, rateDate: (usd?.Date ?? new Date().toISOString()).slice(0, 10), source: "nbrb" };
+  return { usdByn, eurByn, rateDate: (eur?.Date ?? usd?.Date ?? new Date().toISOString()).slice(0, 10), source: "nbrb" };
 }

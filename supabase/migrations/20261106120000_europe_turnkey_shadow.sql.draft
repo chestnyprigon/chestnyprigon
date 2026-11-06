@@ -1,0 +1,105 @@
+-- Draft only. Prepare and verify this in an isolated database before production.
+-- This migration adds a parallel Europe pricing set and does not alter the
+-- existing catalogue, its visibility flags, views, or Korea objects.
+BEGIN;
+
+CREATE TABLE public.mobile_de_turnkey_price_evidence (
+  master_id uuid PRIMARY KEY REFERENCES public.mobile_de_catalog_listings(master_id) ON DELETE CASCADE,
+  net_price_amount numeric(14,2) NOT NULL CHECK (net_price_amount > 0),
+  currency text NOT NULL CHECK (currency = 'EUR'),
+  price_basis text NOT NULL CHECK (price_basis = 'netto'),
+  price_status text NOT NULL CHECK (price_status = 'source_reported'),
+  vat_deductibility text NOT NULL DEFAULT 'UNKNOWN' CHECK (vat_deductibility IN ('YES', 'NO', 'UNKNOWN')),
+  net_price_source_path text NOT NULL CHECK (net_price_source_path = 'price.nt.amount'),
+  asking_price_observed numeric(14,2) NOT NULL CHECK (asking_price_observed > 0),
+  source_updated_at_observed timestamptz NOT NULL,
+  source_price_evidence jsonb NOT NULL CHECK (jsonb_typeof(source_price_evidence) = 'object' AND source_price_evidence <> '{}'::jsonb),
+  verified_at timestamptz NOT NULL,
+  approved boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX mobile_de_turnkey_approved_price_idx
+  ON public.mobile_de_turnkey_price_evidence (net_price_amount, master_id) WHERE approved;
+
+ALTER TABLE public.mobile_de_turnkey_price_evidence ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.mobile_de_turnkey_price_evidence FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.mobile_de_turnkey_price_evidence TO service_role;
+
+-- New, opt-in view. Asking-price or source-update changes invalidate the
+-- evidence until it is rechecked; this prevents a stale Netto from being used.
+CREATE VIEW public.mobile_de_catalog_turnkey_v2
+WITH (security_barrier = true)
+AS
+SELECT l.master_id, l.source_id, l.title, l.make, l.model,
+       l.first_registration, l.first_registration_precision, l.registration_year,
+       l.mileage_km, l.engine_cc, l.power_ps, e.net_price_amount,
+       e.net_price_source_path, e.price_status,
+       e.currency AS price_currency, l.price_category, l.fuel_type, l.transmission,
+       l.drive, l.body_type, l.color, l.description, l.options, l.source_url,
+       l.primary_image_url, l.source_updated_at, l.last_seen_at, l.verified_at,
+       l.updated_at
+FROM public.mobile_de_catalog_listings l
+JOIN public.mobile_de_turnkey_price_evidence e USING (master_id)
+WHERE l.catalog_visible
+  AND e.approved
+  AND e.price_status = 'source_reported'
+  AND e.asking_price_observed = l.price_amount
+  AND l.source_updated_at IS NOT NULL
+  AND e.source_updated_at_observed = l.source_updated_at
+  AND l.engine_cc > 0;
+
+CREATE VIEW public.mobile_de_catalog_turnkey_images_v2
+WITH (security_barrier = true)
+AS
+SELECT i.master_id, i.source_url, i.position, i.is_primary
+FROM public.mobile_de_catalog_images i
+JOIN public.mobile_de_catalog_turnkey_v2 l USING (master_id);
+
+REVOKE ALL ON public.mobile_de_catalog_turnkey_v2, public.mobile_de_catalog_turnkey_images_v2 FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.mobile_de_catalog_turnkey_v2, public.mobile_de_catalog_turnkey_images_v2 TO anon, authenticated, service_role;
+
+CREATE FUNCTION public.get_mobile_de_catalog_turnkey_facets_v2(p_make text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $$
+  WITH visible AS MATERIALIZED (
+    SELECT make, model, fuel_type, transmission, body_type, net_price_amount,
+           registration_year, mileage_km, power_ps
+    FROM public.mobile_de_catalog_turnkey_v2
+    WHERE nullif(btrim(p_make), '') IS NULL OR make = p_make
+  )
+  SELECT jsonb_build_object(
+    'makes', CASE WHEN nullif(btrim(p_make), '') IS NULL THEN coalesce((
+      SELECT jsonb_agg(make ORDER BY make)
+      FROM (SELECT DISTINCT make FROM visible WHERE nullif(btrim(make), '') IS NOT NULL) m
+    ), '[]'::jsonb) ELSE NULL END,
+    'models', CASE WHEN nullif(btrim(p_make), '') IS NOT NULL THEN coalesce((
+      SELECT jsonb_agg(model ORDER BY model)
+      FROM (SELECT DISTINCT model FROM visible WHERE nullif(btrim(model), '') IS NOT NULL) m
+    ), '[]'::jsonb) ELSE NULL END,
+    'fuel_types', coalesce((SELECT jsonb_agg(value ORDER BY value) FROM (SELECT DISTINCT fuel_type AS value FROM visible WHERE nullif(btrim(fuel_type), '') IS NOT NULL) f), '[]'::jsonb),
+    'transmissions', coalesce((SELECT jsonb_agg(value ORDER BY value) FROM (SELECT DISTINCT transmission AS value FROM visible WHERE nullif(btrim(transmission), '') IS NOT NULL) t), '[]'::jsonb),
+    'body_types', coalesce((SELECT jsonb_agg(value ORDER BY value) FROM (SELECT DISTINCT body_type AS value FROM visible WHERE nullif(btrim(body_type), '') IS NOT NULL) b), '[]'::jsonb),
+    'ranges', jsonb_build_object(
+      'count', (SELECT count(*) FROM visible),
+      'price_min', (SELECT min(net_price_amount) FROM visible),
+      'price_max', (SELECT max(net_price_amount) FROM visible),
+      'year_min', (SELECT min(registration_year) FROM visible),
+      'year_max', (SELECT max(registration_year) FROM visible),
+      'registration_year_min', (SELECT min(registration_year) FROM visible),
+      'registration_year_max', (SELECT max(registration_year) FROM visible),
+      'mileage_min', (SELECT min(mileage_km) FROM visible),
+      'mileage_max', (SELECT max(mileage_km) FROM visible),
+      'power_min', (SELECT min(power_ps) FROM visible),
+      'power_max', (SELECT max(power_ps) FROM visible)
+    )
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.get_mobile_de_catalog_turnkey_facets_v2(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_mobile_de_catalog_turnkey_facets_v2(text) TO anon, authenticated, service_role;
+
+COMMIT;

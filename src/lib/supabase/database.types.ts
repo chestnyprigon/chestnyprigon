@@ -227,6 +227,24 @@ export type Database = {
         Row: { master_id: string; source_url: string; position: number; is_primary: boolean };
         Relationships: [];
       };
+      mobile_de_catalog_turnkey_v2: {
+        Row: {
+          master_id: string; source_id: string; title: string; make: string; model: string | null;
+          first_registration: string; first_registration_precision: string;
+          registration_year: number; mileage_km: number; engine_cc: number; power_ps: number;
+          net_price_amount: number; net_price_source_path: string; price_status: string;
+          price_currency: string; price_category: string | null; fuel_type: string | null;
+          transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
+          description: string | null; options: Json; source_url: string; primary_image_url: string | null;
+          source_updated_at: string; last_seen_at: string | null; verified_at: string | null;
+          updated_at: string;
+        };
+        Relationships: [];
+      };
+      mobile_de_catalog_turnkey_images_v2: {
+        Row: { master_id: string; source_url: string; position: number; is_primary: boolean };
+        Relationships: [];
+      };
     };
     Functions: {
       get_catalog_filter_options: {
@@ -234,6 +252,10 @@ export type Database = {
         Returns: Json;
       };
       get_mobile_de_catalog_facets: {
+        Args: { p_make?: string | null };
+        Returns: Json;
+      };
+      get_mobile_de_catalog_turnkey_facets_v2: {
         Args: { p_make?: string | null };
         Returns: Json;
       };

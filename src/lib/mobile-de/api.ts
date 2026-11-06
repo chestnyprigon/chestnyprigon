@@ -6,7 +6,13 @@ import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 function shouldUseSupabaseCatalog() {
-  return process.env.EUROPE_CATALOG_SOURCE === "supabase";
+  return process.env.EUROPE_CATALOG_SOURCE === "supabase_turnkey_v2";
+}
+
+function requireSourceNettoCatalog() {
+  if (!shouldUseSupabaseCatalog()) {
+    throw new MobileDeApiError(503, "Europe catalogue is not enabled until its isolated Netto v2 view is installed and selected.");
+  }
 }
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
@@ -20,6 +26,13 @@ export class MobileDeApiError extends Error {
     super(message);
     this.name = "MobileDeApiError";
   }
+}
+
+function hasSourceConsumerNetto(listing: MobileDeListing) {
+  const price = listing.net_price;
+  return typeof price?.amount === "number" && price.amount > 0 && price.currency === "EUR"
+    && price.basis === "netto" && price.source_path === "price.nt.amount"
+    && price.status === "source_reported";
 }
 
 function token() {
@@ -75,11 +88,12 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
 }
 
 export function getMobileDeListings(filters: MobileDeFilters) {
+  requireSourceNettoCatalog();
   if (shouldUseSupabaseCatalog()) {
     const key = JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([name, value]) => name !== "cursor" && value).sort(([left], [right]) => left.localeCompare(right))));
     return supabaseCatalogCache(key, () =>
       import("./supabase-catalog").then(({ getSupabaseMobileDeListings }) =>
-        getSupabaseMobileDeListings(filters).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
+        getSupabaseMobileDeListings(filters).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)).filter(hasSourceConsumerNetto) })),
       ),
     );
   }
@@ -90,13 +104,14 @@ export function getMobileDeListings(filters: MobileDeFilters) {
   params.sort();
   const consumer = createHash("sha256").update(token()).digest("hex");
   return catalogCache(JSON.stringify([consumer, params.toString()]), () =>
-    getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
+    getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)).filter(hasSourceConsumerNetto) })),
   );
 }
 
 // Facets are public catalogue metadata. Keep the last known-good set available
 // during upstream DB timeouts; never cache details or consumer credentials.
 export function getMobileDeFacets(make?: string) {
+  requireSourceNettoCatalog();
   if (shouldUseSupabaseCatalog()) {
     return supabaseFacetsCache(make || "", () =>
       import("./supabase-catalog").then(({ getSupabaseMobileDeFacets }) => getSupabaseMobileDeFacets(make)),
@@ -112,6 +127,7 @@ export function getMobileDeFacets(make?: string) {
 }
 
 export function getMobileDeCount(filters: MobileDeFilters) {
+  requireSourceNettoCatalog();
   if (shouldUseSupabaseCatalog()) {
     return import("./supabase-catalog").then(({ getSupabaseMobileDeCount }) => getSupabaseMobileDeCount(filters));
   }
@@ -128,14 +144,21 @@ export function getMobileDeCount(filters: MobileDeFilters) {
 }
 
 export function getMobileDeListing(masterId: string) {
+  requireSourceNettoCatalog();
   if (shouldUseSupabaseCatalog()) {
     return import("./supabase-catalog").then(async ({ getSupabaseMobileDeListing }) => {
       const listing = await getSupabaseMobileDeListing(masterId);
       if (!listing) throw new MobileDeApiError(404, "Europe catalogue listing not found");
-      return normalizeMobileDeListing(listing);
+      const normalized = normalizeMobileDeListing(listing);
+      if (!hasSourceConsumerNetto(normalized)) throw new MobileDeApiError(404, "Europe catalogue listing has no source Netto price");
+      return normalized;
     });
   }
   return getJson<{ data: MobileDeListing } | MobileDeListing>(`/listings/${encodeURIComponent(masterId)}`).then((payload) =>
-    normalizeMobileDeListing("data" in payload ? payload.data : payload),
+    (() => {
+      const normalized = normalizeMobileDeListing("data" in payload ? payload.data : payload);
+      if (!hasSourceConsumerNetto(normalized)) throw new MobileDeApiError(404, "Europe catalogue listing has no source Netto price");
+      return normalized;
+    })(),
   );
 }

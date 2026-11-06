@@ -2,13 +2,12 @@ import { config as loadEnv } from "dotenv";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createClient } from "@supabase/supabase-js";
 
 const envCandidates = [process.env.DOTENV_CONFIG_PATH, ".env.local", "../../.env.local", ".env"]
   .filter((path): path is string => Boolean(path));
 for (const path of envCandidates) if (existsSync(path)) loadEnv({ path });
 
-const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
+const API_ROOT = (process.env.MASTER_MOBILE_DE_API_ROOT?.trim() || "https://api.koredigital.co.kr/v1/internal/mobile-de").replace(/\/+$/, "");
 const IMPORT_CONCURRENCY = 12;
 const required = (name: string) => {
   const value = process.env[name]?.trim();
@@ -16,16 +15,13 @@ const required = (name: string) => {
   return value;
 };
 const token = required("MASTER_MOBILE_DE_API_TOKEN");
-const supabase = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
 
 async function main() {
 const args = new Map(process.argv.slice(2).map((value) => {
   const [key, ...rest] = value.replace(/^--/, "").split("=");
   return [key, rest.join("=")];
 }));
-const write = args.get("write") === "true";
+if (args.has("write")) throw new Error("This command is read-only; Supabase writes are not part of the local import plan.");
 const limit = Number(args.get("limit") ?? 100);
 if (!Number.isInteger(limit) || limit < 1 || limit > 7_333) throw new Error("--limit must be from 1 to 7333");
 const allowlistPath = process.env.MOBILE_DE_PROVEN_ALLOWLIST_PATH?.trim();
@@ -120,15 +116,25 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
   const precision = text(registration.precision);
   const registrationYear = regValue ? Number(regValue.slice(0, 4)) : null;
   const price = nested(item, "price");
+  const netPrice = nested(item, "net_price");
   const priceCategory = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
   const priceCategoryEligible = priceCategory
     ? priceCategories.has(priceCategory)
     : Boolean(masterId && allowlistedMasterIds.has(masterId));
   const priceAmount = number(price.amount);
+  const netPriceAmount = number(netPrice.amount);
+  const netPriceCurrency = text(netPrice.currency);
+  const netPriceBasis = text(netPrice.basis)?.toLowerCase();
+  const netPriceSourcePath = text(netPrice.source_path);
+  const netPriceStatus = text(netPrice.status);
+  const netPriceObservedAt = text(netPrice.source_observed_at);
+  const netPriceObservedAtValid = Boolean(netPriceObservedAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(netPriceObservedAt) && Number.isFinite(Date.parse(netPriceObservedAt)));
   const power = nested(item, "power");
   const powerValue = number(power.value);
   const mileage = number(item.mileage_km);
   const freshness = nested(item, "freshness");
+  const sourceUpdatedAt = text(freshness.source_updated_at);
+  const sourceUpdatedAtValid = Boolean(sourceUpdatedAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(sourceUpdatedAt) && Number.isFinite(Date.parse(sourceUpdatedAt)));
   const sourceStatus = text(item.source_status ?? freshness.availability);
   const normalizedSourceStatus = sourceStatus?.toLowerCase();
   const isNewVehicle = item.is_new_vehicle === true || text(item.vehicle_type)?.toLowerCase() === "neuwagen" || !regValue || precision === "unknown";
@@ -143,13 +149,13 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
     (verified === "proven_verified" && (!normalizedSourceStatus || normalizedSourceStatus === "unknown"));
 
   if (!masterId || !sourceId || !make || !verified || !active || !regValue || !precision || ["unknown", "year", "neuwagen"].includes(precision.toLowerCase()) || !registrationYear || registrationYear < 2022 || registrationYear > 2025 ||
-    !priceCategoryEligible || !priceAmount || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
+    !priceCategoryEligible || !priceAmount || !netPriceAmount || netPriceCurrency !== "EUR" || netPriceBasis !== "netto" || netPriceStatus !== "source_reported" || netPriceSourcePath !== "price.nt.amount" || !netPriceObservedAtValid || !sourceUpdatedAtValid || !item.engine_cc || !number(item.engine_cc) || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
   const title = text(item.title) || [make, text(item.model)].filter(Boolean).join(" ");
   const sourceUrl = text(item.source_url) || `https://suchen.mobile.de/fahrzeuge/details.html?id=${encodeURIComponent(sourceId)}`;
   return {
     listing: {
       master_id: masterId, source_id: sourceId, title, make, model: text(item.model),
-      production_year: number(item.production_year), first_registration: regValue,
+      first_registration: regValue,
       first_registration_precision: precision, registration_year: registrationYear,
       mileage_km: mileage, engine_cc: number(item.engine_cc), power_ps: powerValue,
       price_amount: priceAmount, price_currency: text(price.currency) || "EUR", price_category: priceCategory,
@@ -159,21 +165,41 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
       options: Array.isArray(item.options) ? item.options : [], source_url: sourceUrl,
       primary_image_url: text(nested(item, "primary_image").url) || images[0]?.source_url || null,
       source_status: "active", proof_status: "proven_verified", is_new_vehicle: false,
-      catalog_visible: true, source_updated_at: text(freshness.source_updated_at),
+      catalog_visible: true, source_updated_at: sourceUpdatedAt,
       last_seen_at: text(freshness.last_seen_at), verified_at: text(freshness.last_successful_source_check_at),
       source_payload: {
         proof_status: text(item.proof_status ?? item.verification_status),
         source_status: sourceStatus,
         proof_reference: text(item.proof_reference ?? item.proof_id),
         price_category_eligibility_basis: priceCategory ? "master_api_detail" : "filtered_candidate_cohort_allowlist",
-        verified_at: text(freshness.last_successful_source_check_at),
       },
+    },
+    priceEvidence: {
+      master_id: masterId,
+      net_price_amount: netPriceAmount,
+      currency: netPriceCurrency,
+      price_basis: "netto",
+      price_status: netPriceStatus,
+      vat_deductibility: "UNKNOWN",
+      net_price_source_path: netPriceSourcePath,
+      asking_price_observed: priceAmount,
+      source_updated_at_observed: sourceUpdatedAt,
+      source_price_evidence: {
+        amount: netPriceAmount,
+        currency: netPriceCurrency,
+        basis: "netto",
+        source_path: netPriceSourcePath,
+        status: netPriceStatus,
+        source_observed_at: netPriceObservedAt,
+      },
+      verified_at: new Date().toISOString(),
+      approved: true,
     },
     images: [...new Map(images.map((image) => [`${image.position}:${image.source_url}`, image])).values()],
   };
 }
 
-const cacheDirectory = resolve(".local/mobile-de-import-cache");
+const cacheDirectory = resolve(process.env.MOBILE_DE_IMPORT_CACHE_DIR?.trim() || ".local/mobile-de-import-cache-v2-netto");
 await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
 let cacheHits = 0;
 let checkedCount = 0;
@@ -200,8 +226,19 @@ async function checkListing(index: number) {
   const mapped = eligible(item, allowlistedMasterIds);
   if (!mapped) {
     const price = nested(item, "price");
+    const netPrice = nested(item, "net_price");
     const category = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
-    results[index] = { id, mapped: null, reason: category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" };
+    const netBasis = text(netPrice.basis)?.toLowerCase();
+    const observedAt = text(netPrice.source_observed_at);
+    const observedAtValid = Boolean(observedAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(observedAt) && Number.isFinite(Date.parse(observedAt)));
+    const reason = category && !priceCategories.has(category)
+      ? "Explicit price category is outside the allowed low/mid set"
+      : netBasis !== "netto" || text(netPrice.currency) !== "EUR" || !number(netPrice.amount) || text(netPrice.source_path) !== "price.nt.amount" || text(netPrice.status) !== "source_reported" || !observedAtValid
+        ? "Master API does not provide the source Netto price"
+        : !text(nested(item, "first_registration").value) || !number(item.engine_cc)
+          ? "First registration or engine displacement is missing"
+          : "Failed active status, registration, power, mileage, or required-field check";
+    results[index] = { id, mapped: null, reason };
   } else {
     results[index] = { id, mapped, reason: null };
   }
@@ -224,34 +261,8 @@ if (workerFailure) throw workerFailure.reason;
 const batch = results.flatMap((result) => result.mapped ? [result.mapped] : []);
 const skipped = results.flatMap((result) => result.reason ? [{ id: result.id, reason: result.reason }] : []);
 
-const summary = { mode: write ? "write" : "dry-run", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
-if (!write) { console.log(JSON.stringify(summary, null, 2)); process.exit(0); }
-if (limit === 7_333 && skipped.length) throw new Error(`Full import stopped before writing: ${skipped.length} allow-listed records failed strict eligibility`);
-if (args.get("confirm") !== "mobile-de-test-import" && limit <= 100) throw new Error("Writing the test batch requires --confirm=mobile-de-test-import");
-if (limit > 100 && args.get("confirm") !== "mobile-de-full-import-7333") throw new Error("Writing all selected listings requires --confirm=mobile-de-full-import-7333");
-
-const { data: run, error: runError } = await supabase.from("mobile_de_catalog_import_runs").insert({ status: "running", source_candidate_count: requestedIds.length, fetched_count: requestedIds.length, proven_count: batch.length, rejected_count: skipped.length }).select("id").single();
-if (runError || !run) throw new Error(`Could not create import log: ${runError?.message}`);
-try {
-  for (let i = 0; i < batch.length; i += 100) {
-    const chunk = batch.slice(i, i + 100);
-    const { error } = await supabase.from("mobile_de_catalog_listings").upsert(chunk.map((row) => row.listing), { onConflict: "master_id" });
-    if (error) throw new Error(`Listing upsert failed: ${error.message}`);
-    const images = chunk.flatMap((row) => row.images);
-    for (let j = 0; j < images.length; j += 500) {
-      const { error: imageError } = await supabase.from("mobile_de_catalog_images").upsert(images.slice(j, j + 500), { onConflict: "master_id,position" });
-      if (imageError) throw new Error(`Gallery upsert failed: ${imageError.message}`);
-    }
-    const { error: progressError } = await supabase.from("mobile_de_catalog_import_runs").update({ upserted_count: Math.min(i + chunk.length, batch.length) }).eq("id", run.id);
-    if (progressError) throw new Error(`Could not update import progress: ${progressError.message}`);
-  }
-  const { error } = await supabase.from("mobile_de_catalog_import_runs").update({ status: "completed", upserted_count: batch.length, finished_at: new Date().toISOString() }).eq("id", run.id);
-  if (error) throw new Error(`Could not complete import log: ${error.message}`);
-} catch (error) {
-  await supabase.from("mobile_de_catalog_import_runs").update({ status: "failed", error_summary: [{ message: error instanceof Error ? error.message : "Unknown import error" }], finished_at: new Date().toISOString() }).eq("id", run.id);
-  throw error;
-}
-console.log(JSON.stringify({ ...summary, runId: run.id, upserted: batch.length }, null, 2));
+const summary = { mode: "read-only", allowlisted: requestedIds.length, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), priceEvidenceRows: batch.filter((row) => row.priceEvidence.net_price_amount > 0 && row.priceEvidence.price_basis === "netto").length, masterIds: batch.map(({ listing }) => listing.master_id) };
+console.log(JSON.stringify(summary, null, 2));
 }
 
 void main().catch((error: unknown) => {

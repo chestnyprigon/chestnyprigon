@@ -13,7 +13,7 @@ const filterGroups = [
   ["make", "Марка"], ["model", "Модель"], ["fuel_type", "Топливо"], ["transmission", "Коробка передач"], ["body_type", "Кузов"],
 ] as const;
 const rangeGroups = [
-  [["price_min", "Цена от, €"], ["price_max", "Цена до, €"]],
+  [["price_min", "Цена Netto от, €"], ["price_max", "Цена Netto до, €"]],
   [["mileage_min", "Пробег от, км"], ["mileage_max", "Пробег до, км"]],
   [["power_min", "Мощность от, л. с."], ["power_max", "Мощность до, л. с."]],
 ] as const;
