@@ -1,5 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import { unstable_cache } from "next/cache";
 import { createStaleCache } from "./stale-cache";
 import { normalizeMobileDeFacets } from "./facets";
 import { normalizeMobileDeListing } from "./normalize";
@@ -16,6 +17,34 @@ const catalogCache = createStaleCache<MobileDeListingPage>(60_000, 15 * 60_000, 
 const facetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
 const supabaseCatalogCache = createStaleCache<MobileDeListingPage>(60_000, 5 * 60_000, 96);
 const supabaseFacetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
+// The in-memory cache helps within one server instance. Next's shared data
+// cache also keeps a warm catalogue available across cold serverless instances.
+const getCachedSupabaseListings = unstable_cache(
+  async (filters: MobileDeFilters) => {
+    const { getSupabaseMobileDeListings } = await import("./supabase-catalog");
+    const payload = await getSupabaseMobileDeListings(filters);
+    return { ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) };
+  },
+  ["mobile-de-supabase-listings-v2"],
+  { revalidate: 60 },
+);
+const getCachedSupabaseFacets = unstable_cache(
+  async (make?: string) => {
+    const { getSupabaseMobileDeFacets } = await import("./supabase-catalog");
+    return getSupabaseMobileDeFacets(make);
+  },
+  ["mobile-de-supabase-facets-v1"],
+  { revalidate: 300 },
+);
+const getCachedSupabaseListing = unstable_cache(
+  async (masterId: string) => {
+    const { getSupabaseMobileDeListing } = await import("./supabase-catalog");
+    const listing = await getSupabaseMobileDeListing(masterId);
+    return listing ? normalizeMobileDeListing(listing) : null;
+  },
+  ["mobile-de-supabase-listing-detail-v1"],
+  { revalidate: 60 },
+);
 
 export class MobileDeApiError extends Error {
   constructor(readonly status: number | null, message: string) {
@@ -78,12 +107,8 @@ async function getJson<T>(path: string, params?: URLSearchParams): Promise<T> {
 
 export function getMobileDeListings(filters: MobileDeFilters) {
   if (shouldUseSupabaseCatalog()) {
-    const key = JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([name, value]) => name !== "cursor" && value).sort(([left], [right]) => left.localeCompare(right))));
-    return supabaseCatalogCache(key, () =>
-      import("./supabase-catalog").then(({ getSupabaseMobileDeListings }) =>
-        getSupabaseMobileDeListings(filters).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
-      ),
-    );
+    const key = JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([, value]) => value).sort(([left], [right]) => left.localeCompare(right))));
+    return supabaseCatalogCache(key, () => getCachedSupabaseListings(filters));
   }
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
@@ -100,9 +125,7 @@ export function getMobileDeListings(filters: MobileDeFilters) {
 // during upstream DB timeouts; never cache details or consumer credentials.
 export function getMobileDeFacets(make?: string) {
   if (shouldUseSupabaseCatalog()) {
-    return supabaseFacetsCache(make || "", () =>
-      import("./supabase-catalog").then(({ getSupabaseMobileDeFacets }) => getSupabaseMobileDeFacets(make)),
-    );
+    return supabaseFacetsCache(make || "", () => getCachedSupabaseFacets(make));
   }
   // A rotated or different consumer token must never reuse another consumer's dictionary.
   const consumer = createHash("sha256").update(token()).digest("hex");
@@ -131,10 +154,9 @@ export function getMobileDeCount(filters: MobileDeFilters) {
 
 export function getMobileDeListing(masterId: string) {
   if (shouldUseSupabaseCatalog()) {
-    return import("./supabase-catalog").then(async ({ getSupabaseMobileDeListing }) => {
-      const listing = await getSupabaseMobileDeListing(masterId);
+    return getCachedSupabaseListing(masterId).then((listing) => {
       if (!listing) throw new MobileDeApiError(404, "Europe catalogue listing not found");
-      return normalizeMobileDeListing(listing);
+      return listing;
     });
   }
   return getJson<{ data: MobileDeListing } | MobileDeListing>(`/listings/${encodeURIComponent(masterId)}`).then((payload) =>

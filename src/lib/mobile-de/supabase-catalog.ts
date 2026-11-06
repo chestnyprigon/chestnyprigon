@@ -142,11 +142,14 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
 
 export async function getSupabaseMobileDeListing(masterId: string): Promise<MobileDeListing | null> {
   const client = createSupabaseEuropePublicServerClient();
-  const { data, error } = await client.from("mobile_de_catalog_public_listings").select(listingColumns).eq("master_id", masterId).maybeSingle();
+  const [listingResult, imagesResult] = await Promise.all([
+    client.from("mobile_de_catalog_public_listings").select(listingColumns).eq("master_id", masterId).maybeSingle(),
+    client.from("mobile_de_catalog_public_images").select("source_url,position,is_primary").eq("master_id", masterId).order("position", { ascending: true }),
+  ]);
+  const { data, error } = listingResult;
   if (error) throw new Error(`Europe Supabase detail query failed: ${error.message}`);
-  if (!data) return null;
-  const imagesResult = await client.from("mobile_de_catalog_public_images").select("source_url,position,is_primary").eq("master_id", masterId).order("position", { ascending: true });
   if (imagesResult.error) throw new Error(`Europe Supabase gallery query failed: ${imagesResult.error.message}`);
+  if (!data) return null;
   return mapListing(data as unknown as Record<string, unknown>, (imagesResult.data ?? []) as unknown as Array<Record<string, unknown>>);
 }
 
