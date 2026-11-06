@@ -12,6 +12,7 @@ import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filt
 import { MobileDeFilterForm } from "./MobileDeFilterForm";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
+import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -55,7 +56,7 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
-          <div className={styles.cardEstimate}><span>Предварительно под ключ</span><strong>{calculation ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: "BYN", maximumFractionDigits: 0 }).format(calculation.totalByn) : ""}</strong><small>{typeof price === "number" && listing.net_price?.status === "source_reported" && listing.net_price?.source_path === "price.nt.amount" ? `Netto ${new Intl.NumberFormat("ru-RU", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(price)}` : ""}</small></div>
+          <div className={styles.cardEstimate}><span>Предварительно под ключ</span><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong></div>
           <Link prefetch={false} href={href}>Подробнее →</Link>
         </div>
       </div>
@@ -84,20 +85,19 @@ async function EuropeIntro() {
       <Link href="/"><ArrowLeft size={16} />На главную</Link>
       <p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p>
       <h1>Автомобили<br />из Европы</h1>
-      <p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p>
+      <p>Актуальные объявления Mobile.de с подробной карточкой, опциями и предварительной стоимостью под ключ.</p>
     </div>
     <div className={styles.europeIntroStat}>
       <strong>{typeof total === "number" ? `${new Intl.NumberFormat("ru-RU").format(total)} авто` : "Европа"}</strong>
       <span>{typeof total === "number" ? "доступны в каталоге" : "каталог автомобилей"}</span>
-      <small>Нетто-цена и предварительный расчёт до Минска в карточке автомобиля.</small>
     </div>
   </section>;
 }
 
 function EuropeIntroFallback() {
   return <section className={styles.europeIntro}>
-    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p></div>
-    <div className={styles.europeIntroStat}><strong>Европа</strong><span>каталог автомобилей</span><small>Предварительная стоимость под ключ до Минска.</small></div>
+    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Актуальные объявления Mobile.de с подробной карточкой, опциями и предварительной стоимостью под ключ.</p></div>
+    <div className={styles.europeIntroStat}><strong>Европа</strong><span>каталог автомобилей</span></div>
   </section>;
 }
 
@@ -119,7 +119,6 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
           {valid ? <CatalogResults filters={filters} /> : <section className={styles.results}><div className={styles.message} role="alert"><strong>Проверьте параметры поиска</strong><p>Исправьте отмеченные поля в фильтрах и повторите поиск.</p></div></section>}
         </Suspense>
       </div>
-      <footer className={styles.footer}><span>Показываем объявления с Netto-ценой и предварительным расчётом под ключ до Минска.</span><span>Итоговая сумма уточняется при оформлении.</span></footer>
     </main>
   );
 }

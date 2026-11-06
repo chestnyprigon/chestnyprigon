@@ -55,7 +55,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",
     "lucide-react": "^1.30.0",
-    "next": "^16.4.3",
+    "next": "16.4.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "undici": "^7.30.1",
@@ -68,7 +68,7 @@
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
     "eslint": "^9",
-    "eslint-config-next": "^16.4.3",
+    "eslint-config-next": "16.4.5",
     "tailwindcss": "^4",
     "tsx": "^4.23.11",
     "typescript": "^5"

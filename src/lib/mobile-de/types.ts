@@ -45,7 +45,7 @@ export type MobileDeListing = {
   engine_cc: number | null;
   power: MobileDePower | null;
   price: MobileDePrice | null;
-  /** Source Netto from Mobile.de price.nt.amount; never inferred from gross. */
+  /** Source-reported Mobile.de Netto from price.nt.amount; never inferred from Brutto. */
   net_price?: MobileDePrice | null;
   primary_image: MobileDeImage | null;
   freshness: MobileDeFreshness | null;
