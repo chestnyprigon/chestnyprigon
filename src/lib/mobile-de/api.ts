@@ -6,7 +6,9 @@ import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 function shouldUseSupabaseCatalog() {
-  return process.env.EUROPE_CATALOG_SOURCE === "supabase";
+  // Europe has its own tables in the existing Supabase project. Keep its
+  // production reads independent from the Master API and Korean catalogue.
+  return true;
 }
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
