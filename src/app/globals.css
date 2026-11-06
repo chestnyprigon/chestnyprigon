@@ -306,6 +306,10 @@ a { color: inherit; text-decoration: none; }
 .dossier-preferential-block .dossier-preferential b { background: rgba(95,205,164,.14); border: 1px solid rgba(95,205,164,.28); border-radius: 99px; color: #bcebd9; font-size: 8px; padding: 3px 6px; }
 .dossier-preferential-block .dossier-preferential b.is-off { background: rgba(151,168,180,.1); border-color: rgba(151,168,180,.22); color: #b5c1ca; }
 .dossier-preferential-block>small { color: #b8c1b8; display: block; font-size: 8px; line-height: 1.45; margin-top: 7px; }
+.dossier-info-icon { align-items: center; border: 1px solid #81919d; border-radius: 50%; color: #aab7c0 !important; display: inline-flex; font-size: 8px; height: 13px; justify-content: center; margin-left: 4px; vertical-align: 1px; width: 13px; }
+.dossier-calculation-note { color: #758692; display: block; font-size: 8px; line-height: 1.4; margin: -2px 0 8px; }
+.dossier-calculation p.dossier-calculation-total { border-top: 1px solid var(--line); color: #fff; font-size: 9px; font-weight: 800; margin: 10px 0 7px; padding-top: 9px; }
+.dossier-price .dossier-lead:disabled { cursor: not-allowed; opacity: .55; }
 @media (max-width: 600px) {
   .dossier-thumbs-wrap { grid-template-columns: minmax(0, 1fr); padding-inline: 8px; }
   .dossier-thumbs-nav { display: none; }

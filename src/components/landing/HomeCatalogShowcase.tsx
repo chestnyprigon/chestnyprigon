@@ -9,6 +9,7 @@ import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
+import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 
 const cardLimit = 12;
@@ -65,7 +66,7 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     eyebrow: "Mobile.de",
     title: listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы",
     details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${distance.format(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
-    price: calculation ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: "BYN", maximumFractionDigits: 0 }).format(calculation.totalByn) : "",
+    price: calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "",
     priceNote: "Предварительно под ключ",
   };
 }

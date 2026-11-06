@@ -12,6 +12,7 @@ import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filt
 import { MobileDeFilterForm } from "./MobileDeFilterForm";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
+import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -55,7 +56,7 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
-          <div className={styles.cardEstimate}><span>Предварительно под ключ</span><strong>{calculation ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: "BYN", maximumFractionDigits: 0 }).format(calculation.totalByn) : ""}</strong></div>
+          <div className={styles.cardEstimate}><span>Предварительно под ключ</span><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong></div>
           <Link prefetch={false} href={href}>Подробнее →</Link>
         </div>
       </div>

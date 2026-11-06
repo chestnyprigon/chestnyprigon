@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { mobileDeSpecifications } from "@/lib/mobile-de/specifications";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
@@ -6,23 +7,6 @@ import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
 import { MobileDePriceCalculator } from "./MobileDePriceCalculator";
-import styles from "./MobileDeCatalog.module.css";
-
-function sourceUrl(sourceId: string) {
-  const url = new URL("https://suchen.mobile.de/fahrzeuge/details.html");
-  url.searchParams.set("id", sourceId);
-  return url.toString();
-}
-
-function formatMoney(listing: MobileDeListing) {
-  const amount = listing.net_price?.amount;
-  if (typeof amount !== "number" || listing.net_price?.basis !== "netto" || listing.net_price?.status !== "source_reported" || listing.net_price?.source_path !== "cars.price_net") return "";
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: listing.net_price?.currency || "EUR",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
 
 function optionsList(options: MobileDeListing["options"]) {
   if (!Array.isArray(options)) return [];
@@ -50,24 +34,18 @@ export async function MobileDeDossier({ listing, id }: { listing: MobileDeListin
   try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; }
 
   return (
-    <main id={id} className={`${styles.page} ${styles.detailPage}`}>
+    <main id={id} className="dossier-page">
       <CatalogNavigation />
-      <Link href="/catalog/europe" className={styles.backLink}>← Вернуться к объявлениям</Link>
-      <div className={styles.detailGrid}>
-        <MobileDeGallery images={gallery.map((image) => image.url)} title={title} />
-        <aside className={styles.detailCard}>
-          <span className={styles.eyebrow}>АВТОМОБИЛЬ ИЗ ЕВРОПЫ</span>
-          <h1>{title}</h1>
-          <p className={styles.detailPrice}>{formatMoney(listing)}</p>
-          <MobileDePriceCalculator listing={{ net_price: listing.net_price, first_registration: listing.first_registration, engine_cc: listing.engine_cc }} exchangeRates={exchangeRates} />
-          <dl className={styles.detailSpecs}>
-            {specs.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-          </dl>
-          <Link className={styles.sourceButton} href="/#contacts">Рассчитать доставку и получить консультацию</Link>
-          <a className={styles.secondaryButton} href={sourceUrl(listing.source_id)} target="_blank" rel="noreferrer">Открыть объявление на mobile.de ↗</a>
-        </aside>
-        {options.length > 0 && <section className={styles.detailOptions}><strong>Комплектация и опции</strong><ul>{options.map((option, index) => <li key={`${index}-${option}`}>{option}</li>)}</ul></section>}
-      </div>
+      <div className="dossier-contextbar"><Link href="/catalog/europe"><ArrowLeft size={16} />К каталогу</Link></div>
+      <section className="dossier-layout">
+        <div className="dossier-content">
+          <section className="dossier-vehicle-heading"><div><p>Автомобиль из Европы · Mobile.de</p><h1>{[listing.make, listing.model].filter(Boolean).join(" ") || title}</h1>{title !== [listing.make, listing.model].filter(Boolean).join(" ") && <h2>{title}</h2>}</div><div className="dossier-vehicle-facts">{specs.slice(0, 4).map(([label, value]) => <span key={label}>{label}: {value}</span>)}</div></section>
+          <section className="dossier-gallery"><MobileDeGallery images={gallery.map((image) => image.url)} title={title} /></section>
+          <section className="dossier-card"><h2>Общие данные</h2><div className="dossier-spec-cards">{specs.slice(0, 4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div><div className="dossier-lines">{specs.slice(4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></section>
+          {options.length > 0 && <section className="dossier-card"><h2>Комплектация и опции</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}
+        </div>
+        <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} />
+      </section>
     </main>
   );
 }
