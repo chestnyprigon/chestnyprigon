@@ -307,7 +307,7 @@ a { color: inherit; text-decoration: none; }
 .dossier-preferential-block .dossier-preferential b.is-off { background: rgba(151,168,180,.1); border-color: rgba(151,168,180,.22); color: #b5c1ca; }
 .dossier-preferential-block>small { color: #b8c1b8; display: block; font-size: 8px; line-height: 1.45; margin-top: 7px; }
 .info-tooltip { display: inline-flex; margin-left: 4px; position: relative; vertical-align: middle; z-index: 5; }
-.info-tooltip>summary { align-items: center; border: 0; border-radius: 0; color: #8d99a6; cursor: help; display: inline-flex; font-family: Georgia,serif; font-size: 14px; font-style: italic; font-weight: 700; height: 1em; justify-content: center; list-style: none; line-height: 1; padding: 0; width: .65em; }
+.info-tooltip>summary, .dossier-calculation .info-tooltip>summary { align-items: center; border: 1.5px solid currentColor; border-radius: 50%; box-sizing: border-box; color: #8d99a6; cursor: pointer; display: inline-flex; font-family: Arial,sans-serif; font-size: 10px; font-style: normal; font-weight: 700; height: 14px; justify-content: center; list-style: none; line-height: 1; min-height: 0; padding: 0; width: 14px; }
 .info-tooltip>summary::-webkit-details-marker { display: none; }
 .info-tooltip>summary:hover,.info-tooltip>summary:focus-visible,.info-tooltip[open]>summary { color: #c2ccd3; outline: none; }
 .info-tooltip>span { background: #152531; border: 1px solid #344a59; border-radius: 6px; bottom: calc(100% + 8px); box-shadow: 0 10px 28px rgba(0,0,0,.35); color: #d2dbe1; display: none; font-size: 10px; font-weight: 500; left: 0; line-height: 1.45; max-width: min(240px,75vw); min-width: 180px; padding: 9px 10px; position: absolute; text-transform: none; width: max-content; z-index: 80; }
