@@ -85,14 +85,14 @@ export type MobileDeFilters = {
   body_type?: string;
   price_min?: string;
   price_max?: string;
-  year_min?: string;
-  year_max?: string;
   registration_year_min?: string;
   registration_year_max?: string;
   mileage_min?: string;
   mileage_max?: string;
   power_min?: string;
   power_max?: string;
+  engine_cc_min?: string;
+  engine_cc_max?: string;
   sort?: string;
   limit?: string;
   cursor?: string;

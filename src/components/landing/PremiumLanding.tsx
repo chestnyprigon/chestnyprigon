@@ -8,6 +8,7 @@ import {
   Check,
   Camera,
   FileCheck2,
+  Globe2,
   Headphones,
   Mail,
   MapPin,
@@ -26,24 +27,8 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import type { CatalogCar } from "@/data/cars";
-import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
-import { CatalogDirections } from "@/components/mobile-de/CatalogNavigation";
-import { HomeCatalog } from "@/components/catalog/HomeCatalog";
 import { currentMarketingParams, trackMetrikaGoal } from "@/lib/analytics/metrika";
-
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const distance = new Intl.NumberFormat("ru-RU");
-
-function historyBadge(car: CatalogCar) {
-  if (car.accidents?.accidentCount) return { label: `Страховые случаи: ${car.accidents.accidentCount}`, tone: "is-alert" };
-  if (car.accidents?.available) return { label: "Без ДТП", tone: "is-clear" };
-  return { label: "Нет данных Encar", tone: "is-neutral" };
-}
-
-function catalogPrice(car: CatalogCar) {
-  return car.calculation.calculationAvailable ? money.format(car.price) : "Расчёт уточняется";
-}
+import type { ReactNode } from "react";
 
 const processSteps = [
   { title: "Консультация", short: "Уточняем запрос и подбираем направление", icon: MessageCircle, text: "Фиксируем марку, модель, бюджет, сроки и ключевые пожелания. Показываем понятный маршрут сделки до старта работы.", points: ["Первичная подборка вариантов", "Понятные сроки и следующие шаги", "Связь удобным для вас способом"] },
@@ -52,7 +37,7 @@ const processSteps = [
   { title: "Расчёт", short: "Формируем стоимость под ключ в USD", icon: Calculator, text: "Показываем автомобиль, логистику, таможенные платежи и услуги отдельными понятными строками.", points: ["Без скрытых платежей", "Расчёт до решения о покупке", "Фиксация курса и даты"] },
   { title: "Проверка", short: "Изучаем историю и техническое состояние", icon: ShieldCheck, text: "Проверяем страховую историю, пробег, комплектацию и доступные отчёты по автомобилю.", points: ["История и ограничения", "Фото и документы", "Рекомендация специалиста"] },
   { title: "Оплата", short: "Сопровождаем оплату по инвойсу", icon: BadgeCheck, text: "Объясняем последовательность платежей и остаёмся на связи до подтверждения сделки.", points: ["Проверенный порядок оплаты", "Контроль получения средств", "Документы по сделке"] },
-  { title: "Доставка", short: "Контролируем маршрут автомобиля", icon: Ship, text: "Отслеживаем автомобиль от площадки в Корее до прибытия в Беларусь и сообщаем статусы.", points: ["Фотофиксация этапов", "Статусы движения", "Контроль логистики"] },
+  { title: "Доставка", short: "Контролируем маршрут автомобиля", icon: Ship, text: "Отслеживаем автомобиль от площадки отправления до прибытия в Беларусь и сообщаем статусы.", points: ["Фотофиксация этапов", "Статусы движения", "Контроль логистики"] },
   { title: "Растаможка", short: "Помогаем с документами и выдачей", icon: CarFront, text: "Готовим пакет документов, объясняем порядок оформления и сопровождаем до передачи автомобиля.", points: ["Таможенное оформление", "Комплект документов", "Передача ключей"] },
 ];
 
@@ -66,8 +51,8 @@ const reviews = [
 ];
 
 const faqs = [
-  ["Сколько времени занимает доставка автомобиля?", "Ориентировочно 6–10 недель. Точный срок зависит от площадки, порта отправления, графика судов и маршрута до Беларуси."],
-  ["Как формируется цена под ключ?", "Отдельно показываем цену автомобиля, расходы в Корее, логистику, таможенные платежи и нашу комиссию. Итог отображается в долларах США."],
+  ["Сколько времени занимает доставка автомобиля?", "Срок зависит от страны покупки, площадки и маршрута. Менеджер уточнит его для выбранного автомобиля."],
+  ["Как формируется цена под ключ?", "Отдельно показываем цену автомобиля, расходы по выбранному маршруту, логистику, таможенные платежи и нашу комиссию. Итоговый расчёт подготовим в удобной валюте."],
   ["Можно ли проверить автомобиль до покупки?", "Да. Проверяем историю, пробег, комплектацию, фотографии и доступные отчёты. По спорным вариантам рекомендуем отказаться от покупки."],
   ["Какие документы я получу?", "Договор, инвойс, экспортные и таможенные документы, а также подтверждения по логистике и оплате."],
   ["Есть ли скрытые платежи?", "Нет. Все обязательные и сервисные расходы показываются до покупки. Если ставка зависит от курса или тарифа, это указывается отдельно."],
@@ -75,7 +60,7 @@ const faqs = [
   ["Вы помогаете с постановкой на учёт?", "Подскажем порядок действий и необходимый комплект документов после выдачи автомобиля."],
 ];
 
-export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
+export function PremiumLanding({ catalogShowcase }: { catalogShowcase: ReactNode }) {
   const [processOpen, setProcessOpen] = useState(0);
   const [faqOpen, setFaqOpen] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -125,24 +110,23 @@ export function PremiumLanding({ catalog, initialSearch }: { catalog: CatalogPag
 
     <section className="premium-hero" id="home">
       <div className="premium-hero-bg" />
-      <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br />из Кореи<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="/catalog">Смотреть каталог</Link></div></div>
-      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="korea-flag"><Image src="/assets/flags/flag-korea.png" alt="Флаг Южной Кореи" width={280} height={200} /></span><b>Корея → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
+      <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="#catalog-directions">Выбрать направление</Link></div></div>
+      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="neutral-route-icon"><Globe2 size={21} /></span><b>Из-за рубежа → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
-    <section className="catalog-direction-home"><h2>Выберите направление</h2><p>Автомобили из Кореи и Европы</p><CatalogDirections /></section>
-    <HomeCatalog key={JSON.stringify(initialSearch)} catalog={catalog} initialSearch={initialSearch} />
+    {catalogShowcase}
 
     <section className="premium-process premium-section" id="services"><div className="premium-section-copy"><p className="premium-kicker"><span />Как мы работаем</p><h2>Маршрут сделки<br />от заявки до ключей</h2><p>Вы сразу видите последовательность работы, документы и действия на каждом этапе.</p></div><div className="process-list">{processSteps.map((step, index) => { const Icon = step.icon; const open = processOpen === index; return <article className={open ? "process-item is-open" : "process-item"} key={step.title}><button type="button" onClick={() => setProcessOpen(open ? -1 : index)}><span className="process-number">{String(index + 1).padStart(2, "0")}</span><Icon size={18} /><b>{step.title}</b><em>{step.short}</em><span className="process-toggle">{open ? "×" : "+"}</span></button>{open && <div className="process-details"><p>{step.text}</p><ul>{step.points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul></div>}</article>; })}</div></section>
 
     <section className="premium-reviews" id="reviews"><div className="premium-section-copy centered"><p className="premium-kicker"><span />Отзывы</p><h2>Люди, которые уже<br />забрали свои автомобили</h2></div><div className="reviews-track">{[...reviews, ...reviews].map(([initials, name, city, text], index) => <article key={`${name}-${index}`}><div><span>{initials}</span><p><b>{name}</b><small>{city}</small></p></div><p>{text}</p></article>)}</div></section>
 
-    <section className="premium-faq premium-section"><div className="premium-section-copy centered"><p className="premium-kicker"><span />FAQ</p><h2>Часто задаваемые вопросы</h2><p>Коротко объясняем процесс покупки и доставки автомобиля из Кореи.</p></div><div className="faq-grid">{faqs.map(([question, answer], index) => { const open = faqOpen === index; return <article className={open ? "faq-item is-open" : "faq-item"} key={question}><button type="button" onClick={() => setFaqOpen(open ? -1 : index)}><b>{question}</b><span>{open ? "×" : "+"}</span></button>{open && <p>{answer}</p>}</article>; })}</div><div className="faq-support"><Headphones /><span><b>Не нашли ответ?</b><small>Расскажите о задаче — разберём ваш сценарий покупки.</small></span><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Связаться с нами <ArrowRight size={16} /></button></div></section>
+    <section className="premium-faq premium-section"><div className="premium-section-copy centered"><p className="premium-kicker"><span />FAQ</p><h2>Часто задаваемые вопросы</h2><p>Коротко объясняем процесс покупки и доставки автомобиля из-за границы.</p></div><div className="faq-grid">{faqs.map(([question, answer], index) => { const open = faqOpen === index; return <article className={open ? "faq-item is-open" : "faq-item"} key={question}><button type="button" onClick={() => setFaqOpen(open ? -1 : index)}><b>{question}</b><span>{open ? "×" : "+"}</span></button>{open && <p>{answer}</p>}</article>; })}</div><div className="faq-support"><Headphones /><span><b>Не нашли ответ?</b><small>Расскажите о задаче — разберём ваш сценарий покупки.</small></span><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Связаться с нами <ArrowRight size={16} /></button></div></section>
 
-    <section className="premium-contacts premium-section" id="contacts"><div className="contacts-card"><div className="contacts-copy"><p className="premium-kicker"><span />Контакты</p><h2>Свяжитесь с нами<br />и запустим подбор</h2><p>Офис компании в Минске. Работаем с автомобилями из Южной Кореи.</p><div className="contacts-map"><iframe title="Офис на карте" src={`https://yandex.ru/map-widget/v1/?text=${encodeURIComponent("Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1")}&z=17`} loading="lazy" /></div></div><div className="contacts-links"><a href="tel:+375447543987"><Phone />+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com"><Mail />Chestnyjprigon@gmail.com</a><a href="https://maps.google.com/?q=Республика+Беларусь,+220113,+г.+Минск,+ул.+Бегомльская,+д.+21,+каб.+1-1" target="_blank" rel="noreferrer"><MapPin />Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1</a><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer"><Send />@IvanPrigon <ArrowRight /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer"><Camera />Instagram <ArrowRight /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer"><Video />YouTube <ArrowRight /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer"><Music2 />TikTok <ArrowRight /></a><a className="contacts-main" href="https://wa.me/375447543987" target="_blank" rel="noreferrer"><MessageCircle />Написать в WhatsApp <ArrowRight /></a></div></div>
+    <section className="premium-contacts premium-section" id="contacts"><div className="contacts-card"><div className="contacts-copy"><p className="premium-kicker"><span />Контакты</p><h2>Свяжитесь с нами<br />и запустим подбор</h2><p>Офис компании в Минске. Подбираем автомобили за рубежом и сопровождаем доставку.</p><div className="contacts-map"><iframe title="Офис на карте" src={`https://yandex.ru/map-widget/v1/?text=${encodeURIComponent("Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1")}&z=17`} loading="lazy" /></div></div><div className="contacts-links"><a href="tel:+375447543987"><Phone />+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com"><Mail />Chestnyjprigon@gmail.com</a><a href="https://maps.google.com/?q=Республика+Беларусь,+220113,+г.+Минск,+ул.+Бегомльская,+д.+21,+каб.+1-1" target="_blank" rel="noreferrer"><MapPin />Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1</a><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer"><Send />@IvanPrigon <ArrowRight /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer"><Camera />Instagram <ArrowRight /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer"><Video />YouTube <ArrowRight /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer"><Music2 />TikTok <ArrowRight /></a><a className="contacts-main" href="https://wa.me/375447543987" target="_blank" rel="noreferrer"><MessageCircle />Написать в WhatsApp <ArrowRight /></a></div></div>
       <form className="lead-banner" onSubmit={submit}><div><p className="premium-kicker"><span />Бесплатная консультация</p><h2>Подберём ваш<br />идеальный автомобиль</h2><p>Оставьте заявку — подготовим подборку и предварительный расчёт.</p><ul><li><Check />Прозрачная цена</li><li><Check />Проверка истории</li><li><Check />Без скрытых платежей</li></ul></div><div className="lead-fields">{submitted ? <div className="lead-success"><BadgeCheck /><b>Заявка принята</b><span>Менеджер скоро свяжется с вами.</span></div> : <><input name="name" placeholder="Ваше имя" required /><input name="phone" placeholder="Телефон" required /><input name="car" placeholder="Интересующий автомобиль" /><button type="submit" disabled={submitting}>{submitting ? "Отправляем…" : "Отправить заявку"} <ArrowRight /></button>{submitError ? <small role="alert">{submitError}</small> : null}<small>Нажимая кнопку, вы соглашаетесь с политикой конфиденциальности</small></>}</div></form>
     </section>
 
-    <footer className="premium-footer"><div className="footer-brand"><b>ЧЕСТНЫЙ<br /><em>ПРИГОН</em></b><p>Автомобили из Кореи<br />с доставкой в Беларусь</p></div><div><b>Услуги</b><Link href="/catalog">Подбор автомобиля</Link><a href="#services">Проверка и покупка</a><a href="#services">Доставка</a><a href="#services">Таможенное оформление</a></div><div><b>Контакты</b><a href="tel:+375447543987">+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com">Chestnyjprigon@gmail.com</a><span>Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1</span></div><div><b>Мы в соцсетях</b><div className="footer-social"><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer" aria-label="Telegram"><Send /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer" aria-label="Instagram"><Camera /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer" aria-label="YouTube"><Video /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer" aria-label="TikTok"><Music2 /></a></div></div></footer>
+    <footer className="premium-footer"><div className="footer-brand"><b>ЧЕСТНЫЙ<br /><em>ПРИГОН</em></b><p>Автомобили из-за границы<br />с доставкой в Беларусь</p></div><div><b>Услуги</b><Link href="/catalog">Подбор автомобиля</Link><a href="#services">Проверка и покупка</a><a href="#services">Доставка</a><a href="#services">Таможенное оформление</a></div><div><b>Контакты</b><a href="tel:+375447543987">+375 (44) 754-39-87</a><a href="mailto:Chestnyjprigon@gmail.com">Chestnyjprigon@gmail.com</a><span>Республика Беларусь, 220113, г. Минск, ул. Бегомльская, д. 21, каб. 1-1</span></div><div><b>Мы в соцсетях</b><div className="footer-social"><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer" aria-label="Telegram"><Send /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer" aria-label="Instagram"><Camera /></a><a href="https://www.youtube.com/@user-fx3lj6gi7n" target="_blank" rel="noreferrer" aria-label="YouTube"><Video /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer" aria-label="TikTok"><Music2 /></a></div></div></footer>
 
     {modalOpen && <div className="consult-modal-backdrop" onMouseDown={() => setModalOpen(false)}><div className="consult-modal" role="dialog" aria-modal="true" aria-label="Получить консультацию" onMouseDown={(event) => event.stopPropagation()}><button className="consult-close" type="button" onClick={() => setModalOpen(false)}><X /></button><p className="premium-kicker"><span />Консультация</p><h2>Как удобнее связаться?</h2><p>Выберите мессенджер или оставьте телефон — данные автомобиля будут передаваться в заявку автоматически после подключения каталога.</p><div className="messenger-grid"><a href="https://t.me/IvanPrigon" target="_blank" rel="noreferrer"><Send />Telegram <ArrowRight /></a><a href="https://wa.me/375447543987" target="_blank" rel="noreferrer"><MessageCircle />WhatsApp <ArrowRight /></a><a href="tel:+375447543987"><Phone />Позвонить <ArrowRight /></a><a href="mailto:Chestnyjprigon@gmail.com"><Mail />Email <ArrowRight /></a><a href="https://www.instagram.com/chestnyj_prigon/" target="_blank" rel="noreferrer"><Camera />Instagram <ArrowRight /></a><a href="https://www.tiktok.com/@chestniy_prigon?_r=1" target="_blank" rel="noreferrer"><Music2 />TikTok <ArrowRight /></a></div></div></div>}
   </main>;

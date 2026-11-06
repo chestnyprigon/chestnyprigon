@@ -1,7 +1,8 @@
 /* eslint-disable @next/next/no-img-element -- image hosts are supplied by Master DB and are not fixed at build time. */
 import Link from "next/link";
 import { Suspense } from "react";
-import { MobileDeApiError, getMobileDeListings } from "@/lib/mobile-de/api";
+import { ArrowLeft } from "lucide-react";
+import { MobileDeApiError, getMobileDeFacets, getMobileDeListings } from "@/lib/mobile-de/api";
 import type { MobileDeFilters, MobileDeListing } from "@/lib/mobile-de/types";
 import { MobileDeFilterPanel } from "./MobileDeFilterPanel";
 import { CatalogNavigation, CatalogDirections } from "./CatalogNavigation";
@@ -70,6 +71,31 @@ export function MobileDeUnavailable({ error }: { error: MobileDeApiError }) {
   return <main className={styles.page}><CatalogNavigation /><section className={styles.hero}><div><ApiMessage error={error} /><Link className={styles.backLink} href="/catalog/europe">← Вернуться в каталог</Link></div></section></main>;
 }
 
+async function EuropeIntro() {
+  const [facetsResult] = await Promise.allSettled([getMobileDeFacets()]);
+  const total = facetsResult.status === "fulfilled" ? facetsResult.value.ranges?.count : undefined;
+  return <section className={styles.europeIntro}>
+    <div className={styles.europeIntroCopy}>
+      <Link href="/"><ArrowLeft size={16} />На главную</Link>
+      <p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p>
+      <h1>Автомобили<br />из Европы</h1>
+      <p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p>
+    </div>
+    <div className={styles.europeIntroStat}>
+      <strong>{typeof total === "number" ? `${new Intl.NumberFormat("ru-RU").format(total)} авто` : "Европа"}</strong>
+      <span>{typeof total === "number" ? "доступны в каталоге" : "каталог автомобилей"}</span>
+      <small>Актуальность объявления подтверждается продавцом отдельно. Доставка и таможня рассчитываются отдельно.</small>
+    </div>
+  </section>;
+}
+
+function EuropeIntroFallback() {
+  return <section className={styles.europeIntro}>
+    <div className={styles.europeIntroCopy}><Link href="/"><ArrowLeft size={16} />На главную</Link><p className={styles.europeIntroKicker}><span />Каталог автомобилей из Европы</p><h1>Автомобили<br />из Европы</h1><p>Актуальные объявления Mobile.de с подробной карточкой, фотографиями и характеристиками. Рассчитаем предварительную стоимость автомобиля под ключ.</p></div>
+    <div className={styles.europeIntroStat}><strong>Европа</strong><span>каталог автомобилей</span><small>Цены продавца в евро. Доставка и таможня рассчитываются отдельно.</small></div>
+  </section>;
+}
+
 export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const {filters, errors, valid} = parseMobileDeFilters(params);
@@ -77,16 +103,9 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
   return (
     <main className={styles.page}>
       <CatalogNavigation />
-      <section className={styles.hero}>
-        <div className={styles.heroCopy}>
-          <span className={styles.eyebrow}>КАТАЛОГ АВТОМОБИЛЕЙ</span>
-          <h1>Автомобили из Европы</h1>
-          <p>Выберите автомобиль из Европы. Поможем проверить его, рассчитать доставку и оформить покупку.</p>
-        </div>
-        <div className={styles.heroNote}><span>01 / ИСТОЧНИК</span><strong>Германия и Европа</strong><small>Актуальность продавца может быть неизвестна</small></div>
-      </section>
+      <Suspense fallback={<EuropeIntroFallback />}><EuropeIntro /></Suspense>
 
-      <CatalogDirections active="europe" />
+      <CatalogDirections active="europe" preserveScroll />
       <div className={styles.layout}>
         <MobileDeFilterPanel>
           <MobileDeFilterForm key={JSON.stringify(params)} params={params} initialErrors={errors} />
@@ -109,7 +128,7 @@ async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
   let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
   let error: MobileDeApiError | null = null;
   try { catalog = await getMobileDeListings(filters); }
-  catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Master API request failed"); }
+  catch (cause) { error = cause instanceof MobileDeApiError ? cause : new MobileDeApiError(null, "Europe catalogue request failed"); }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);
   return (
 

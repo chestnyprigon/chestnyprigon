@@ -49,6 +49,7 @@
     "analytics:metrika": "tsx scripts/analytics/fetch-metrika-report.ts",
     "test:pricing": "tsx --test src/lib/pricing/*.test.ts",
     "catalog:search-local": "tsx scripts/catalog/search-local-candidates.ts",
+    "mobile-de:import": "tsx scripts/mobile-de/import-proven-catalog.ts",
     "catalog:start-local-scale-run": "tsx scripts/catalog/start-local-scale-run.ts"
   },
   "dependencies": {
