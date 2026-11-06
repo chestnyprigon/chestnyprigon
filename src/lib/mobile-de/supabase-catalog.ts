@@ -5,7 +5,7 @@ import { mobileDeText } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 const listingColumns = [
-  "master_id", "source_id", "title", "make", "model", "production_year", "first_registration",
+  "master_id", "source_id", "title", "make", "model", "first_registration",
   "first_registration_precision", "registration_year", "mileage_km", "engine_cc", "power_ps",
   "price_amount", "price_currency", "price_category", "fuel_type", "transmission", "drive", "body_type",
   "color", "description", "options", "source_url", "primary_image_url", "source_updated_at", "last_seen_at",
@@ -52,12 +52,12 @@ function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string,
     title: String(row.title),
     make: typeof row.make === "string" ? row.make : null,
     model: typeof row.model === "string" ? row.model : null,
-    production_year: typeof row.production_year === "number" ? row.production_year : null,
     first_registration: row.first_registration ? { value: String(row.first_registration), precision: String(row.first_registration_precision) } : null,
     mileage_km: typeof row.mileage_km === "number" ? row.mileage_km : null,
     engine_cc: typeof row.engine_cc === "number" ? row.engine_cc : null,
     power: { value: typeof row.power_ps === "number" ? row.power_ps : null, unit: "PS", label_ru: "л. с." },
-    price: { amount: typeof row.price_amount === "number" ? row.price_amount : null, currency: String(row.price_currency || "EUR"), type: typeof row.price_category === "string" ? row.price_category : "original_asking" },
+    price: null,
+    net_price: { amount: typeof row.price_amount === "number" ? row.price_amount : null, currency: "EUR", type: "source_netto", basis: "netto", status: "source_reported", source_path: "cars.price_net" },
     primary_image: primaryUrl ? { url: primaryUrl, position: 0, is_primary: true } : null,
     freshness: { availability: "unknown", source_updated_at: typeof row.source_updated_at === "string" ? row.source_updated_at : null, master_updated_at: typeof row.updated_at === "string" ? row.updated_at : null, last_successful_source_check_at: typeof row.verified_at === "string" ? row.verified_at : null },
     fuel_type: typeof row.fuel_type === "string" ? row.fuel_type : null,

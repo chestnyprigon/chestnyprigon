@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { mobileDeSpecifications } from "@/lib/mobile-de/specifications";
+import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
+import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
+import { MobileDePriceCalculator } from "./MobileDePriceCalculator";
 import styles from "./MobileDeCatalog.module.css";
 
 function sourceUrl(sourceId: string) {
@@ -12,11 +15,11 @@ function sourceUrl(sourceId: string) {
 }
 
 function formatMoney(listing: MobileDeListing) {
-  const amount = listing.price?.amount;
-  if (typeof amount !== "number") return "Цена уточняется";
+  const amount = listing.net_price?.amount;
+  if (typeof amount !== "number" || listing.net_price?.basis !== "netto" || listing.net_price?.status !== "source_reported" || listing.net_price?.source_path !== "cars.price_net") return "";
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
-    currency: listing.price?.currency || "EUR",
+    currency: listing.net_price?.currency || "EUR",
     maximumFractionDigits: 0,
   }).format(amount);
 }
@@ -38,18 +41,16 @@ function galleryImages(listing: MobileDeListing) {
   return [...unique.values()].sort((a, b) => (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0));
 }
 
-export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
+export async function MobileDeDossier({ listing, id }: { listing: MobileDeListing; id?: string }) {
   const options = optionsList(listing.options);
   const gallery = galleryImages(listing);
   const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
-  const availability = listing.freshness?.availability === "unknown"
-    ? "Продавец не подтвердил актуальность объявления"
-    : "Статус объявления уточняется";
-
   const specs = mobileDeSpecifications(listing);
+  let exchangeRates: ExchangeRates | null = null;
+  try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; }
 
   return (
-    <main className={`${styles.page} ${styles.detailPage}`}>
+    <main id={id} className={`${styles.page} ${styles.detailPage}`}>
       <CatalogNavigation />
       <Link href="/catalog/europe" className={styles.backLink}>← Вернуться к объявлениям</Link>
       <div className={styles.detailGrid}>
@@ -58,7 +59,7 @@ export function MobileDeDossier({ listing }: { listing: MobileDeListing }) {
           <span className={styles.eyebrow}>АВТОМОБИЛЬ ИЗ ЕВРОПЫ</span>
           <h1>{title}</h1>
           <p className={styles.detailPrice}>{formatMoney(listing)}</p>
-          <p className={styles.filterFootnote}>Цена продавца в Европе. Доставка, таможня и услуги рассчитываются отдельно.</p><p className={styles.filterFootnote}>{availability}</p>
+          <MobileDePriceCalculator listing={{ net_price: listing.net_price, first_registration: listing.first_registration, engine_cc: listing.engine_cc }} exchangeRates={exchangeRates} />
           <dl className={styles.detailSpecs}>
             {specs.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
           </dl>

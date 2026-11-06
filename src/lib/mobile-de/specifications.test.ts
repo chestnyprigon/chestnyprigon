@@ -3,7 +3,7 @@ import test from "node:test";
 import { mobileDeSpecifications } from "./specifications";
 import type { MobileDeListing } from "./types";
 const fixture = {
-  production_year: null, first_registration: {value:"2025-08"}, mileage_km:8831, engine_cc:1332,
+  first_registration: {value:"2025-08"}, mileage_km:8831, engine_cc:1332,
   power:{value:136, label_ru:"л. с."}, drive:"Передний привод", transmission:"Автоматическая коробка передач",
   fuel_type:null, body_type:null, color:null,
   description:"По заявлению продавца:\nSUV / внедорожник / пикап\nПервая регистрация: 08/2025\nПробег: 8.831 км\nОбъём двигателя: 1.332 см³\nБензин\nАвтоматическая коробка передач\nСерый\nКоличество дверей: 4/5\nКоличество мест: 5\nТехосмотр: новый срок (по заявлению продавца)\nКоличество владельцев: 1"
