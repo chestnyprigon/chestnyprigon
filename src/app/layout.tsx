@@ -28,9 +28,9 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/assets/logo-social.png",
-        width: 1733,
-        height: 907,
+        url: "/assets/logo-social-dark-v2.jpg",
+        width: 1280,
+        height: 1280,
         alt: "Логотип Честный пригон",
       },
     ],
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: siteTitle,
     description: siteDescription,
-    images: ["/assets/logo-social.png"],
+    images: ["/assets/logo-social-dark-v2.jpg"],
   },
 };
 
