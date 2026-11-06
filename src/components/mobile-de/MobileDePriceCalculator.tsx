@@ -87,7 +87,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
           <p><span>Перевод</span><b>{money(calculation.translationEur, "EUR")}</b></p>
           <p><span>Доставка до Минска <InfoTooltip label="О стоимости доставки">Это средняя сумма доставки. Для более точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{money(calculation.deliveryMinskEur, "EUR")}</b></p>
           <p><span>Услуга компании</span><b>{money(calculation.companyServiceEur, "EUR")}</b></p>
-          <p><span>Таможенный платёж для физлица{preferential ? " · льготный режим" : ""}</span><b>{money(calculation.customsDutyEur, "EUR")}</b></p>
+          <p><span>Таможенный платёж</span><b>{money(calculation.customsDutyEur, "EUR")}</b></p>
           <p><span>Утилизационный сбор</span><b>{money(calculation.recyclingFeeByn, "BYN")}</b></p>
           <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{formattedTotal}</b></p>
         </div> : <div><p><span>{exchangeRates ? "Недостаточно данных для расчёта" : "Расчёт временно недоступен"}</span></p></div>}
