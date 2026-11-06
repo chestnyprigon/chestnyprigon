@@ -15,6 +15,6 @@ export function CatalogNavigation() {
   </header>;
 }
 
-export function CatalogDirections({ active = "korea" }: { active?: "korea" | "europe" }) {
-  return <nav className={styles.directions} aria-label="Выбор каталога"><Link href="/catalog" aria-current={active === "korea" ? "page" : undefined}>🇰🇷 Корея</Link><Link href="/catalog/europe" aria-current={active === "europe" ? "page" : undefined}>🇪🇺 Европа</Link></nav>;
+export function CatalogDirections({ active = "korea", preserveScroll = false }: { active?: "korea" | "europe"; preserveScroll?: boolean }) {
+  return <nav className={styles.directions} aria-label="Выбор каталога"><Link href="/catalog" scroll={!preserveScroll} aria-current={active === "korea" ? "page" : undefined}>🇰🇷 Корея</Link><Link href="/catalog/europe" scroll={!preserveScroll} aria-current={active === "europe" ? "page" : undefined}>🇪🇺 Европа</Link></nav>;
 }

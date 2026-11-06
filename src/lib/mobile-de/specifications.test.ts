@@ -16,7 +16,7 @@ test("seller text fills missing specs without repeating structured fields",()=>{
  assert.equal(values.get("Количество владельцев"),"1");
  assert.equal(values.get("Техосмотр"),"новый срок (по заявлению продавца)");
  assert.equal(specs.length,new Set(specs.map(([key])=>key)).size);
- assert.equal(values.get("Год выпуска"),"Не указано");
+ assert.equal(values.has("Год выпуска"),false);
 });
 test("API wins over conflicting seller text and missing numbers are parsed conservatively",()=>{
  const specs=new Map(mobileDeSpecifications({...fixture,color:"Белый",fuel_type:"Дизель",mileage_km:9000,engine_cc:null}));

@@ -189,7 +189,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
         <div className="catalog-intro-stat"><strong>{catalog.total} авто</strong><span>прошли автоматическую проверку</span><small>Исключаем аренду, такси и коммерческий транспорт. Историю ДТП и страховых выплат показываем открыто.</small></div>
       </section>
 
-      <div className="catalog-direction-home"><CatalogDirections /></div>
+      <div className="catalog-direction-home"><CatalogDirections preserveScroll /></div>
       <section className="catalog-workspace" id="catalog-list">
         <button className="mobile-filter-trigger" type="button" onClick={() => setFiltersOpen(!filtersOpen)}><Filter size={17} />Фильтры <ChevronDown size={16} /></button>
         <aside className={filtersOpen ? "catalog-filters is-open" : "catalog-filters"}>

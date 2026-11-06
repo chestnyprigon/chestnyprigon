@@ -6,8 +6,8 @@ import "./globals.css";
 
 const manrope = Manrope({ subsets: ["cyrillic", "latin"], variable: "--font-manrope" });
 const isPreview = process.env.VERCEL_ENV === "preview";
-const siteTitle = "Честный пригон — автомобили из Кореи и Европы";
-const siteDescription = "Подбор, проверка и доставка автомобилей из Кореи и Европы в Беларусь.";
+const siteTitle = "Честный пригон — автомобили из-за рубежа";
+const siteDescription = "Подбор, проверка и доставка автомобилей из-за рубежа в Беларусь.";
 const previewUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined;
 
 export const metadata: Metadata = {
@@ -16,8 +16,8 @@ export const metadata: Metadata = {
   description: siteDescription,
   ...(isPreview ? { robots: { index: false, follow: false } } : {}),
   icons: {
-    icon: "/logo.jpeg",
-    apple: "/logo.jpeg",
+    icon: [{ url: "/assets/brand-icon.png", type: "image/png", sizes: "1254x1254" }],
+    apple: [{ url: "/assets/brand-icon.png", type: "image/png", sizes: "1254x1254" }],
   },
   openGraph: {
     title: siteTitle,
@@ -28,18 +28,18 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/logo.jpeg",
-        width: 1280,
-        height: 1280,
+        url: "/assets/logo-social.png",
+        width: 1733,
+        height: 907,
         alt: "Логотип Честный пригон",
       },
     ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: siteTitle,
     description: siteDescription,
-    images: ["/logo.jpeg"],
+    images: ["/assets/logo-social.png"],
   },
 };
 
