@@ -111,7 +111,7 @@ export function PremiumLanding({ catalogShowcase }: { catalogShowcase: ReactNode
     <section className="premium-hero" id="home">
       <div className="premium-hero-bg" />
       <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="#catalog-directions">Выбрать направление</Link></div></div>
-      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><div className="premium-route"><span className="neutral-route-icon"><Globe2 size={21} /></span><b>Из-за рубежа → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
+      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><nav className="premium-country-links" aria-label="Каталоги автомобилей"><Link href="/catalog">🇰🇷 Корея</Link><Link href="/catalog/europe">🇪🇺 Европа</Link></nav><div className="premium-route"><span className="neutral-route-icon"><Globe2 size={21} /></span><b>Из-за рубежа → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
     </section>
 
     {catalogShowcase}
