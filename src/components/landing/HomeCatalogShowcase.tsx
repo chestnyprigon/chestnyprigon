@@ -11,6 +11,7 @@ import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
+import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 
 const cardLimit = 12;
 const distance = new Intl.NumberFormat("ru-RU");
@@ -25,6 +26,7 @@ type ShowcaseCard = {
   details: string;
   price: string;
   priceNote: string;
+  priceInfo?: string;
 };
 
 type ShowcaseSectionProps = {
@@ -67,7 +69,8 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     title: listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы",
     details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${distance.format(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
     price: calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "",
-    priceNote: "Предварительно под ключ",
+    priceNote: "под ключ в Минске",
+    priceInfo: "Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.",
   };
 }
 
@@ -82,7 +85,7 @@ function ShowcaseSection({ id, country, href, action, cards }: ShowcaseSectionPr
         {card.image ? <Image src={card.image} alt={card.imageAlt} fill sizes="(max-width: 700px) 78vw, (max-width: 1100px) 33vw, 25vw" unoptimized /> : <span className="home-showcase-no-image">Фото появится позже</span>}
         <span className="home-showcase-badge">{card.eyebrow}</span>
       </Link>
-      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}</p><footer><span><small>{card.priceNote}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
+      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}</p><footer><span><small>{card.priceNote}{card.priceInfo ? <InfoTooltip label="О предварительной стоимости">{card.priceInfo}</InfoTooltip> : null}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
     </article>)}</div> : <div className="home-showcase-empty">Сейчас подборка обновляется. Откройте каталог, чтобы посмотреть все объявления.</div>}
     <div className="home-showcase-mobile-action"><Link className="premium-button secondary" href={href}>{action} <span aria-hidden="true">→</span></Link></div>
   </section>;

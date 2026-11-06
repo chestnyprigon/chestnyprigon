@@ -14,6 +14,7 @@ import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
+import { InfoTooltip } from "./InfoTooltip";
 type SearchParams = Record<string, string | string[] | undefined>;
 
 function formatNumber(value: number | null | undefined) {
@@ -56,8 +57,10 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
-          <div className={styles.cardEstimate}><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong><small>под ключ в Минске</small></div>
-          <Link prefetch={false} href={href}>Подробнее →</Link>
+          <div className={styles.cardEstimate}>
+            <strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong>
+            <small>под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></small>
+          </div>
         </div>
       </div>
     </article>

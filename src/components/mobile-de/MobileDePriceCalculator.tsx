@@ -6,6 +6,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
+import { InfoTooltip } from "./InfoTooltip";
 
 const money = (amount: number, currency: "EUR" | "BYN") => new Intl.NumberFormat("ru-RU", {
   style: "currency", currency, maximumFractionDigits: 2,
@@ -71,7 +72,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
       <div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div>
       <div className="dossier-total">
-        <span>Предварительная цена под ключ</span>
+        <span>Цена под ключ <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span>
         <strong>{formattedTotal || (calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
         <small>с доставкой и оформлением в Беларуси</small>
       </div>
@@ -84,13 +85,11 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
           <p><span>Цена Netto</span><b>{money(calculation.netPriceEur, "EUR")}</b></p>
           <p><span>Услуги компании в ЕС</span><b>{money(calculation.ecServiceEur, "EUR")}</b></p>
           <p><span>Перевод</span><b>{money(calculation.translationEur, "EUR")}</b></p>
-          <p><span>Доставка до Минска <span className="dossier-info-icon" title="Средняя сумма доставки; точную стоимость уточнит менеджер" aria-label="Средняя сумма доставки; точную стоимость уточнит менеджер">i</span></span><b>{money(calculation.deliveryMinskEur, "EUR")}</b></p>
-          <small className="dossier-calculation-note">Средняя сумма доставки. Для точной стоимости обратитесь к менеджеру.</small>
+          <p><span>Доставка до Минска <InfoTooltip label="О стоимости доставки">Это средняя сумма доставки. Для более точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{money(calculation.deliveryMinskEur, "EUR")}</b></p>
           <p><span>Услуга компании</span><b>{money(calculation.companyServiceEur, "EUR")}</b></p>
           <p><span>Таможенный платёж для физлица{preferential ? " · льготный режим" : ""}</span><b>{money(calculation.customsDutyEur, "EUR")}</b></p>
           <p><span>Утилизационный сбор</span><b>{money(calculation.recyclingFeeByn, "BYN")}</b></p>
-          <p className="dossier-calculation-total"><span>Предварительно до Минска</span><b>{formattedTotal}</b></p>
-          <small className="dossier-calculation-note">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</small>
+          <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{formattedTotal}</b></p>
         </div> : <div><p><span>{exchangeRates ? "Недостаточно данных для расчёта" : "Расчёт временно недоступен"}</span></p></div>}
       </details>
       <button className="dossier-lead" type="button" disabled={!calculation} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>Оставить заявку <ArrowRight size={17} /></button>
