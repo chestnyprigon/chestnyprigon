@@ -65,11 +65,17 @@ async function main() {
     throw new Error("--publication must be disabled or auto_after_screening");
   }
   const pageSize = numberArgument("page-size", 100, 20, 200);
+  const targetArgument = process.argv.find((arg) => arg.startsWith("--candidate-pool-target="))
+    ?.slice("--candidate-pool-target=".length);
+  const candidatePoolTarget = targetArgument === undefined ? null : Number(targetArgument);
+  if (candidatePoolTarget !== null && (!Number.isInteger(candidatePoolTarget) || candidatePoolTarget < 1 || candidatePoolTarget > 100_000)) {
+    throw new Error("--candidate-pool-target must be 1..100000");
+  }
   // Scan each configured brand to source exhaustion. Brand targets only
-  // influence diversity; they don't cap candidate discovery or publication.
-  if (process.argv.some((arg) => arg.startsWith("--candidate-pool-target=")
-    || arg.startsWith("--pilot-candidates=") || arg.startsWith("--max-pages-per-brand="))) {
-    throw new Error("Candidate and page caps are no longer supported; search continues until each brand's source listing is exhausted");
+  // influence diversity; an explicit candidate target is available for a
+  // bounded discovery cohort and is filled round-robin across brands.
+  if (process.argv.some((arg) => arg.startsWith("--pilot-candidates=") || arg.startsWith("--max-pages-per-brand="))) {
+    throw new Error("Pilot and per-brand page caps are unsupported; use --candidate-pool-target for a balanced cohort");
   }
   const launchId = process.env.CHESTNY_CATALOG_LAUNCH_ID?.trim();
   const client = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), {
@@ -168,14 +174,16 @@ async function main() {
       project: "chestny-prigon", status: "approved", candidate_count: 0, source_file: "local-catalog-launch-search",
       rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version,
         discoveryOnly: true, transport: transportArgument, publication: publicationMode,
-        publicationAuthorized: publicationMode === "auto_after_screening", searchMode: "all_eligible_until_source_exhaustion" },
+        publicationAuthorized: publicationMode === "auto_after_screening",
+        searchMode: candidatePoolTarget === null ? "all_eligible_until_source_exhaustion" : "balanced_candidate_pool_target",
+        candidatePoolTarget },
     }).select("id").single();
     if (runError) throw new Error(runError.message);
     runId = run.id;
   }
   if (!runId) throw new Error("Could not resolve the candidate discovery run");
   const activeRunId = runId;
-  const { data: activeRun, error: activeRunError } = await client.from("chestny_enrichment_runs").select("status,rules").eq("id", activeRunId).single();
+  const { data: activeRun, error: activeRunError } = await client.from("chestny_enrichment_runs").select("status,rules,candidate_count").eq("id", activeRunId).single();
   if (activeRunError) throw new Error(activeRunError.message);
   const savedTransport = asRecord(activeRun.rules).transport;
   if (savedTransport && savedTransport !== transportArgument) {
@@ -184,6 +192,11 @@ async function main() {
   const savedPublication = asRecord(activeRun.rules).publication ?? "disabled";
   if (savedPublication !== publicationMode) {
     throw new Error(`Run publication mode is ${String(savedPublication)}; refusing to change it to ${publicationMode} after run creation`);
+  }
+  const savedTarget = asRecord(activeRun.rules).candidatePoolTarget;
+  const normalizedSavedTarget = savedTarget === undefined || savedTarget === null ? null : Number(savedTarget);
+  if (normalizedSavedTarget !== candidatePoolTarget) {
+    throw new Error(`Run candidate target is ${String(savedTarget ?? "unlimited")}; refusing to change it to ${String(candidatePoolTarget ?? "unlimited")}`);
   }
   if (!savedTransport) {
     if (activeRun.status !== "approved") throw new Error("Cannot set transport on a run that has already started");
@@ -200,29 +213,36 @@ async function main() {
   const summaries: Array<Record<string, unknown>> = [];
   const searchable = plan.filter((brand) => !brand.exhausted);
   try {
-    await notifyCatalogOwner(`Поиск Encar запущен по ${searchable.length} маркам. Марочные доли служат ориентиром разнообразия; ищу все подходящие объявления до исчерпания выдачи, сохраняю offset после каждой страницы.`);
+    await notifyCatalogOwner(candidatePoolTarget === null
+      ? `Поиск Encar запущен по ${searchable.length} маркам. Марочные доли служат ориентиром разнообразия; ищу подходящие объявления до исчерпания выдачи, сохраняю offset после каждой страницы.`
+      : `Поиск Encar запущен: целевой пул ${candidatePoolTarget} кандидатов, марки обходятся по очереди для сохранения разнообразия. Публикации нет.`);
   } catch (error) {
     console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  let finishedBrands = 0;
-  let foundAcrossBrands = 0;
-  for (const brand of plan) {
+  let foundAcrossBrands = Number(activeRun.candidate_count ?? 0);
+  type BrandCursor = {
+    brand: (typeof plan)[number]; offset: number; exhausted: boolean; found: number;
+    scanned: number; pages: number; filteredByInitialRules: number; alreadyKnown: number;
+  };
+  const cursors: BrandCursor[] = [];
+  for (const brand of searchable) {
     if (signal.aborted) throw signal.reason;
-    if (brand.exhausted) continue;
-    const query = createDomesticQuery(CATALOG_POLICY.minYear, new Date().getFullYear(), CATALOG_POLICY.maxMileageKm,
-      "Y", primaryManufacturerAlias(brand.manufacturer), null, null);
-    let offset = brand.searchOffset;
     const { error: startError } = await client.rpc("start_chestny_catalog_brand_search", {
       p_launch: launch.id, p_manufacturer: brand.manufacturer, p_run: activeRunId,
     });
     if (startError) throw new Error(`${brand.manufacturer}: ${startError.message}`);
-    let found = 0;
-    let scanned = 0;
-    let pages = 0;
-    let exhausted = false;
-    let filteredByInitialRules = 0;
-    let alreadyKnown = 0;
-    while (!exhausted) {
+    cursors.push({ brand, offset: brand.searchOffset, exhausted: false, found: 0, scanned: 0, pages: 0,
+      filteredByInitialRules: 0, alreadyKnown: 0 });
+  }
+  let activeCursors = cursors.length;
+  while (activeCursors > 0 && (candidatePoolTarget === null || foundAcrossBrands < candidatePoolTarget)) {
+    for (const cursor of cursors) {
+      if (signal.aborted) throw signal.reason;
+      if (cursor.exhausted || (candidatePoolTarget !== null && foundAcrossBrands >= candidatePoolTarget)) continue;
+      const { brand } = cursor;
+      const query = createDomesticQuery(CATALOG_POLICY.minYear, new Date().getFullYear(), CATALOG_POLICY.maxMileageKm,
+        "Y", primaryManufacturerAlias(brand.manufacturer), null, null);
+      const offset = cursor.offset;
       let page: Awaited<ReturnType<typeof fetchDirectSearchPage>>;
       const requestStartedAt = Date.now();
       try {
@@ -253,49 +273,46 @@ async function main() {
       });
       const pageIds = [...new Set(candidates.map((candidate) => candidate.source_listing_id))];
       const knownIds = await existingIdentifiers(client, pageIds);
-      alreadyKnown += candidates.filter((candidate) => knownIds.has(candidate.source_listing_id)).length;
-      filteredByInitialRules += excludedByInitialRules;
+      cursor.alreadyKnown += candidates.filter((candidate) => knownIds.has(candidate.source_listing_id)).length;
+      cursor.filteredByInitialRules += excludedByInitialRules;
       const newCandidates = candidates.filter((candidate) => !knownIds.has(candidate.source_listing_id));
       const nextOffset = offset + pageSize;
-      exhausted = page.listings.length < pageSize || nextOffset >= page.total;
+      const exhausted = page.listings.length < pageSize || nextOffset >= page.total;
+      const remainingTarget = candidatePoolTarget === null ? newCandidates.length
+        : Math.max(0, candidatePoolTarget - foundAcrossBrands);
+      const pageCandidates = newCandidates.slice(0, remainingTarget);
       const { data: inserted, error: pageError } = await client.rpc("record_chestny_catalog_search_page", {
         p_launch: launch.id, p_manufacturer: brand.manufacturer, p_run: activeRunId,
         p_expected_offset: offset, p_next_offset: nextOffset, p_scanned: page.listings.length,
-        p_candidates: newCandidates, p_exhausted: exhausted,
+        p_candidates: pageCandidates, p_exhausted: exhausted,
       });
       if (pageError) {
         await client.rpc("record_chestny_catalog_search_error", { p_launch: launch.id, p_manufacturer: brand.manufacturer, p_message: pageError.message });
         throw new Error(`${brand.manufacturer} offset ${offset}: ${pageError.message}`);
       }
       const insertedCount = Number(inserted ?? 0);
-      offset = nextOffset;
-      found += insertedCount;
-      scanned += page.listings.length;
-      pages += 1;
+      cursor.offset = nextOffset;
+      cursor.exhausted = exhausted;
+      cursor.found += insertedCount;
+      cursor.scanned += page.listings.length;
+      cursor.pages += 1;
+      foundAcrossBrands += insertedCount;
+      if (exhausted) activeCursors -= 1;
       await new Promise((resolve) => setTimeout(resolve, CATALOG_POLICY.requestDelayMs));
     }
-    summaries.push({ manufacturer: brand.manufacturer, startOffset: brand.searchOffset, nextOffset: offset, scanned, pages,
-      filteredByInitialRules, alreadyKnown, newCandidates: found, exhausted, sourceTotalReached: exhausted });
-    finishedBrands += 1;
-    foundAcrossBrands += found;
-    // Report only at stable five-brand milestones. The control task reports the
-    // completed search and worker start, so a short run does not emit a
-    // redundant per-brand message just before enrichment begins.
-    if (finishedBrands % 5 === 0) {
-      try {
-        await notifyCatalogOwner(`Поиск: проверена выдача ${finishedBrands}/${searchable.length} марок; найдено новых подходящих объявлений ${foundAcrossBrands}. Последняя марка: ${brand.manufacturer}, позиция ${offset}${exhausted ? " (выдача исчерпана)" : ""}.`);
-      } catch (error) {
-        console.error(`Telegram search progress notification failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
   }
+  for (const cursor of cursors) summaries.push({ manufacturer: cursor.brand.manufacturer,
+    startOffset: cursor.brand.searchOffset, nextOffset: cursor.offset, scanned: cursor.scanned, pages: cursor.pages,
+    filteredByInitialRules: cursor.filteredByInitialRules, alreadyKnown: cursor.alreadyKnown,
+    newCandidates: cursor.found, exhausted: cursor.exhausted, sourceTotalReached: cursor.exhausted });
   const { data: finalProgress, error: progressError } = await client.from("chestny_catalog_brand_search_status")
     .select("manufacturer,target,published_count,remaining_quota,search_offset,scanned_count,candidate_count,processed_candidates,candidate_backlog,conversion_rate,status,candidates_needed_at_observed_conversion")
     .eq("launch_id", launch.id).order("manufacturer");
   if (progressError) throw new Error(progressError.message);
   console.log(JSON.stringify({ mode: "search_completed", launchId: launch.id, runId: activeRunId, transport: transportArgument,
-    searchMode: "all_eligible_until_source_exhaustion", volumeLimit: null, pageSize,
-    brandTargetsAreGuidanceOnly: true, pages: summaries, progress: finalProgress }, null, 2));
+    searchMode: candidatePoolTarget === null ? "all_eligible_until_source_exhaustion" : "balanced_candidate_pool_target",
+    candidatePoolTarget, candidatesFound: foundAcrossBrands, targetReached: candidatePoolTarget === null || foundAcrossBrands >= candidatePoolTarget,
+    pageSize, brandTargetsAreGuidanceOnly: true, pages: summaries, progress: finalProgress }, null, 2));
   } });
 }
 

@@ -15,10 +15,12 @@ async function main() {
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
   if (process.argv.includes("--apply")) {
-    const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,p_rules:CATALOG_POLICY});
-    if (prepared.error) throw Error(prepared.error.message);
-    launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
-    if (launch.error) throw Error(launch.error.message);
+    if (launch.data?.status !== "capturing") {
+      const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,p_rules:CATALOG_POLICY});
+      if (prepared.error) throw Error(prepared.error.message);
+      launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
+      if (launch.error) throw Error(launch.error.message);
+    }
   }
   if (!launch.data) throw Error("No launch yet: run with --apply to freeze the baseline");
   if (launch.data.status === "capturing" && process.argv.includes("--apply")) {
@@ -43,7 +45,6 @@ async function main() {
       ["vehicle_source_identifiers","source_identifier"],
       ["encar_raw_listings","source_listing_id"],
       ["chestny_catalog_staging","source_listing_id"],
-      ["chestny_enrichment_queue","source_listing_id"],
     ]) await collect(table,column);
     const count=await db.from("chestny_catalog_launch_baseline_identifiers").select("source_identifier",{count:"exact",head:true}).eq("launch_id",launch.data.id);
     if(count.error) throw Error(count.error.message);
