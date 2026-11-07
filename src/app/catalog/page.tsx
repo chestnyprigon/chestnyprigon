@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PremiumCatalog } from "@/components/catalog/PremiumCatalog";
 import { loadCatalogPage, type CatalogSearch } from "@/lib/catalog/load-catalog";
+import { readCalculationPreference } from "@/lib/pricing/country-preference";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,7 @@ function integer(value: string | undefined, fallback: number) {
 
 export default async function CatalogPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
+  const preference = await readCalculationPreference(params);
   const get = (name: string) => typeof params[name] === "string" ? params[name] : undefined;
   const search: CatalogSearch = {
     includeCount: false,
@@ -30,6 +32,6 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
     accidents: get("accidents") === "clear" ? "clear" : get("accidents") === "with" ? "with" : undefined,
     sort: get("sort") === "price-asc" ? "price-asc" : get("sort") === "price-desc" ? "price-desc" : "newest",
   };
-  const catalog = await loadCatalogPage(search);
-  return <PremiumCatalog key={JSON.stringify(search)} catalog={catalog} initialSearch={search} />;
+  const catalog = await loadCatalogPage(search, preference.destination);
+  return <PremiumCatalog key={JSON.stringify(search)} catalog={catalog} initialSearch={search} destination={preference.destination.toUpperCase() as "BY" | "RU"} currency={preference.currency} />;
 }

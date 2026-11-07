@@ -30,13 +30,13 @@ import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalog
 import { formatKrwAsUsd, formatUsdWithByn } from "@/lib/pricing/display";
 import { trackMetrikaGoal } from "@/lib/analytics/metrika";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
+import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
 const drives = ["Все", "Полный", "Передний", "Задний", "2WD"] as const;
 const bodyTypes = ["Все", "SUV", "RV", "Минивэн", "Компакт", "Гольф-класс", "Средний класс", "Представительский класс"] as const;
 const accidentFilters = ["Все", "Без ДТП", "Есть страховые случаи"] as const;
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const distance = new Intl.NumberFormat("ru-RU");
 
 function freshnessDate(car: CatalogCar) {
@@ -63,11 +63,15 @@ function historyText(car: CatalogCar) {
   return "Нет данных по страховым случаям";
 }
 
-function catalogPrice(car: CatalogCar) {
+function catalogPrice(car: CatalogCar, destination: "BY" | "RU", currency: "USD" | "BYN" | "RUB" | "EUR") {
+  if (destination === "RU") {
+    if (!car.russiaCalculation) return "Расчёт уточняется";
+    return formatRussiaTotal(car.russiaCalculation, currency === "BYN" ? "RUB" : currency);
+  }
   return car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется";
 }
 
-export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPage; initialSearch: CatalogSearch }) {
+export function PremiumCatalog({ catalog, initialSearch, destination, currency }: { catalog: CatalogPage; initialSearch: CatalogSearch; destination: "BY" | "RU"; currency: "USD" | "BYN" | "RUB" | "EUR" }) {
   const { cars } = catalog;
   const router = useRouter();
   const pathname = usePathname();
@@ -113,7 +117,9 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const detailHref = (id: string) => {
     const queryString = searchParams.toString();
     const returnTo = `${pathname}${queryString ? `?${queryString}` : ""}`;
-    return `/catalog/${id}?returnTo=${encodeURIComponent(returnTo)}`;
+    const destinationQuery = searchParams.get("destination") ?? destination.toLowerCase();
+    const currencyQuery = searchParams.get("currency") ?? currency;
+    return `/catalog/${id}?returnTo=${encodeURIComponent(returnTo)}&destination=${destinationQuery}&currency=${currencyQuery}`;
   };
   const prefetchCard = (href: string) => router.prefetch(href);
 
@@ -222,7 +228,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <div className="results-toolbar"><div><strong>{matchingTotalExact ? `${matchingTotal} автомобилей` : "Каталог автомобилей"}</strong><span>{matchingTotalExact ? `Показано ${visible.length} из ${matchingTotal}` : `Показано ${visible.length} объявлений`} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "catalog" }); router.push(href); }; return <article className="result-car" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}>
             <Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} className="result-car-media" href={href}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
-            <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span>{formatCatalogPower(car.powerPs, car.electric30MinKw) ? <span>{formatCatalogPower(car.powerPs, car.electric30MinKw)}</span> : null}<span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
+            <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span>{formatCatalogPower(car.powerPs, car.electric30MinKw) ? <span>{formatCatalogPower(car.powerPs, car.electric30MinKw)}</span> : null}<span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car, destination, currency)}</strong><small>{destination === "RU" ? "предварительно под ключ в России" : car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
           </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
           {visible.length > 0 && (catalog.page > 1 || catalog.hasMore) ? <div className="catalog-pagination">{catalog.page > 1 ? <button type="button" onClick={() => applySearch(catalog.page - 1)}><ArrowLeft size={16} />Предыдущие</button> : null}<span>Страница {catalog.page}</span>{catalog.hasMore ? <button type="button" onClick={() => applySearch(catalog.page + 1)}>Следующие {catalog.perPage} авто <ArrowRight size={16} /></button> : null}</div> : null}
         </div>

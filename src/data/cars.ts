@@ -1,4 +1,5 @@
 import type { BelarusPriceCalculation } from "@/lib/pricing/chestny-prigon-profile";
+import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 
 export type CarFuel = "Бензин" | "Дизель" | "Гибрид" | "Электро" | "Газ" | "Другое";
 
@@ -68,6 +69,12 @@ export type CatalogCar = {
   engineCc: number | null;
   powerPs: number | null;
   electric30MinKw?: number | null;
+  enginePowerKw?: number | null;
+  electricPeakKw?: number | null;
+  systemCombinedPowerKw?: number | null;
+  powerBasis?: string | null;
+  rawFuelType?: string | null;
+  powerSourceRef?: string | null;
   powerConfidence: string | null;
   fuel: CarFuel;
   sourceFuel: string;
@@ -87,6 +94,8 @@ export type CatalogCar = {
   lastSeenAt: string | null;
   status: "Проверено";
   calculation: BelarusPriceCalculation;
+  russiaCalculation?: RussiaPriceResult | null;
+  destination?: "BY" | "RU";
   options: VehicleOption[];
   inspection: InspectionSummary | null;
   accidents: AccidentSummary | null;

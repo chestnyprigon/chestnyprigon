@@ -16,6 +16,10 @@ import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "./InfoTooltip";
 import { formatPowerPs } from "@/lib/format/power";
+import { calculateRussiaVehiclePrices } from "@/lib/pricing/russia-vehicle-pricing";
+import { readCalculationPreference } from "@/lib/pricing/country-preference";
+import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
+import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 type SearchParams = Record<string, string | string[] | undefined>;
 
 function formatNumber(value: number | null | undefined) {
@@ -29,13 +33,16 @@ function registrationLabel(listing: MobileDeListing) {
   return month ? `${month}.${year}` : year;
 }
 
-export function ListingCard({ listing, exchangeRates, detailHref }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string }) {
-  const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}`;
+export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null }) {
+  const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}?destination=${destination}&currency=${currency}`;
   const price = listing.net_price?.amount;
   const firstRegistration = listing.first_registration?.value;
   const calculation = exchangeRates && typeof price === "number" && listing.net_price?.basis === "netto" && listing.net_price?.status === "source_reported" && listing.net_price?.source_path === "cars.price_net" && firstRegistration && listing.engine_cc
     ? calculateEuropeBelarusPrice({ netPriceEur: price, firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
+  const russiaPrice = russiaCalculation
+    ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
+    : "Расчёт уточняется";
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
@@ -59,8 +66,8 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <div className={styles.cardEstimate}>
-            <strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong>
-            <small>под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></small>
+            <strong>{destination === "ru" ? russiaPrice : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong>
+            <small>{destination === "ru" ? "предварительно под ключ в России" : <>под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></>}</small>
           </div>
         </div>
       </div>
@@ -107,6 +114,7 @@ function EuropeIntroFallback() {
 
 export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
+  const preference = await readCalculationPreference(params);
   const {filters, errors, valid} = parseMobileDeFilters(params);
 
   return (
@@ -120,7 +128,7 @@ export async function MobileDeCatalog({ searchParams }: { searchParams: Promise<
           <MobileDeFilterForm key={JSON.stringify(params)} params={params} initialErrors={errors} />
         </MobileDeFilterPanel>
         <Suspense key={JSON.stringify(filters)} fallback={<CatalogResultsLoading />}>
-          {valid ? <CatalogResults filters={filters} /> : <section className={styles.results}><div className={styles.message} role="alert"><strong>Проверьте параметры поиска</strong><p>Исправьте отмеченные поля в фильтрах и повторите поиск.</p></div></section>}
+          {valid ? <CatalogResults filters={filters} destination={preference.destination} currency={preference.currency} /> : <section className={styles.results}><div className={styles.message} role="alert"><strong>Проверьте параметры поиска</strong><p>Исправьте отмеченные поля в фильтрах и повторите поиск.</p></div></section>}
         </Suspense>
       </div>
     </main>
@@ -132,15 +140,30 @@ function CatalogResultsLoading() {
   return <section className={styles.results} aria-busy="true" aria-label="Загрузка объявлений"><div className={styles.resultsHeading}><h2>Автомобили из Европы</h2><span role="status">Загружаем объявления…</span></div><div className={styles.cards}>{Array.from({length:6},(_,index)=><div className={styles.skeletonCard} key={index}><div /><span /><span /></div>)}</div></section>;
 }
 
-async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
+async function CatalogResults({ filters, destination, currency }: { filters: MobileDeFilters; destination: "by" | "ru"; currency: "USD" | "BYN" | "RUB" | "EUR" }) {
   let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
   let error: MobileDeApiError | null = null;
   let exchangeRates: ExchangeRates | null = null;
-  const [catalogResult, ratesResult] = await Promise.allSettled([getMobileDeListings(filters), fetchNbrbRates()]);
+  const [catalogResult, ratesResult] = await Promise.allSettled([getMobileDeListings(filters), destination === "by" ? fetchNbrbRates() : Promise.resolve(null)]);
   if (catalogResult.status === "fulfilled") catalog = catalogResult.value;
   else error = catalogResult.reason instanceof MobileDeApiError ? catalogResult.reason : new MobileDeApiError(null, "Europe catalogue request failed");
   if (ratesResult.status === "fulfilled") exchangeRates = ratesResult.value;
+  const russiaCalculations = new Map<string, RussiaPriceResult | null>();
+  if (destination === "ru" && catalog) {
+    const prepared = catalog.data.map((listing) => {
+      const amount = listing.net_price?.amount ?? listing.price?.amount;
+      if (typeof amount !== "number" || amount <= 0) return { listing, vehicle: null };
+      const powerValue = listing.power?.value;
+      const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
+      return { listing, vehicle: { source: "europe" as const, sourceId: listing.master_id, brand: listing.make ?? "", model: listing.model ?? listing.title, year: Number(listing.first_registration?.value?.slice(0, 4)) || null, firstRegistration: listing.first_registration?.value, engineCc: listing.engine_cc, fuelType: listing.fuel_type, driveType: listing.drive, price: amount, currency: "EUR" as const, powerKw: powerValue && powerIsKw ? powerValue : undefined, powerPs: powerValue && !powerIsKw ? powerValue : undefined } };
+    });
+    const inputs = prepared.flatMap((item) => item.vehicle ? [item.vehicle] : []);
+    const results = await calculateRussiaVehiclePrices(inputs);
+    let resultIndex = 0;
+    for (const item of prepared) russiaCalculations.set(item.listing.master_id, item.vehicle ? results[resultIndex++] ?? null : null);
+  }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);
+  if (destination) { nextParams.set("destination", destination); nextParams.set("currency", currency); }
   return (
 
 
@@ -151,7 +174,7 @@ async function CatalogResults({ filters }: { filters: MobileDeFilters }) {
           </div>
           {error ? <ApiMessage error={error} /> : catalog?.data.length ? (
             <>
-              <div className={styles.cards}>{catalog.data.map((listing) => <ListingCard listing={listing} exchangeRates={exchangeRates} key={listing.master_id} />)}</div>
+              <div className={styles.cards}>{catalog.data.map((listing) => <ListingCard listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} russiaCalculation={russiaCalculations.get(listing.master_id)} key={listing.master_id} />)}</div>
               {catalog.page.has_more && catalog.page.next_cursor && <Link prefetch={false} className={styles.nextPage} href={`/catalog/europe?${nextParams.toString()}`}>Показать следующие объявления <span>→</span></Link>}
             </>
           ) : <div className={styles.empty}><strong>Пока нет объявлений по этим параметрам</strong><span>Измените фильтры или сбросьте их.</span></div>}

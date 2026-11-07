@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { VehicleDossier } from "@/components/catalog/VehicleDossier";
 import { loadCatalogCar } from "@/lib/catalog/load-catalog";
 import { loadPricingContext } from "@/lib/pricing/pricing-context";
+import { readCalculationPreference } from "@/lib/pricing/country-preference";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +14,13 @@ function safeReturnTo(value: string | undefined) {
 export default async function VehiclePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
   const query = await searchParams;
+  const preference = await readCalculationPreference(query);
   const pricingContextPromise = loadPricingContext();
   const [car, pricingContext] = await Promise.all([
-    loadCatalogCar(id, pricingContextPromise),
+    loadCatalogCar(id, pricingContextPromise, preference.destination),
     pricingContextPromise,
   ]);
   if (!car) notFound();
   const returnTo = typeof query.returnTo === "string" ? query.returnTo : undefined;
-  return <VehicleDossier car={car} pricingContext={pricingContext} catalogHref={safeReturnTo(returnTo)} />;
+  return <VehicleDossier car={car} pricingContext={pricingContext} catalogHref={safeReturnTo(returnTo)} currency={preference.currency} />;
 }

@@ -7,6 +7,8 @@ import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { InfoTooltip } from "./InfoTooltip";
+import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
+import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 
 const money = (amount: number, currency: "EUR" | "BYN") => new Intl.NumberFormat("ru-RU", {
   style: "currency", currency, maximumFractionDigits: 2,
@@ -18,9 +20,12 @@ function sourceUrl(sourceId: string) {
   return url.toString();
 }
 
-export function MobileDePriceCalculator({ listing, exchangeRates }: {
+export function MobileDePriceCalculator({ listing, exchangeRates, destination = "by", currency = "USD", russiaCalculation = null }: {
   listing: MobileDeListing;
   exchangeRates: ExchangeRates | null;
+  destination?: "by" | "ru";
+  currency?: "USD" | "BYN" | "RUB" | "EUR";
+  russiaCalculation?: RussiaPriceResult | null;
 }) {
   const [preferential, setPreferential] = useState(true);
   const [leadOpen, setLeadOpen] = useState(false);
@@ -35,11 +40,13 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
   }, [amount, exchangeRates, listing.engine_cc, listing.net_price?.basis, listing.net_price?.status, listing.net_price?.source_path, preferential, firstRegistration]);
   const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
   const source = sourceUrl(listing.source_id);
-  const formattedTotal = calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "";
+  const formattedTotal = destination === "ru" && russiaCalculation
+    ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
+    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "";
 
   async function submitLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!calculation) return;
+    if (destination === "ru" ? !russiaCalculation : !calculation) return;
     const data = new FormData(event.currentTarget);
     setLeadSending(true);
     setLeadError("");
@@ -53,7 +60,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
             source: "Mobile.de", masterId: listing.master_id, sourceId: listing.source_id, title,
             firstRegistration, mileageKm: listing.mileage_km, sourceUrl: source,
           },
-          calculationSnapshot: { ...calculation, preferential },
+          calculationSnapshot: destination === "ru" ? { ...russiaCalculation, destination: "RU", currency, displayTotal: formattedTotal } : { ...calculation, preferential, destination: "BY", currency: "BYN" },
           pageUrl: window.location.href,
         }),
       });
@@ -70,18 +77,26 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
   return <>
     <aside className="dossier-price" aria-label="Предварительная стоимость автомобиля">
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
-      <div className="dossier-badges"><span>Расчёт для РБ</span><span>Минск</span></div>
+      <div className="dossier-badges"><span>Расчёт для {destination === "ru" ? "России" : "РБ"}</span><span>{destination === "ru" ? "RUB" : "Минск"}</span></div>
       <div className="dossier-total">
         <span>Цена под ключ <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span>
-        <strong>{formattedTotal || (calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
-        <small>с доставкой и оформлением в Беларуси</small>
+        <strong>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
+        <small>{destination === "ru" ? "предварительная стоимость под ключ" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
-      <div className="dossier-preferential-block">
+      {destination === "by" && <div className="dossier-preferential-block">
         <label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation} onChange={(event) => setPreferential(event.target.checked)} /><span>Льготная растаможка 50% <b className={preferential ? "" : "is-off"}>{preferential ? "Включена" : "Выключена"}</b></span></label>
-      </div>
+      </div>}
       <details className="dossier-calculation">
         <summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary>
-        {calculation ? <div>
+        {destination === "ru" && russiaCalculation ? <div>
+          <p><span>Коммерческие расходы</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.commercial.subtotalRub)}</b></p>
+          <p><span>Таможенная пошлина</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.government.dutyRub)}</b></p>
+          <p><span>Акциз</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.government.exciseRub)}</b></p>
+          <p><span>НДС</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.government.vatRub)}</b></p>
+          <p><span>Утилизационный сбор</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.government.recyclingFeeRub)}</b></p>
+          <p><span>Таможенный сбор</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.government.customsProcessingFeeRub)}</b></p>
+          <p className="dossier-calculation-total"><span>Итого</span><b>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(russiaCalculation.totalRub)}</b></p>
+        </div> : calculation ? <div>
           <p><span>Цена Netto</span><b>{money(calculation.netPriceEur, "EUR")}</b></p>
           <p><span>Услуги компании в ЕС</span><b>{money(calculation.ecServiceEur, "EUR")}</b></p>
           <p><span>Перевод</span><b>{money(calculation.translationEur, "EUR")}</b></p>
@@ -92,7 +107,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates }: {
           <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{formattedTotal}</b></p>
         </div> : <div><p><span>{exchangeRates ? "Недостаточно данных для расчёта" : "Расчёт временно недоступен"}</span></p></div>}
       </details>
-      <button className="dossier-lead" type="button" disabled={!calculation} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>Оставить заявку <ArrowRight size={17} /></button>
+      <button className="dossier-lead" type="button" disabled={destination === "ru" ? !russiaCalculation : !calculation} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>Оставить заявку <ArrowRight size={17} /></button>
     </aside>
 
     {leadOpen && <div className="consult-modal-backdrop" onMouseDown={() => setLeadOpen(false)}><div className="consult-modal vehicle-lead-modal" role="dialog" aria-modal="true" aria-label="Заявка на автомобиль из Европы" onMouseDown={(event) => event.stopPropagation()}>

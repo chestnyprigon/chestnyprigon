@@ -541,3 +541,13 @@ a { color: inherit; text-decoration: none; }
   .catalog-intro-stat strong { font-size: 21px; }
   .catalog-intro-stat small { display: none; }
 }
+/* Destination selector replaces the route label in the home hero. */
+.premium-hero-destination-line{color:#c2cdd5;display:block;font-size:clamp(16px,1.65vw,21px);font-weight:700;letter-spacing:-.02em;line-height:1.25;margin-top:14px;text-transform:none}
+.premium-trust .premium-route{align-items:center;display:flex;grid-template-columns:none;min-width:390px;padding-left:24px}
+.destination-currency-hero{align-items:center;background:linear-gradient(135deg,rgba(18,65,67,.86),rgba(10,28,39,.95));border:1px solid rgba(95,205,168,.4);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.18);color:#fff;display:flex;gap:12px;line-height:1.15;padding:8px 10px}
+.destination-currency-title{align-items:center;color:#a6ead0;display:flex;font-size:11px;gap:6px;white-space:nowrap}
+.destination-currency-hero label{display:grid;gap:3px;white-space:nowrap}
+.destination-currency-hero label>span{color:#aab9c3;font-size:9px;font-weight:700}
+.destination-currency-hero select{appearance:auto;background:#0d1b25;border:1px solid #55746e;border-radius:6px;color:#fff;cursor:pointer;font:700 12px var(--font-manrope),Arial,sans-serif;min-height:34px;padding:4px 22px 4px 8px}
+@media(max-width:1200px){.premium-trust .premium-route{min-width:350px;padding-left:18px}.destination-currency-hero{gap:8px;padding:7px 8px}.destination-currency-title{font-size:10px}.destination-currency-hero select{font-size:11px;min-height:32px}}
+@media(max-width:640px){.premium-hero{min-height:760px}.premium-hero-destination-line{font-size:16px;margin-top:10px}.premium-trust{grid-template-areas:"stat1 stat2" "stat3 stat3" "countries countries" "settings settings";}.premium-trust .premium-route{border:0;display:flex;grid-area:settings;margin:0;min-width:0;padding:0;width:100%}.destination-currency-hero{display:grid;gap:8px;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);padding:8px}.destination-currency-title{font-size:10px}.destination-currency-title svg{height:17px;width:17px}.destination-currency-hero label{min-width:0}.destination-currency-hero label>span{font-size:8px}.destination-currency-hero select{font-size:11px;min-height:35px;padding-left:6px;padding-right:16px;width:100%}}

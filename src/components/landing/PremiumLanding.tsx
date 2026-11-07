@@ -8,7 +8,6 @@ import {
   Check,
   Camera,
   FileCheck2,
-  Globe2,
   Headphones,
   Mail,
   MapPin,
@@ -29,6 +28,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { currentMarketingParams, trackMetrikaGoal } from "@/lib/analytics/metrika";
 import type { ReactNode } from "react";
+import { DestinationCurrencySelector } from "@/components/pricing/DestinationCurrencySelector";
 
 const processSteps = [
   { title: "Консультация", short: "Уточняем запрос и подбираем направление", icon: MessageCircle, text: "Фиксируем марку, модель, бюджет, сроки и ключевые пожелания. Показываем понятный маршрут сделки до старта работы.", points: ["Первичная подборка вариантов", "Понятные сроки и следующие шаги", "Связь удобным для вас способом"] },
@@ -60,7 +60,7 @@ const faqs = [
   ["Вы помогаете с постановкой на учёт?", "Подскажем порядок действий и необходимый комплект документов после выдачи автомобиля."],
 ];
 
-export function PremiumLanding({ catalogShowcase }: { catalogShowcase: ReactNode }) {
+export function PremiumLanding({ catalogShowcase, destination = "by", currency = "USD" }: { catalogShowcase: ReactNode; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR" }) {
   const [processOpen, setProcessOpen] = useState(0);
   const [faqOpen, setFaqOpen] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -110,8 +110,8 @@ export function PremiumLanding({ catalogShowcase }: { catalogShowcase: ReactNode
 
     <section className="premium-hero" id="home">
       <div className="premium-hero-bg" />
-      <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br /><em>под ключ</em></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="#home-country-catalogs">Выбрать направление</Link></div></div>
-      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><nav id="home-country-catalogs" className="premium-country-links" aria-label="Каталоги автомобилей"><Link href="/catalog">🇰🇷 Корея</Link><Link href="/catalog/europe">🇪🇺 Европа</Link></nav><div className="premium-route"><span className="neutral-route-icon"><Globe2 size={21} /></span><b>Из-за рубежа → Беларусь</b><span>подбор · проверка · доставка</span></div></div>
+      <div className="premium-hero-content"><p className="premium-kicker"><span />Авто из-за границы • честно и в срок</p><h1>Автомобили<br /><em>под ключ</em><span className="premium-hero-destination-line">с доставкой в Беларусь и Россию</span></h1><p className="premium-lead">Подберём, проверим, доставим и растаможим автомобиль вашей мечты без лишних хлопот.</p><div className="premium-actions"><button className="premium-button primary" type="button" onClick={() => setModalOpen(true)}>Подобрать автомобиль <ArrowRight size={17} /></button><Link className="premium-button secondary" href="#home-country-catalogs">Выбрать направление</Link></div></div>
+      <div className="premium-trust"><div><ShieldCheck /><b>5+ лет</b><span>опыта</span></div><div><CarFront /><b>1000+</b><span>авто доставлено</span></div><div><Sparkles /><b>98%</b><span>довольных клиентов</span></div><nav id="home-country-catalogs" className="premium-country-links" aria-label="Каталоги автомобилей"><Link href="/catalog">🇰🇷 Корея</Link><Link href="/catalog/europe">🇪🇺 Европа</Link></nav><div className="premium-route"><DestinationCurrencySelector initialDestination={destination} initialCurrency={currency} /></div></div>
     </section>
 
     {catalogShowcase}

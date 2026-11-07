@@ -2,6 +2,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowRight, Menu, X } from "lucide-react";
 import styles from "./MobileDeCatalog.module.css";
 
@@ -16,5 +17,9 @@ export function CatalogNavigation() {
 }
 
 export function CatalogDirections({ active = "korea", preserveScroll = false }: { active?: "korea" | "europe"; preserveScroll?: boolean }) {
-  return <nav className={styles.directions} aria-label="Выбор каталога"><Link href="/catalog" scroll={!preserveScroll} aria-current={active === "korea" ? "page" : undefined}>🇰🇷 Корея</Link><Link href="/catalog/europe" scroll={!preserveScroll} aria-current={active === "europe" ? "page" : undefined}>🇪🇺 Европа</Link></nav>;
+  const search = useSearchParams();
+  const params = new URLSearchParams();
+  for (const key of ["destination", "currency"]) { const value = search.get(key); if (value) params.set(key, value); }
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return <nav className={styles.directions} aria-label="Выбор каталога"><Link href={`/catalog${suffix}`} scroll={!preserveScroll} aria-current={active === "korea" ? "page" : undefined}>🇰🇷 Корея</Link><Link href={`/catalog/europe${suffix}`} scroll={!preserveScroll} aria-current={active === "europe" ? "page" : undefined}>🇪🇺 Европа</Link></nav>;
 }
