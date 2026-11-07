@@ -67,6 +67,7 @@ export type CatalogCar = {
   engine: string;
   engineCc: number | null;
   powerPs: number | null;
+  electric30MinKw?: number | null;
   powerConfidence: string | null;
   fuel: CarFuel;
   sourceFuel: string;

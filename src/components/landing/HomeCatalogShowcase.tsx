@@ -12,6 +12,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
+import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { formatPowerPs } from "@/lib/format/power";
 
 const cardLimit = 12;
@@ -49,7 +50,7 @@ function koreaCard(car: CatalogCar): ShowcaseCard {
     imageAlt: `${car.brand} ${car.model}`,
     eyebrow: history,
     title: `${car.brand} ${car.model}`,
-    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.powerPs ? `${formatPowerPs(car.powerPs)} л. с.` : null, car.fuel, car.drive].filter(Boolean).join(" · "),
+    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, formatCatalogPower(car.powerPs, car.electric30MinKw), car.fuel, car.drive].filter(Boolean).join(" · "),
     price: car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
     priceNote: "Ориентировочный расчёт",
   };

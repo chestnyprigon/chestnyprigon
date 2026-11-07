@@ -395,6 +395,7 @@ function mapVehicleRows(
       year: row.model_year, registrationDate: row.first_registration_date, mileage: row.mileage_km,
       engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро", engineCc: row.engine_cc,
       powerPs: row.engine_power_ps ?? row.system_combined_power_ps ?? (row.engine_power_kw ? Math.round(row.engine_power_kw * 1.35962) : null),
+      electric30MinKw: row.electric_30min_kw,
       powerConfidence: row.power_confidence,
       fuel: fuelName(row.fuel_type), sourceFuel: normalizedSourceFuel(row.fuel_type), drive: resolvedDrive(row.drive_type, row.trim),
       bodyType: bodyName(row.body_type), color: colorName(row.exterior_color), transmission: transmissionName(row.transmission),
@@ -430,10 +431,16 @@ function powerFilterExpression(minPowerPs: number, maxPowerPs: number | null) {
     minPowerPs > 0 ? `${field}.gte.${minPowerPs}` : null,
     maxPowerPs !== null ? `${field}.lte.${maxPowerPs}` : null,
   ].filter((value): value is string => value !== null);
+  const kwBounds = [
+    minPowerPs > 0 ? `electric_30min_kw.gte.${(minPowerPs / 1.35962).toFixed(3)}` : null,
+    maxPowerPs !== null ? `electric_30min_kw.lte.${(maxPowerPs / 1.35962).toFixed(3)}` : null,
+  ].filter((value): value is string => value !== null);
   if (minPowerPs > 0 && maxPowerPs !== null) {
-    return `and(${bounds("engine_power_ps").join(",")}),and(${bounds("system_combined_power_ps").join(",")})`;
+    return `and(${bounds("engine_power_ps").join(",")}),and(${bounds("system_combined_power_ps").join(",")}),and(${kwBounds.join(",")})`;
   }
-  return `engine_power_ps.${minPowerPs > 0 ? "gte" : "lte"}.${minPowerPs > 0 ? minPowerPs : maxPowerPs},system_combined_power_ps.${minPowerPs > 0 ? "gte" : "lte"}.${minPowerPs > 0 ? minPowerPs : maxPowerPs}`;
+  const op = minPowerPs > 0 ? "gte" : "lte";
+  const value = minPowerPs > 0 ? minPowerPs : maxPowerPs;
+  return `engine_power_ps.${op}.${value},system_combined_power_ps.${op}.${value},electric_30min_kw.${op}.${(Number(value) / 1.35962).toFixed(3)}`;
 }
 
 function diversifyHomepageRows(rows: VehicleRow[], limit: number) {
@@ -499,7 +506,7 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   const from = (input.page - 1) * input.perPage;
   let query = client
     .from("vehicles")
-    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,engine_power_ps,engine_power_kw,system_combined_power_ps,power_confidence,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", input.includeCount ? { count: "exact" } : {})
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,engine_power_ps,engine_power_kw,electric_30min_kw,system_combined_power_ps,power_confidence,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", input.includeCount ? { count: "exact" } : {})
     .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
     .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
     .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
