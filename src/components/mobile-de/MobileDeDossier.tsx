@@ -7,7 +7,7 @@ import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
 import { MobileDePriceCalculator } from "./MobileDePriceCalculator";
-import { calculateRussiaVehiclePrice } from "@/lib/pricing/russia-vehicle-pricing";
+import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 
 function optionsList(options: MobileDeListing["options"]) {
@@ -36,14 +36,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   let russiaCalculation: RussiaPriceResult | null = null;
   if (destination === "by") { try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; } }
   else {
-    const amount = listing.net_price?.amount ?? listing.price?.amount;
-    if (typeof amount === "number" && amount > 0) {
-      try {
-        const powerValue = listing.power?.value;
-        const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
-        russiaCalculation = await calculateRussiaVehiclePrice({ source: "europe", sourceId: listing.master_id, brand: listing.make ?? "", model: listing.model ?? listing.title, year: Number(listing.first_registration?.value?.slice(0, 4)) || null, firstRegistration: listing.first_registration?.value, engineCc: listing.engine_cc, fuelType: listing.fuel_type, driveType: listing.drive, price: amount, currency: "EUR", powerKw: powerValue && powerIsKw ? powerValue : undefined, powerPs: powerValue && !powerIsKw ? powerValue : undefined });
-      } catch { russiaCalculation = null; }
-    }
+    russiaCalculation = (await loadRussiaPriceSnapshots("europe", [listing.master_id])).get(listing.master_id) ?? null;
   }
 
   return (

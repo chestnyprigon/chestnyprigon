@@ -167,6 +167,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["mobile_de_catalog_import_runs"]["Insert"]>;
         Relationships: [];
       };
+      russia_price_snapshots: {
+        Row: {
+          source: "korea" | "europe";
+          listing_id: string;
+          destination: "RU";
+          status: "pending" | "ready" | "stale" | "failed";
+          revision: number;
+          calculation: Json | null;
+          calculated_at: string | null;
+          last_attempt_at: string | null;
+          next_refresh_at: string;
+          last_error_code: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          source: "korea" | "europe";
+          listing_id: string;
+          destination?: "RU";
+          status?: "pending" | "ready" | "stale" | "failed";
+          revision?: number;
+          calculation?: Json | null;
+          calculated_at?: string | null;
+          last_attempt_at?: string | null;
+          next_refresh_at?: string;
+          last_error_code?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["russia_price_snapshots"]["Insert"]>;
+        Relationships: [];
+      };
       pricing_profiles: {
         Row: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at: string };
         Insert: { id: string; version: string; krw_per_usd: number; delivery_usd: number; commission_rate: number; svh_declarant_eur: number; customs_clearance_eur: number; utilization_fee_eur: number; company_service_usd: number; updated_at?: string };

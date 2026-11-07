@@ -123,6 +123,11 @@ async function calculateUncached(vehicle: CatalogVehicle): Promise<RussiaPriceRe
   return combineRussiaPrice(commercial, tks);
 }
 
+/** Fresh calculation used only by the explicit price refresh control. */
+export function calculateRussiaVehiclePriceFresh(vehicle: CatalogVehicle) {
+  return calculateUncached(vehicle);
+}
+
 const cachedCalculation = unstable_cache(calculateUncached, ["russia-vehicle-price-v1"], { revalidate: 900 });
 
 export function calculateRussiaVehiclePrice(vehicle: CatalogVehicle) {

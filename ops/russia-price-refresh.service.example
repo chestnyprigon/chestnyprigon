@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh Chestny Prigon Russian price snapshots
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/chestny-prigon
+EnvironmentFile=/etc/chestny-prigon/russia-price-refresh.env
+ExecStart=/usr/bin/npm run pricing:refresh-russia
+TimeoutStartSec=1200
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true

@@ -10,7 +10,7 @@ import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
-import { calculateRussiaVehiclePrice } from "@/lib/pricing/russia-vehicle-pricing";
+import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -603,31 +603,11 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}, destination: 
   const [pricingContext, publicBrandOptions] = await Promise.all([pricingContextPromise, publicBrandsPromise]);
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   if (destination === "ru") {
-    let cursor = 0;
-    const workers = Array.from({ length: Math.min(4, pageCars.length) }, async () => {
-      while (cursor < pageCars.length) {
-        const index = cursor++;
-        const car = pageCars[index]!;
-        try {
-          const russiaCalculation = await calculateRussiaVehiclePrice({
-            source: "korea", sourceId: car.sourceListingId, brand: car.brand, model: car.model,
-            generation: car.generation, trim: car.trim, year: car.year, firstRegistration: car.registrationDate,
-            engineCc: car.engineCc, fuelType: car.rawFuelType ?? car.sourceFuel, driveType: car.drive,
-            price: car.sourcePriceKrw, currency: "KRW", powerPs: car.powerPs,
-            enginePowerKw: car.enginePowerKw, systemCombinedPowerKw: car.systemCombinedPowerKw,
-            electric30MinKw: car.electric30MinKw, electricPeakKw: car.electricPeakKw,
-            powerBasis: car.powerBasis, powerConfidence: car.powerConfidence ?? undefined,
-            powerSourceRef: car.powerSourceRef,
-            krwPerUsd: pricingContext.krwUsdRate.effectiveKrwPerUsd,
-          });
-          pageCars[index] = { ...car, russiaCalculation, destination: "RU" };
-        } catch (error) {
-          console.error("[russia-pricing] Korea listing calculation unavailable", { listingId: car.sourceListingId, errorName: error instanceof Error ? error.name : "UnknownError" });
-          pageCars[index] = { ...car, destination: "RU" };
-        }
-      }
-    });
-    await Promise.all(workers);
+    const stored = await loadRussiaPriceSnapshots("korea", pageCars.map((car) => car.id));
+    for (let index = 0; index < pageCars.length; index += 1) {
+      const car = pageCars[index]!;
+      pageCars[index] = { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
+    }
   }
   return {
     cars: pageCars,
@@ -799,20 +779,6 @@ export async function loadCatalogCar(
   const reportsByVehicle = new Map(data.report ? [[data.vehicle.id, data.report]] : []);
   const car = mapVehicleRows([data.vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
   if (!car || destination !== "ru") return car;
-  try {
-    const russiaCalculation = await calculateRussiaVehiclePrice({
-      source: "korea", sourceId: car.sourceListingId, brand: car.brand, model: car.model,
-      generation: car.generation, trim: car.trim, year: car.year, firstRegistration: car.registrationDate,
-      engineCc: car.engineCc, fuelType: car.rawFuelType ?? car.sourceFuel, driveType: car.drive,
-      price: car.sourcePriceKrw, currency: "KRW", powerPs: car.powerPs, enginePowerKw: car.enginePowerKw,
-      systemCombinedPowerKw: car.systemCombinedPowerKw, electric30MinKw: car.electric30MinKw,
-      electricPeakKw: car.electricPeakKw, powerBasis: car.powerBasis, powerConfidence: car.powerConfidence ?? undefined,
-      powerSourceRef: car.powerSourceRef,
-      krwPerUsd: pricingContext.krwUsdRate.effectiveKrwPerUsd,
-    });
-    return { ...car, russiaCalculation, destination: "RU" };
-  } catch (error) {
-    console.error("[russia-pricing] Korea detail calculation unavailable", { listingId: car.sourceListingId, errorName: error instanceof Error ? error.name : "UnknownError" });
-    return { ...car, destination: "RU" };
-  }
+  const stored = await loadRussiaPriceSnapshots("korea", [car.id]);
+  return { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
 }

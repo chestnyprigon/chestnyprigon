@@ -21,6 +21,9 @@ export type RussiaCommercialResult = {
   profileId: string;
   currency: "RUB";
   sourcePriceRub: number;
+  sourcePriceAmount: number;
+  sourceCurrency: "KRW" | "EUR";
+  exchangeRates: Record<string, number>;
   lineItemsRub: Record<string, number>;
   subtotalRub: number;
 };
@@ -54,6 +57,19 @@ export type RussiaPriceResult = {
     rulesVersion: string;
   };
 };
+
+/** Keep only the current client breakdown and compact calculation provenance in the database. */
+export function compactRussiaPriceSnapshot(result: RussiaPriceResult): RussiaPriceResult {
+  return {
+    ...result,
+    powerContext: null,
+    power: {
+      ...result.power,
+      sourceRef: result.power.sourceRef.slice(0, 160),
+      researchRef: result.power.researchRef?.slice(0, 160) ?? null,
+    },
+  };
+}
 
 export function formatRussiaTotal(result: RussiaPriceResult, currency: "RUB" | "USD" | "EUR" = "RUB") {
   const rub = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(result.totalRub);
@@ -94,6 +110,9 @@ export function calculateRussiaKoreaCommercial(input: {
     profileId: RUSSIA_KOREA_COMMERCIAL_PROFILE.id,
     currency: "RUB",
     sourcePriceRub: roundRub(priceKrw / krwPerUsd * rubPerUsd),
+    sourcePriceAmount: priceKrw,
+    sourceCurrency: "KRW",
+    exchangeRates: { KRW_per_USD: krwPerUsd, RUB_per_USD: rubPerUsd, RUB_per_EUR: rubPerEur },
     lineItemsRub,
     subtotalRub: roundRub(Object.values(lineItemsRub).reduce((sum, amount) => sum + amount, 0)),
   };
@@ -119,6 +138,9 @@ export function calculateRussiaEuropeCommercial(input: {
     profileId: RUSSIA_EUROPE_COMMERCIAL_PROFILE.id,
     currency: "RUB",
     sourcePriceRub: roundRub(netPriceEur * rubPerEur),
+    sourcePriceAmount: netPriceEur,
+    sourceCurrency: "EUR",
+    exchangeRates: { RUB_per_EUR: rubPerEur },
     lineItemsRub,
     subtotalRub: roundRub(Object.values(lineItemsRub).reduce((sum, amount) => sum + amount, 0)),
   };

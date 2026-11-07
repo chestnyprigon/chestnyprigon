@@ -32,7 +32,7 @@ export function DestinationCurrencySelector({ initialDestination, initialCurrenc
   return <div className="destination-currency-bar destination-currency-hero" aria-label="Страна назначения и валюта">
     <strong className="destination-currency-title"><Globe2 size={18} />Страна и валюта</strong>
     <label><span>Страна назначения</span><select value={destination} onChange={(event) => { const next = event.target.value as Destination; update(next, next === "ru" ? "RUB" : "USD"); }}>
-      <option value="by">Беларуси</option><option value="ru">России</option>
+      <option value="by">Беларусь</option><option value="ru">Россия</option>
     </select></label>
     <label><span>Валюта</span><select value={currency} onChange={(event) => update(destination, event.target.value as Currency)}>
       {currencies.map((item) => <option key={item} value={item}>{item}</option>)}
