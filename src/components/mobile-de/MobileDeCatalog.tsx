@@ -16,7 +16,7 @@ import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "./InfoTooltip";
 import { formatPowerPs } from "@/lib/format/power";
-import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 import { readCalculationPreference } from "@/lib/pricing/country-preference";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
@@ -31,6 +31,21 @@ function registrationLabel(listing: MobileDeListing) {
   if (!value) return null;
   const [year, month] = value.split("-");
   return month ? `${month}.${year}` : year;
+}
+
+function russiaInputForListing(listing: MobileDeListing) {
+  const amount = listing.net_price?.amount ?? listing.price?.amount;
+  if (typeof amount !== "number" || amount <= 0) return null;
+  const powerValue = listing.power?.value;
+  const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
+  return {
+    source: "europe" as const, sourceId: listing.master_id, brand: listing.make ?? "",
+    model: listing.model ?? listing.title, year: Number(listing.first_registration?.value?.slice(0, 4)) || null,
+    firstRegistration: listing.first_registration?.value, engineCc: listing.engine_cc,
+    fuelType: listing.fuel_type, driveType: listing.drive, price: amount, currency: "EUR" as const,
+    powerKw: powerValue && powerIsKw ? powerValue : undefined,
+    powerPs: powerValue && !powerIsKw ? powerValue : undefined,
+  };
 }
 
 export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null }) {
@@ -150,7 +165,11 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
   if (ratesResult.status === "fulfilled") exchangeRates = ratesResult.value;
   const russiaCalculations = new Map<string, RussiaPriceResult | null>();
   if (destination === "ru" && catalog) {
-    const stored = await loadRussiaPriceSnapshots("europe", catalog.data.map((listing) => listing.master_id));
+    const entries = catalog.data.flatMap((listing) => {
+      const vehicle = russiaInputForListing(listing);
+      return vehicle ? [{ listingId: listing.master_id, vehicle }] : [];
+    });
+    const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", entries);
     for (const listing of catalog.data) russiaCalculations.set(listing.master_id, stored.get(listing.master_id) ?? null);
   }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);

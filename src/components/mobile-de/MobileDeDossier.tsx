@@ -7,7 +7,7 @@ import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
 import { MobileDePriceCalculator } from "./MobileDePriceCalculator";
-import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 
 function optionsList(options: MobileDeListing["options"]) {
@@ -27,6 +27,21 @@ function galleryImages(listing: MobileDeListing) {
   return [...unique.values()].sort((a, b) => (a.sort_order ?? a.position ?? 0) - (b.sort_order ?? b.position ?? 0));
 }
 
+function russiaInputForListing(listing: MobileDeListing) {
+  const amount = listing.net_price?.amount ?? listing.price?.amount;
+  if (typeof amount !== "number" || amount <= 0) return null;
+  const powerValue = listing.power?.value;
+  const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
+  return {
+    source: "europe" as const, sourceId: listing.master_id, brand: listing.make ?? "",
+    model: listing.model ?? listing.title, year: Number(listing.first_registration?.value?.slice(0, 4)) || null,
+    firstRegistration: listing.first_registration?.value, engineCc: listing.engine_cc,
+    fuelType: listing.fuel_type, driveType: listing.drive, price: amount, currency: "EUR" as const,
+    powerKw: powerValue && powerIsKw ? powerValue : undefined,
+    powerPs: powerValue && !powerIsKw ? powerValue : undefined,
+  };
+}
+
 export async function MobileDeDossier({ listing, id, destination = "by", currency = "USD" }: { listing: MobileDeListing; id?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR" }) {
   const options = optionsList(listing.options);
   const gallery = galleryImages(listing);
@@ -36,7 +51,8 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   let russiaCalculation: RussiaPriceResult | null = null;
   if (destination === "by") { try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; } }
   else {
-    russiaCalculation = (await loadRussiaPriceSnapshots("europe", [listing.master_id])).get(listing.master_id) ?? null;
+    const vehicle = russiaInputForListing(listing);
+    if (vehicle) russiaCalculation = (await loadRussiaPriceSnapshotsOrCalculate("europe", [{ listingId: listing.master_id, vehicle }])).get(listing.master_id) ?? null;
   }
 
   return (

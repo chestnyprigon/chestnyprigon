@@ -14,7 +14,7 @@ import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { formatPowerPs } from "@/lib/format/power";
-import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 
 const cardLimit = 12;
@@ -134,9 +134,21 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
   let cards: ShowcaseCard[] = [];
   try {
     const [listings, exchangeRates] = await Promise.all([getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }), destination === "by" ? fetchNbrbRates() : Promise.resolve(null)]);
-    const stored = destination === "ru"
-      ? await loadRussiaPriceSnapshots("europe", listings.data.map((listing) => listing.master_id))
-      : new Map();
+    const entries = listings.data.flatMap((listing) => {
+      const price = listing.net_price?.amount ?? listing.price?.amount;
+      if (typeof price !== "number" || price <= 0) return [];
+      const powerValue = listing.power?.value;
+      const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
+      return [{ listingId: listing.master_id, vehicle: {
+        source: "europe" as const, sourceId: listing.master_id, brand: listing.make ?? "",
+        model: listing.model ?? listing.title, year: Number(listing.first_registration?.value?.slice(0, 4)) || null,
+        firstRegistration: listing.first_registration?.value, engineCc: listing.engine_cc,
+        fuelType: listing.fuel_type, driveType: listing.drive, price, currency: "EUR" as const,
+        powerKw: powerValue && powerIsKw ? powerValue : undefined,
+        powerPs: powerValue && !powerIsKw ? powerValue : undefined,
+      } }];
+    });
+    const stored = destination === "ru" ? await loadRussiaPriceSnapshotsOrCalculate("europe", entries) : new Map();
     cards = listings.data.map((listing) => europeCard(listing, exchangeRates, destination, currency, stored.get(listing.master_id) ?? null));
   } catch (error) {
     const reason = error instanceof MobileDeApiError ? `status ${error.status ?? "network"}` : "catalog request failed";

@@ -10,7 +10,7 @@ import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
-import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -422,6 +422,19 @@ function mapVehicleRows(
   });
 }
 
+function russiaInputForCar(car: CatalogCar, krwPerUsd: number) {
+  return {
+    source: "korea" as const, sourceId: car.sourceListingId, brand: car.brand, model: car.model,
+    generation: car.generation, trim: car.trim, year: car.year, firstRegistration: car.registrationDate,
+    engineCc: car.engineCc, fuelType: car.rawFuelType ?? car.sourceFuel, driveType: car.drive,
+    price: car.sourcePriceKrw, currency: "KRW" as const, powerPs: car.powerPs,
+    enginePowerKw: car.enginePowerKw, systemCombinedPowerKw: car.systemCombinedPowerKw,
+    electric30MinKw: car.electric30MinKw, electricPeakKw: car.electricPeakKw,
+    powerBasis: car.powerBasis, powerConfidence: car.powerConfidence ?? undefined,
+    powerSourceRef: car.powerSourceRef, krwPerUsd,
+  };
+}
+
 function normalizedSearch(search: CatalogSearch) {
   return {
     homepageMix: search.homepageMix ?? false,
@@ -603,7 +616,10 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}, destination: 
   const [pricingContext, publicBrandOptions] = await Promise.all([pricingContextPromise, publicBrandsPromise]);
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   if (destination === "ru") {
-    const stored = await loadRussiaPriceSnapshots("korea", pageCars.map((car) => car.id));
+    const stored = await loadRussiaPriceSnapshotsOrCalculate("korea", pageCars.map((car) => ({
+      listingId: car.id,
+      vehicle: russiaInputForCar(car, pricingContext.krwUsdRate.effectiveKrwPerUsd),
+    })));
     for (let index = 0; index < pageCars.length; index += 1) {
       const car = pageCars[index]!;
       pageCars[index] = { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
@@ -779,6 +795,9 @@ export async function loadCatalogCar(
   const reportsByVehicle = new Map(data.report ? [[data.vehicle.id, data.report]] : []);
   const car = mapVehicleRows([data.vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
   if (!car || destination !== "ru") return car;
-  const stored = await loadRussiaPriceSnapshots("korea", [car.id]);
+  const stored = await loadRussiaPriceSnapshotsOrCalculate("korea", [{
+    listingId: car.id,
+    vehicle: russiaInputForCar(car, pricingContext.krwUsdRate.effectiveKrwPerUsd),
+  }]);
   return { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
 }
