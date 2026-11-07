@@ -17,9 +17,9 @@ function toQueryString(filters: CatalogFilterCountInput) {
  * counter is refreshed while they choose values. This keeps the catalogue
  * responsive without reloading a multi-thousand-card result grid per click.
  */
-export function useCatalogFilterCount(filters: CatalogFilterCountInput, initialTotal: number) {
+export function useCatalogFilterCount(filters: CatalogFilterCountInput, initialTotal: number, initialTotalExact = true) {
   const query = useMemo(() => toQueryString(filters), [filters]);
-  const [preview, setPreview] = useState<{ query: string; total: number }>({ query: "", total: initialTotal });
+  const [preview, setPreview] = useState<{ query: string; total: number; exact: boolean }>({ query, total: initialTotal, exact: initialTotalExact });
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export function useCatalogFilterCount(filters: CatalogFilterCountInput, initialT
         });
         if (!response.ok) return;
         const payload = await response.json() as { total?: unknown };
-        if (typeof payload.total === "number") setPreview({ query, total: payload.total });
+        if (typeof payload.total === "number") setPreview({ query, total: payload.total, exact: true });
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           // The current server total remains a useful fallback while offline.
@@ -49,5 +49,9 @@ export function useCatalogFilterCount(filters: CatalogFilterCountInput, initialT
     };
   }, [query]);
 
-  return { total: preview.query === query ? preview.total : initialTotal, pending };
+  return {
+    total: preview.query === query ? preview.total : initialTotal,
+    exact: preview.query === query && preview.exact,
+    pending,
+  };
 }

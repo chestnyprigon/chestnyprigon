@@ -97,7 +97,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const [modelOptions, setModelOptions] = useState<string[]>(catalog.models);
   const [brandOptions, setBrandOptions] = useState<string[]>(catalog.brands);
   const [trimOptions, setTrimOptions] = useState<string[]>([]);
-  const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
+  const { total: matchingTotal, exact: matchingTotalExact, pending: isCounting } = useCatalogFilterCount({
     q: query.trim(),
     brand: brand === "Все" ? "" : brand,
     model: model === "Все" ? "" : model,
@@ -108,7 +108,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     drive: drive === "Все" ? "" : drive,
     bodyType: bodyType === "Все" ? "" : bodyType,
     accidents: accidentFilter === "Без ДТП" ? "clear" : accidentFilter === "Есть страховые случаи" ? "with" : "",
-  }, catalog.total);
+  }, catalog.total, catalog.totalExact);
   const models = useMemo(() => ["Все", ...new Set([...modelOptions, ...cars.filter((car) => brand === "Все" || car.brand === brand).map((car) => car.model)])], [brand, cars, modelOptions]);
   const detailHref = (id: string) => {
     const queryString = searchParams.toString();
@@ -193,7 +193,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
 
       <section className="catalog-intro">
         <div><Link href="/"><ArrowLeft size={15} />На главную</Link><p className="premium-kicker"><span />Каталог Южной Кореи</p><h1>Авто из Кореи<br />под ключ</h1><p>Проверенные объявления Encar с подробной карточкой, опциями и предварительной стоимостью под ключ.</p></div>
-        <div className="catalog-intro-stat"><strong>{catalog.total} авто</strong><span>прошли автоматическую проверку</span><small>Исключаем аренду, такси и коммерческий транспорт. Историю ДТП и страховых выплат показываем открыто.</small></div>
+        <div className="catalog-intro-stat"><strong>{matchingTotalExact ? `${matchingTotal} авто` : "Автомобили из Кореи"}</strong><span>прошли автоматическую проверку</span><small>Исключаем аренду, такси и коммерческий транспорт. Историю ДТП и страховых выплат показываем открыто.</small></div>
       </section>
 
       <div className="catalog-direction-home"><CatalogDirections preserveScroll /></div>
@@ -215,11 +215,11 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <fieldset><legend>Привод</legend><div className="filter-pills">{drives.map((item) => <button className={drive === item ? "is-selected" : ""} type="button" key={item} onClick={() => setDrive(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>Кузов</legend><div className="filter-pills">{bodyTypes.map((item) => <button className={bodyType === item ? "is-selected" : ""} type="button" key={item} onClick={() => setBodyType(item)}>{item}</button>)}</div></fieldset>
           <fieldset><legend>История Encar</legend><div className="filter-pills">{accidentFilters.map((item) => <button className={accidentFilter === item ? "is-selected" : ""} type="button" key={item} onClick={() => setAccidentFilter(item)}>{item}</button>)}</div></fieldset>
-          <button className="apply-filters" type="button" onClick={() => applySearch()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button>
+          <button className="apply-filters" type="button" onClick={() => applySearch()}>{isCounting ? "Подсчитываем…" : matchingTotalExact ? `Показать ${matchingTotal} авто` : "Показать автомобили"} <ArrowRight size={16} /></button>
         </aside>
 
         <div className="catalog-results">
-          <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
+          <div className="results-toolbar"><div><strong>{matchingTotalExact ? `${matchingTotal} автомобилей` : "Каталог автомобилей"}</strong><span>{matchingTotalExact ? `Показано ${visible.length} из ${matchingTotal}` : `Показано ${visible.length} объявлений`} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "catalog" }); router.push(href); }; return <article className="result-car" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}>
             <Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} className="result-car-media" href={href}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
             <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span>{formatCatalogPower(car.powerPs, car.electric30MinKw) ? <span>{formatCatalogPower(car.powerPs, car.electric30MinKw)}</span> : null}<span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>

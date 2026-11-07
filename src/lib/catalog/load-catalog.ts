@@ -47,6 +47,7 @@ export type CatalogSearch = {
 export type CatalogPage = {
   cars: CatalogCar[];
   total: number;
+  totalExact: boolean;
   page: number;
   perPage: number;
   hasMore: boolean;
@@ -544,6 +545,7 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   query = input.sort === "price-asc" ? query.order("price_usd", { ascending: true }) : input.sort === "price-desc" ? query.order("price_usd", { ascending: false }) : query.order("published_at", { ascending: false }).order("id", { ascending: false });
   let vehicles: VehicleRow[] | null = null;
   let count: number | null = null;
+  let hasMoreWithoutCount = false;
   if (input.accidents) {
     // A large PostgREST `id IN (...)` request exceeds the URL limit. For this
     // optional filter we load the already narrowed vehicle set, apply report
@@ -563,14 +565,19 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   } else {
     const result = input.homepageMix && input.page === 1
       ? await query.limit(Math.max(120, input.perPage * 10))
-      : await query.range(from, from + input.perPage - 1);
+      : await query.range(from, from + input.perPage - 1 + (input.includeCount ? 0 : 1));
     if (result.error) throw new Error(`Catalog request failed: ${result.error.message}`);
     const rows = result.data as VehicleRow[] | null;
+    hasMoreWithoutCount = (rows?.length ?? 0) > input.perPage;
     vehicles = input.homepageMix && input.page === 1
       ? diversifyHomepageRows(rows ?? [], input.perPage)
-      : rows;
+      : input.includeCount ? rows : (rows ?? []).slice(0, input.perPage);
     count = result.count;
   }
+  const hasMore = count !== null
+    ? from + input.perPage < count
+    : input.accidents ? false
+      : hasMoreWithoutCount;
   const ids = (vehicles ?? []).map((vehicle) => vehicle.id);
   const [imagesResult, reportsResult] = ids.length ? await Promise.all([
     client.from("vehicle_images").select("vehicle_id,source_url,position").in("vehicle_id", ids).order("position", { ascending: true }),
@@ -584,10 +591,11 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   return {
     cars: pageCars,
-    total: count ?? 0,
+    total: count ?? (from + (vehicles?.length ?? 0) + (hasMore ? 1 : 0)),
+    totalExact: count !== null || Boolean(input.accidents),
     page: input.page,
     perPage: input.perPage,
-    hasMore: from + input.perPage < (count ?? 0),
+    hasMore,
     brands: publicBrandOptions.brands,
     models: [...new Set(pageCars.map((car) => car.model))],
     generations: [...new Set((vehicles ?? []).flatMap((car) => car.generation ? [car.generation] : []))],
