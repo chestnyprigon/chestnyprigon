@@ -24,6 +24,8 @@ export async function GET(request: Request) {
     yearTo: integer(get("yearTo"), catalogYearTo()),
     minEngine: integer(get("minEngine"), 0),
     maxEngine: integer(get("maxEngine"), 8_000),
+    minPowerPs: Math.min(500, Math.max(0, integer(get("minPowerPs"), 0))),
+    maxPowerPs: get("maxPowerPs") === undefined ? undefined : Math.min(500, Math.max(0, integer(get("maxPowerPs"), 500))),
     minPrice: integer(get("minPrice"), 0),
     maxPrice: integer(get("maxPrice"), CATALOG_MAX_PRICE_USD),
     minMileage: integer(get("minMileage"), 0),

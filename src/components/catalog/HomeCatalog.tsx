@@ -10,6 +10,7 @@ import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
 import {
   ENGINE_MAX_OPTIONS,
   ENGINE_MIN_OPTIONS,
+  POWER_PS_OPTIONS,
   YEAR_OPTIONS,
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
@@ -60,6 +61,8 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? catalogYearTo()));
   const [minEngine, setMinEngine] = useState(String(initialSearch.minEngine ?? ""));
   const [maxEngine, setMaxEngine] = useState(String(initialSearch.maxEngine ?? ""));
+  const [minPowerPs, setMinPowerPs] = useState(String(initialSearch.minPowerPs ?? "0"));
+  const [maxPowerPs, setMaxPowerPs] = useState(String(initialSearch.maxPowerPs ?? ""));
   const [minMileage, setMinMileage] = useState(String(initialSearch.minMileage ?? ""));
   const [maxMileage, setMaxMileage] = useState(String(initialSearch.maxMileage ?? CATALOG_MAX_MILEAGE_KM));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? ""));
@@ -69,7 +72,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const [trimOptions, setTrimOptions] = useState<string[]>([]);
   const { total: matchingTotal, pending: isCounting } = useCatalogFilterCount({
     q: query.trim(), brand, model, trim, fuel, drive, accidents,
-    yearFrom, yearTo, minEngine, maxEngine, minMileage, maxMileage, minPrice, maxPrice,
+    yearFrom, yearTo, minEngine, maxEngine, minPowerPs, maxPowerPs, minMileage, maxMileage, minPrice, maxPrice,
   }, catalog.total);
   const models = useMemo(
     () => [...new Set([...modelOptions, ...catalog.cars.filter((car) => !brand || car.brand === brand).map((car) => car.model)])].sort((left, right) => left.localeCompare(right, "ru")),
@@ -106,6 +109,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
     const add = (key: string, value: string) => { if (value) params.set(key, value); };
     add("q", query.trim()); add("brand", brand); add("model", model); add("trim", trim); add("fuel", fuel); add("drive", drive); add("accidents", accidents);
     add("yearFrom", yearFrom); add("yearTo", yearTo); add("minEngine", minEngine); add("maxEngine", maxEngine);
+    add("minPowerPs", minPowerPs === "0" ? "" : minPowerPs); add("maxPowerPs", maxPowerPs);
     add("minMileage", minMileage); add("maxMileage", maxMileage); add("minPrice", minPrice); add("maxPrice", maxPrice);
     trackMetrikaGoal("filter_apply", { source: "homepage", brand, model, fuel, accidents });
     router.push(`${toCatalog ? "/catalog" : "/"}${params.size ? `?${params.toString()}` : ""}${toCatalog ? "" : "#catalog"}`);
@@ -115,6 +119,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
   const reset = () => {
     setQuery(""); setBrand(""); setModel(""); setTrim(""); setFuel(""); setDrive(""); setAccidents(""); setYearFrom(String(catalogYearFrom())); setYearTo(String(catalogYearTo())); setAdvancedOpen(false);
     setMinEngine(""); setMaxEngine(""); setMinMileage(""); setMaxMileage(String(CATALOG_MAX_MILEAGE_KM)); setMinPrice(""); setMaxPrice(String(CATALOG_MAX_PRICE_USD));
+    setMinPowerPs("0"); setMaxPowerPs("");
     router.push("/#catalog"); setOpen(false);
   };
 
@@ -132,6 +137,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
         <label className="home-filter-advanced"><span>Страховая история</span><select value={accidents} onChange={(e) => setAccidents(e.target.value)}>{accidentOptions.map((value) => <option key={value} value={value}>{value === "" ? "Любая" : value === "clear" ? "Без ДТП" : "Есть страховые случаи"}</option>)}</select></label>
         <label><span>Год от</span><select value={yearFrom} onChange={(e) => setYearFrom(e.target.value)}>{YEAR_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Год до</span><select value={yearTo} onChange={(e) => setYearTo(e.target.value)}>{YEAR_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Объём от</span><select value={minEngine} onChange={(e) => setMinEngine(e.target.value)}><option value="0">Любой</option>{ENGINE_MIN_OPTIONS.filter(Boolean).map((value) => <option key={value} value={value}>{(value / 1_000).toFixed(1)} л</option>)}</select></label><label className="home-filter-advanced"><span>Объём до</span><select value={maxEngine} onChange={(e) => setMaxEngine(e.target.value)}>{ENGINE_MAX_OPTIONS.map((value) => <option key={value} value={value}>{value === 8_000 ? "Любой" : `${(value / 1_000).toFixed(1)} л`}</option>)}</select></label>
+        <label className="home-filter-advanced"><span>Мощность от, л. с.</span><select value={minPowerPs} onChange={(e) => setMinPowerPs(e.target.value)}><option value="0">Любая</option>{POWER_PS_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label className="home-filter-advanced"><span>Мощность до, л. с.</span><select value={maxPowerPs} onChange={(e) => setMaxPowerPs(e.target.value)}><option value="">Любая</option>{POWER_PS_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="home-filter-advanced"><span>Пробег от, км</span><input type="number" inputMode="numeric" min="0" step="1000" placeholder="Любой" value={minMileage === "0" ? "" : minMileage} onChange={(e) => setMinMileage(e.target.value || "0")} /></label><label className="home-filter-advanced"><span>Пробег до, км</span><input type="number" inputMode="numeric" min="0" step="1000" placeholder="Любой" value={maxMileage === String(CATALOG_MAX_MILEAGE_KM) ? "" : maxMileage} onChange={(e) => setMaxMileage(e.target.value || String(CATALOG_MAX_MILEAGE_KM))} /></label>
         <label><span>Цена от, $</span><input type="number" inputMode="numeric" min="0" step="1" placeholder="Любая" value={minPrice === "0" ? "" : minPrice} onChange={(e) => setMinPrice(e.target.value || "0")} /></label><label><span>Цена до, $</span><input type="number" inputMode="numeric" min="0" step="1" placeholder="Любая" value={maxPrice === String(CATALOG_MAX_PRICE_USD) ? "" : maxPrice} onChange={(e) => setMaxPrice(e.target.value || String(CATALOG_MAX_PRICE_USD))} /></label>
       </div>
@@ -139,7 +145,7 @@ export function HomeCatalog({ catalog, initialSearch }: { catalog: CatalogPage; 
       <div className="home-filter-actions"><button className="premium-button primary" type="button" onClick={() => navigate()}>{isCounting ? "Подсчитываем…" : `Показать ${matchingTotal} авто`} <ArrowRight size={16} /></button><button type="button" onClick={() => navigate(true)}>Открыть каталог</button></div>
     </div>
     <div className="home-results-toolbar"><div><b>{catalog.total} автомобилей</b><span>Показано {catalog.cars.length} актуальных объявлений</span></div><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && navigate()} placeholder="Марка или модель" /></label></div>
-    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "homepage" }); router.push(href); }; return <article className="home-result-card" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}><Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} href={href} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p className={`card-history-meta ${tag.tone}`}>{historyText(car)}</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}</small><footer><strong>{price(car)}</strong><Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} href={href}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
+    {catalog.cars.length ? <div className="home-results-grid">{catalog.cars.map((car) => { const tag = badge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "homepage" }); router.push(href); }; return <article className="home-result-card" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}><Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} href={href} className="home-result-photo"><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 700px) 50vw, (max-width: 1100px) 33vw, 25vw" /><span className={`result-history-badge ${tag.tone}`}>{tag.label}</span></Link><div><p className={`card-history-meta ${tag.tone}`}>{historyText(car)}</p><h3>{car.brand} {car.model}</h3><small>{car.year} · {distance.format(car.mileage)} км<br />{car.engine} · {car.fuel} · {car.drive}{car.powerPs ? ` · ${car.powerPs} л. с.` : ""}</small><footer><strong>{price(car)}</strong><Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} href={href}>Подробнее <ArrowRight size={15} /></Link></footer></div></article>; })}</div> : <div className="catalog-preview-empty">По этим параметрам объявлений пока нет. Измените фильтры.</div>}
     <div className="premium-catalog-footer"><button className="premium-button primary" type="button" onClick={() => navigate(true)}>Смотреть весь каталог <ArrowRight size={17} /></button></div>
   </section>;
 }

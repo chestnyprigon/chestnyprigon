@@ -48,7 +48,7 @@ function koreaCard(car: CatalogCar): ShowcaseCard {
     imageAlt: `${car.brand} ${car.model}`,
     eyebrow: history,
     title: `${car.brand} ${car.model}`,
-    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.fuel, car.drive].filter(Boolean).join(" · "),
+    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.powerPs ? `${car.powerPs} л. с.` : null, car.fuel, car.drive].filter(Boolean).join(" · "),
     price: car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
     priceNote: "Ориентировочный расчёт",
   };

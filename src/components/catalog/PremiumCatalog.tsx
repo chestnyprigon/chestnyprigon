@@ -22,6 +22,7 @@ import type { CatalogPage, CatalogSearch } from "@/lib/catalog/load-catalog";
 import {
   ENGINE_MAX_OPTIONS,
   ENGINE_MIN_OPTIONS,
+  POWER_PS_OPTIONS,
   YEAR_OPTIONS,
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
@@ -79,6 +80,8 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
   const [yearTo, setYearTo] = useState(String(initialSearch.yearTo ?? catalogYearTo()));
   const [minEngine, setMinEngine] = useState(String(initialSearch.minEngine ?? 0));
   const [maxEngine, setMaxEngine] = useState(String(initialSearch.maxEngine ?? 8000));
+  const [minPowerPs, setMinPowerPs] = useState(String(initialSearch.minPowerPs ?? 0));
+  const [maxPowerPs, setMaxPowerPs] = useState(String(initialSearch.maxPowerPs ?? ""));
   const [minPrice, setMinPrice] = useState(String(initialSearch.minPrice ?? 0));
   const [maxPrice, setMaxPrice] = useState(String(initialSearch.maxPrice ?? CATALOG_MAX_PRICE_USD));
   const [minMileage, setMinMileage] = useState(String(initialSearch.minMileage ?? 0));
@@ -99,7 +102,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     model: model === "Все" ? "" : model,
     trim: trim === "Все" ? "" : trim,
     fuel: fuel === "Все" ? "" : fuel,
-    yearFrom, yearTo, minEngine, maxEngine, minPrice, maxPrice, minMileage, maxMileage,
+    yearFrom, yearTo, minEngine, maxEngine, minPowerPs, maxPowerPs, minPrice, maxPrice, minMileage, maxMileage,
     transmission: transmission === "Все" ? "" : transmission,
     drive: drive === "Все" ? "" : drive,
     bodyType: bodyType === "Все" ? "" : bodyType,
@@ -145,6 +148,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     const add = (key: string, value: string, fallback: string) => { if (value && value !== fallback) params.set(key, value); };
     add("q", query.trim(), ""); add("brand", brand, "Все"); add("model", model, "Все"); add("trim", trim, "Все"); add("fuel", fuel, "Все");
     add("yearFrom", yearFrom, String(catalogYearFrom())); add("yearTo", yearTo, String(catalogYearTo())); add("minEngine", minEngine, "0"); add("maxEngine", maxEngine, "8000"); add("minPrice", minPrice, "0"); add("maxPrice", maxPrice, String(CATALOG_MAX_PRICE_USD)); add("minMileage", minMileage, "0"); add("maxMileage", maxMileage, String(CATALOG_MAX_MILEAGE_KM));
+    add("minPowerPs", minPowerPs, "0"); add("maxPowerPs", maxPowerPs, "");
     add("transmission", transmission, "Все"); add("drive", drive, "Все"); add("bodyType", bodyType, "Все"); add("sort", override?.sort ?? sort, "newest");
     if (accidentFilter === "Без ДТП") params.set("accidents", "clear");
     if (accidentFilter === "Есть страховые случаи") params.set("accidents", "with");
@@ -164,6 +168,8 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
     setYearTo(String(catalogYearTo()));
     setMinEngine("0");
     setMaxEngine("8000");
+    setMinPowerPs("0");
+    setMaxPowerPs("");
     setMinPrice("0");
     setMaxPrice(String(CATALOG_MAX_PRICE_USD));
     setMinMileage("0");
@@ -200,6 +206,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           {brand !== "Все" && model !== "Все" ? <label className="filter-select"><span>Комплектация</span><select value={trim} onChange={(event) => setTrim(event.target.value)}><option value="Все">Все комплектации</option>{trimOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : null}
           <div className="filter-pair"><label className="filter-select"><span>Год от</span><select value={yearFrom} onChange={(event) => setYearFrom(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="filter-select"><span>до</span><select value={yearTo} onChange={(event) => setYearTo(event.target.value)}>{YEAR_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
           <div className="filter-pair"><label className="filter-select"><span>Объём от</span><select value={minEngine} onChange={(event) => setMinEngine(event.target.value)}><option value="0">Любой</option>{ENGINE_MIN_OPTIONS.filter(Boolean).map((item) => <option key={item} value={item}>{(item / 1_000).toFixed(1)} л</option>)}</select></label><label className="filter-select"><span>до</span><select value={maxEngine} onChange={(event) => setMaxEngine(event.target.value)}>{ENGINE_MAX_OPTIONS.map((item) => <option key={item} value={item}>{item === 8_000 ? "Любой" : `${(item / 1_000).toFixed(1)} л`}</option>)}</select></label></div>
+          <div className="filter-pair"><label className="filter-select"><span>Мощность от, л. с.</span><select value={minPowerPs} onChange={(event) => setMinPowerPs(event.target.value)}><option value="0">Любая</option>{POWER_PS_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="filter-select"><span>Мощность до, л. с.</span><select value={maxPowerPs} onChange={(event) => setMaxPowerPs(event.target.value)}><option value="">Любая</option>{POWER_PS_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
           <div className="filter-pair"><label className="filter-select"><span>Цена от, $</span><input className="filter-number-input" type="number" inputMode="numeric" min="0" step="1" placeholder="Любая" value={minPrice === "0" ? "" : minPrice} onChange={(event) => setMinPrice(event.target.value || "0")} /></label><label className="filter-select"><span>Цена до, $</span><input className="filter-number-input" type="number" inputMode="numeric" min="0" step="1" placeholder="Любая" value={maxPrice === String(CATALOG_MAX_PRICE_USD) ? "" : maxPrice} onChange={(event) => setMaxPrice(event.target.value || String(CATALOG_MAX_PRICE_USD))} /></label></div>
           <div className="filter-pair"><label className="filter-select"><span>Пробег от, км</span><input className="filter-number-input" type="number" inputMode="numeric" min="0" step="1000" placeholder="Любой" value={minMileage === "0" ? "" : minMileage} onChange={(event) => setMinMileage(event.target.value || "0")} /></label><label className="filter-select"><span>Пробег до, км</span><input className="filter-number-input" type="number" inputMode="numeric" min="0" step="1000" placeholder="Любой" value={maxMileage === String(CATALOG_MAX_MILEAGE_KM) ? "" : maxMileage} onChange={(event) => setMaxMileage(event.target.value || String(CATALOG_MAX_MILEAGE_KM))} /></label></div>
           <fieldset><legend>Тип двигателя</legend><div className="filter-pills">{fuels.map((item) => <button className={fuel === item ? "is-selected" : ""} type="button" key={item} onClick={() => setFuel(item)}>{item}</button>)}</div></fieldset>
@@ -214,7 +221,7 @@ export function PremiumCatalog({ catalog, initialSearch }: { catalog: CatalogPag
           <div className="results-toolbar"><div><strong>{catalog.total} автомобилей</strong><span>Показано {visible.length} из {catalog.total} · Encar · проверка перед публикацией</span></div><label>Сортировка<select value={sort} onChange={(event) => { const nextSort = event.target.value as "newest" | "price-asc" | "price-desc"; setSort(nextSort); applySearch(1, { sort: nextSort }); }}><option value="newest">Сначала новые</option><option value="price-asc">Сначала дешевле</option><option value="price-desc">Сначала дороже</option></select></label></div>
           {visible.length ? <div className="catalog-result-grid">{visible.map((car) => { const badge = historyBadge(car); const href = detailHref(car.id); const warm = () => prefetchCard(href); const openCard = () => { trackMetrikaGoal("vehicle_view", { vehicle_id: car.id, brand: car.brand, model: car.model, source: "catalog" }); router.push(href); }; return <article className="result-car" key={car.id} role="link" tabIndex={0} onPointerEnter={warm} onTouchStart={warm} onClick={(event) => { if (!(event.target as HTMLElement).closest("a")) openCard(); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openCard(); } }}>
             <Link prefetch={false} onPointerEnter={warm} onFocus={warm} onTouchStart={warm} className="result-car-media" href={href}><Image src={car.images[0]} alt={`${car.brand} ${car.model}`} fill unoptimized={car.images[0].startsWith("https://ci.encar.com/")} sizes="(max-width: 760px) 100vw, 33vw" /><span className={`result-history-badge ${badge.tone}`}>{badge.label}</span></Link>
-            <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span><span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
+            <div className="result-car-body"><p><span className={`card-history-meta ${badge.tone}`}>{historyText(car)}</span><small className="listing-freshness">{freshnessDate(car)}</small></p><h2>{car.brand} {car.model}</h2><h3>{car.trim}</h3><div className="result-specs"><span><CarFront />{car.year}</span><span><Gauge />{distance.format(car.mileage)} км</span><span>{car.engine}</span>{car.powerPs ? <span>{car.powerPs} л. с.</span> : null}<span>{car.fuel}</span><span>{car.drive}</span></div><footer><div><strong>{catalogPrice(car)}</strong><small>{car.calculation.calculationAvailable ? "под ключ в Минске" : car.calculation.unavailableReason}</small></div></footer></div>
           </article>; })}</div> : <div className="catalog-no-results"><Search /><h2>Подходящих автомобилей не найдено</h2><p>Измените параметры или сбросьте фильтры.</p><button type="button" onClick={reset}>Сбросить фильтры</button></div>}
           {visible.length > 0 && (catalog.page > 1 || catalog.hasMore) ? <div className="catalog-pagination">{catalog.page > 1 ? <button type="button" onClick={() => applySearch(catalog.page - 1)}><ArrowLeft size={16} />Предыдущие</button> : null}<span>Страница {catalog.page}</span>{catalog.hasMore ? <button type="button" onClick={() => applySearch(catalog.page + 1)}>Следующие {catalog.perPage} авто <ArrowRight size={16} /></button> : null}</div> : null}
         </div>

@@ -91,6 +91,18 @@ export type Database = {
           last_seen_at: string;
           last_checked_at: string | null;
           revalidation_miss_count: number;
+          engine_power_ps: number | null;
+          engine_power_kw: number | null;
+          electric_motor_peak_kw: number | null;
+          electric_30min_kw: number | null;
+          system_combined_power_ps: number | null;
+          system_combined_power_kw: number | null;
+          power_basis: string | null;
+          power_source_type: string | null;
+          power_source_url: string | null;
+          power_confidence: string | null;
+          power_match_method: string | null;
+          power_checked_at: string | null;
         };
         Insert: Record<string, never>;
         Update: Record<string, never>;

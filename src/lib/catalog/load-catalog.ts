@@ -31,6 +31,8 @@ export type CatalogSearch = {
   yearTo?: number;
   minEngine?: number;
   maxEngine?: number;
+  minPowerPs?: number;
+  maxPowerPs?: number;
   minPrice?: number;
   maxPrice?: number;
   minMileage?: number;
@@ -338,6 +340,8 @@ function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): Cat
         mileage: row.mileage_km,
         engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро",
         engineCc: row.engine_cc,
+        powerPs: (row as CatalogRow & { engine_power_ps?: number | null; system_combined_power_ps?: number | null }).engine_power_ps ?? (row as CatalogRow & { system_combined_power_ps?: number | null }).system_combined_power_ps ?? null,
+        powerConfidence: (row as CatalogRow & { power_confidence?: string | null }).power_confidence ?? null,
         fuel: fuelName(row.fuel_type),
         sourceFuel: normalizedSourceFuel(row.fuel_type),
         drive: resolvedDrive(row.drive_type, row.trim),
@@ -390,6 +394,8 @@ function mapVehicleRows(
       trim: trimName(row.trim) ?? trimName(row.generation) ?? "Комплектация не указана", generation: trimName(row.generation),
       year: row.model_year, registrationDate: row.first_registration_date, mileage: row.mileage_km,
       engine: row.engine_cc ? `${(row.engine_cc / 1000).toFixed(1)} л` : "Электро", engineCc: row.engine_cc,
+      powerPs: row.engine_power_ps ?? row.system_combined_power_ps ?? (row.engine_power_kw ? Math.round(row.engine_power_kw * 1.35962) : null),
+      powerConfidence: row.power_confidence,
       fuel: fuelName(row.fuel_type), sourceFuel: normalizedSourceFuel(row.fuel_type), drive: resolvedDrive(row.drive_type, row.trim),
       bodyType: bodyName(row.body_type), color: colorName(row.exterior_color), transmission: transmissionName(row.transmission),
       vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd ?? 0, sourcePriceKrw: Number(row.price_krw),
@@ -411,9 +417,23 @@ function normalizedSearch(search: CatalogSearch) {
     yearFrom: search.yearFrom ?? catalogYearFrom(), yearTo: search.yearTo ?? catalogYearTo(), minPrice: search.minPrice ?? 0,
     maxPrice: search.maxPrice ?? CATALOG_MAX_PRICE_USD, minMileage: search.minMileage ?? 0, maxMileage: search.maxMileage ?? CATALOG_MAX_MILEAGE_KM,
     minEngine: search.minEngine ?? 0, maxEngine: search.maxEngine ?? 8_000,
+    minPowerPs: Math.max(0, Math.min(500, search.minPowerPs ?? 0)),
+    maxPowerPs: search.maxPowerPs == null ? null : Math.max(0, Math.min(500, search.maxPowerPs)),
     transmission: search.transmission ?? "", drive: search.drive ?? "", bodyType: search.bodyType ?? "",
     accidents: search.accidents, sort: search.sort ?? "newest" as const,
   };
+}
+
+function powerFilterExpression(minPowerPs: number, maxPowerPs: number | null) {
+  if (minPowerPs <= 0 && maxPowerPs === null) return null;
+  const bounds = (field: string) => [
+    minPowerPs > 0 ? `${field}.gte.${minPowerPs}` : null,
+    maxPowerPs !== null ? `${field}.lte.${maxPowerPs}` : null,
+  ].filter((value): value is string => value !== null);
+  if (minPowerPs > 0 && maxPowerPs !== null) {
+    return `and(${bounds("engine_power_ps").join(",")}),and(${bounds("system_combined_power_ps").join(",")})`;
+  }
+  return `engine_power_ps.${minPowerPs > 0 ? "gte" : "lte"}.${minPowerPs > 0 ? minPowerPs : maxPowerPs},system_combined_power_ps.${minPowerPs > 0 ? "gte" : "lte"}.${minPowerPs > 0 ? minPowerPs : maxPowerPs}`;
 }
 
 function diversifyHomepageRows(rows: VehicleRow[], limit: number) {
@@ -479,12 +499,14 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}): Promise<Cata
   const from = (input.page - 1) * input.perPage;
   let query = client
     .from("vehicles")
-    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", input.includeCount ? { count: "exact" } : {})
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,engine_power_ps,engine_power_kw,system_combined_power_ps,power_confidence,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public", input.includeCount ? { count: "exact" } : {})
     .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
     .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
     .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
     .gte("mileage_km", Math.min(input.minMileage, input.maxMileage)).lte("mileage_km", Math.max(input.minMileage, input.maxMileage))
     .gte("engine_cc", Math.min(input.minEngine, input.maxEngine)).lte("engine_cc", Math.max(input.minEngine, input.maxEngine));
+  const powerFilter = powerFilterExpression(input.minPowerPs, input.maxPowerPs);
+  if (powerFilter) query = query.or(powerFilter);
   if (input.brand) query = query.eq("manufacturer", input.brand);
   if (input.model) query = query.eq("model", input.model);
   if (input.generation) query = query.eq("generation", input.generation);
@@ -600,6 +622,8 @@ export async function loadCatalogCount(search: CatalogSearch = {}) {
     .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
     .gte("mileage_km", Math.min(input.minMileage, input.maxMileage)).lte("mileage_km", Math.max(input.minMileage, input.maxMileage))
     .gte("engine_cc", Math.min(input.minEngine, input.maxEngine)).lte("engine_cc", Math.max(input.minEngine, input.maxEngine));
+  const powerFilter = powerFilterExpression(input.minPowerPs, input.maxPowerPs);
+  if (powerFilter) query = query.or(powerFilter);
   if (input.brand) query = query.eq("manufacturer", input.brand);
   if (input.model) query = query.eq("model", input.model);
   if (input.generation) query = query.eq("generation", input.generation);
@@ -666,7 +690,7 @@ async function loadCatalogCarData(id: string): Promise<CatalogCarData | null> {
   const client = createSupabasePublicServerClient();
   let vehicleQuery = client
     .from("vehicles")
-    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public")
+    .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,engine_power_ps,engine_power_kw,electric_motor_peak_kw,electric_30min_kw,system_combined_power_ps,system_combined_power_kw,power_basis,power_confidence,power_source_type,power_source_url,power_match_method,power_checked_at,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public")
     .eq("is_public", true)
     .eq("status", "active");
   vehicleQuery = uuidPattern.test(id)
