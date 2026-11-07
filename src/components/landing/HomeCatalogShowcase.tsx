@@ -12,6 +12,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
+import { formatPowerPs } from "@/lib/format/power";
 
 const cardLimit = 12;
 const distance = new Intl.NumberFormat("ru-RU");
@@ -48,7 +49,7 @@ function koreaCard(car: CatalogCar): ShowcaseCard {
     imageAlt: `${car.brand} ${car.model}`,
     eyebrow: history,
     title: `${car.brand} ${car.model}`,
-    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.powerPs ? `${car.powerPs} л. с.` : null, car.fuel, car.drive].filter(Boolean).join(" · "),
+    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.powerPs ? `${formatPowerPs(car.powerPs)} л. с.` : null, car.fuel, car.drive].filter(Boolean).join(" · "),
     price: car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
     priceNote: "Ориентировочный расчёт",
   };
@@ -67,7 +68,7 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     imageAlt: listing.title || [listing.make, listing.model].filter(Boolean).join(" "),
     eyebrow: "Mobile.de",
     title: listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы",
-    details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${distance.format(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
+    details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${formatPowerPs(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
     price: calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "",
     priceNote: "под ключ в Минске",
     priceInfo: "Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.",

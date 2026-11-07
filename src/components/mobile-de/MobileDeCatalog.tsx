@@ -15,6 +15,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "./InfoTooltip";
+import { formatPowerPs } from "@/lib/format/power";
 type SearchParams = Record<string, string | string[] | undefined>;
 
 function formatNumber(value: number | null | undefined) {
@@ -38,7 +39,7 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
-    listing.power?.value != null ? `${formatNumber(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}` : null,
+    listing.power?.value != null ? `${formatPowerPs(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}` : null,
   ].filter((item): item is string => Boolean(item));
 
   return (

@@ -1,4 +1,5 @@
 import type { MobileDeListing } from "./types";
+import { formatPowerPs } from "@/lib/format/power";
 
 const number = (value: number) => new Intl.NumberFormat("ru-RU").format(value);
 const numeric = (text: string, engine: boolean) => {
@@ -49,7 +50,7 @@ export function mobileDeSpecifications(listing: MobileDeListing): Array<[string,
     ["Первая регистрация", registration?.match(/^\d{4}-\d{2}$/) ? registration.split("-").reverse().join(".") : registration],
     ["Пробег", listing.mileage_km == null ? null : `${number(listing.mileage_km)} км`],
     ["Объём двигателя", listing.engine_cc == null ? null : `${number(listing.engine_cc)} см³`],
-    ["Мощность", listing.power?.value == null ? null : `${number(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}`],
+    ["Мощность", listing.power?.value == null ? null : `${formatPowerPs(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}`],
     ["Топливо", listing.fuel_type], ["Коробка передач", listing.transmission], ["Привод", listing.drive],
     ["Кузов", listing.body_type], ["Цвет", listing.color],
   ];
