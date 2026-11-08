@@ -16,7 +16,7 @@ function optionsList(options: MobileDeListing["options"]) {
     if (typeof option === "string") return [option];
     const value = [option.name, option.value].filter((part): part is string => typeof part === "string" && Boolean(part.trim())).join(": ");
     return value ? [value] : [];
-  });
+  }).filter((value) => !/^(?:стоимость в ЕС без расчетов|итоговый расч[её]т в ходе консультации с менеджером)\.?$/i.test(value.trim()));
 }
 
 function galleryImages(listing: MobileDeListing) {
@@ -64,7 +64,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
           <section className="dossier-vehicle-heading"><div><p>Автомобиль из Европы · Mobile.de</p><h1>{[listing.make, listing.model].filter(Boolean).join(" ") || title}</h1>{title !== [listing.make, listing.model].filter(Boolean).join(" ") && <h2>{title}</h2>}</div></section>
           <section className="dossier-gallery"><MobileDeGallery images={gallery.map((image) => image.url)} title={title} /></section>
           <section className="dossier-card"><h2>Общие данные</h2><div className="dossier-spec-cards">{specs.slice(0, 4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div><div className="dossier-lines">{specs.slice(4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></section>
-          {options.length > 0 && <section className="dossier-card"><h2>Комплектация и опции</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}
+          {options.length > 0 && <section className="dossier-card"><h2>{listing.transport_class === "VAN" ? "Комплектация и данные автомобиля" : "Комплектация и опции"}</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}
         </div>
         <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} russiaCalculation={russiaCalculation} />
       </section>

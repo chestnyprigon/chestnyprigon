@@ -25,7 +25,7 @@ const getCachedSupabaseListings = unstable_cache(
     const payload = await getSupabaseMobileDeListings(filters);
     return { ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) };
   },
-  ["mobile-de-supabase-listings-v2"],
+  ["mobile-de-supabase-listings-v3"],
   { revalidate: 60 },
 );
 const getCachedSupabaseFacets = unstable_cache(
@@ -42,7 +42,7 @@ const getCachedSupabaseListing = unstable_cache(
     const listing = await getSupabaseMobileDeListing(masterId);
     return listing ? normalizeMobileDeListing(listing) : null;
   },
-  ["mobile-de-supabase-listing-detail-v1"],
+  ["mobile-de-supabase-listing-detail-v2"],
   { revalidate: 60 },
 );
 
