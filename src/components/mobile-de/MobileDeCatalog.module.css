@@ -28,16 +28,16 @@
 .resultsHeading h2 { margin: 6px 0 0; font-size: clamp(19px, 3vw, 27px); letter-spacing: -.05em; }
 .resultsHeading>span { color: #86958c; font-size: 10px; }
 .cards { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
-.card { overflow: visible; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #0a1824; }
+.card { min-width: 0; overflow: visible; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #0a1824; }
 .cardImage { position: relative; display: grid; place-items: center; aspect-ratio: 1.62; overflow: hidden; border-radius: 9px 9px 0 0; background: #101f2d; color: #8b9a91; text-decoration: none; }
 .cardImage img { width: 100%; height: 100%; object-fit: cover; transition: transform .25s ease; }
 .cardImage:hover img { transform: scale(1.03); }
-.noImage { font-size: 10px; }
+.noImage { display: grid; place-items: center; width: 100%; height: 100%; padding: 12px; color: #91a0ab; font-size: 11px; line-height: 1.4; text-align: center; }
 .countryTag { position: absolute; left: 10px; top: 10px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.16); border-radius: 99px; background: rgba(5,15,10,.75); color: #dce8d6; font-size: 8px; font-weight: 800; letter-spacing: .06em; }
 .cardBody { padding: 13px; }
 .cardTopline { display: flex; justify-content: space-between; gap: 10px; color: #ef4b43; font-size: 8px; font-weight: 800; }
 .cardTopline span+span { color: #829188; font-weight: 500; text-align: right; }
-.cardTitle { display: block; margin-top: 9px; color: #f3f5f0; font-size: 15px; font-weight: 800; letter-spacing: -.035em; text-decoration: none; }
+.cardTitle { display: block; margin-top: 9px; color: #f3f5f0; font-size: 15px; font-weight: 800; letter-spacing: -.035em; overflow-wrap: anywhere; text-decoration: none; }
 .specs { min-height: 14px; margin: 8px 0 13px; color: #91a0ab; font-size: 9px; line-height: 1.6; }
 .cardFooter { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; padding-top: 11px; border-top: 1px solid rgba(255,255,255,.09); }
 .cardEstimate { min-width: 0; }

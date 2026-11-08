@@ -15,6 +15,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "./InfoTooltip";
+import { MobileDeCardPhoto } from "./MobileDeCardPhoto";
 import { formatPowerPs } from "@/lib/format/power";
 import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 import { readCalculationPreference } from "@/lib/pricing/country-preference";
@@ -75,7 +76,7 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
   return (
     <article className={styles.card}>
       <Link prefetch={false} className={styles.cardImage} href={href} aria-label={`Открыть ${listing.title}`}>
-        {listing.primary_image?.url ? <img referrerPolicy="no-referrer" src={listing.primary_image.url} alt={listing.title} loading="lazy" /> : <span className={styles.noImage}>Фото появится позже</span>}
+        {listing.primary_image?.url ? <MobileDeCardPhoto src={listing.primary_image.url} alt={listing.title} /> : <span className={styles.noImage}>Фото появится позже</span>}
         <span className={styles.countryTag}>Европа</span>
       </Link>
       <div className={styles.cardBody}>
