@@ -2,9 +2,10 @@ export type MobileDePrice = {
   amount: number | null;
   currency: string;
   type?: string | null;
-  basis?: "netto" | "unknown";
+  basis?: "netto" | "gross" | "unknown";
   status?: "source_reported" | "unknown";
   source_path?: string | null;
+  observed_at?: string | null;
 };
 
 export type MobileDePower = {
@@ -38,6 +39,7 @@ export type MobileDeListing = {
   source: string;
   source_id: string;
   title: string;
+  vehicle_class?: "CAR" | "VAN";
   make: string | null;
   model: string | null;
   first_registration: MobileDeRegistration | null;
@@ -47,6 +49,7 @@ export type MobileDeListing = {
   price: MobileDePrice | null;
   /** Source-reported Mobile.de Netto from price.nt.amount; never inferred from Brutto. */
   net_price?: MobileDePrice | null;
+  source_price?: MobileDePrice | null;
   primary_image: MobileDeImage | null;
   freshness: MobileDeFreshness | null;
   fuel_type?: string | null;

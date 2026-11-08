@@ -31,9 +31,11 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
   const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}`;
   const price = listing.net_price?.amount;
   const firstRegistration = listing.first_registration?.value;
-  const calculation = exchangeRates && typeof price === "number" && listing.net_price?.basis === "netto" && listing.net_price?.status === "source_reported" && listing.net_price?.source_path === "price.nt.amount" && firstRegistration && listing.engine_cc
+  const calculation = listing.vehicle_class !== "VAN" && exchangeRates && typeof price === "number" && listing.net_price?.basis === "netto" && listing.net_price?.status === "source_reported" && listing.net_price?.source_path === "price.nt.amount" && firstRegistration && listing.engine_cc
     ? calculateEuropeBelarusPrice({ netPriceEur: price, firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
+  const euPrice = listing.source_price?.amount ?? listing.price?.amount;
+  const formattedEuPrice = typeof euPrice === "number" ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: listing.source_price?.currency || "EUR", maximumFractionDigits: 0 }).format(euPrice) : null;
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
@@ -56,7 +58,7 @@ export function ListingCard({ listing, exchangeRates, detailHref }: { listing: M
         </Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
-          <div className={styles.cardEstimate}><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong><small>под ключ в Минске</small></div>
+          <div className={styles.cardEstimate}><strong>{calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : formattedEuPrice || "Цена не указана"}</strong><small>{calculation && exchangeRates ? "предварительно под ключ в Минске" : listing.source_price?.basis === "gross" ? "цена в Европе · Brutto" : "цена в Европе"}</small></div>
           <Link prefetch={false} href={href}>Подробнее →</Link>
         </div>
       </div>

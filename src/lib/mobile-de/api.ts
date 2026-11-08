@@ -6,12 +6,12 @@ import { normalizeMobileDeListing } from "./normalize";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 function shouldUseSupabaseCatalog() {
-  return process.env.EUROPE_CATALOG_SOURCE === "supabase_turnkey_v2";
+  return ["supabase_europe_v3", "supabase_turnkey_v2"].includes(process.env.EUROPE_CATALOG_SOURCE || "");
 }
 
 function requireSourceNettoCatalog() {
   if (!shouldUseSupabaseCatalog()) {
-    throw new MobileDeApiError(503, "Europe catalogue is not enabled until its isolated Netto v2 view is installed and selected.");
+    throw new MobileDeApiError(503, "Europe catalogue is not enabled until its source-approved Supabase view is selected.");
   }
 }
 

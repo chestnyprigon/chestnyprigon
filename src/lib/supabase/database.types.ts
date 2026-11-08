@@ -122,18 +122,22 @@ export type Database = {
           master_id: string; source_id: string; title: string; make: string; model: string | null;
           production_year: number | null; first_registration: string; first_registration_precision: string;
           registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
-          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          price_amount: number; price_currency: string; price_category: string | null; fuel_type: string | null;
           transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
           description: string | null; options: Json; source_url: string; primary_image_url: string | null;
           source_status: string; proof_status: string; is_new_vehicle: boolean; catalog_visible: boolean;
           source_updated_at: string | null; last_seen_at: string | null; verified_at: string | null;
           source_payload: Json; imported_at: string; updated_at: string;
+          vehicle_class: string; source_price_basis: string; source_price_source_path: string; net_price_amount: number | null;
+          net_price_source_path: string | null; price_status: string | null; net_price_observed_at: string | null;
         };
         Insert: {
           master_id: string; source_id: string; title: string; make: string; model?: string | null;
           production_year?: number | null; first_registration: string; first_registration_precision: string;
           registration_year: number; mileage_km: number; engine_cc?: number | null; power_ps: number;
-          price_amount: number; price_currency?: string; price_category: string; fuel_type?: string | null;
+          price_amount: number; price_currency?: string; price_category?: string | null; fuel_type?: string | null;
+          vehicle_class?: string; source_price_basis?: string; source_price_source_path?: string; net_price_amount?: number | null;
+          net_price_source_path?: string | null; price_status?: string | null; net_price_observed_at?: string | null;
           transmission?: string | null; drive?: string | null; body_type?: string | null; color?: string | null;
           description?: string | null; options?: Json; source_url: string; primary_image_url?: string | null;
           source_status: string; proof_status: string; is_new_vehicle?: boolean; catalog_visible?: boolean;
@@ -216,10 +220,12 @@ export type Database = {
           master_id: string; source_id: string; title: string; make: string; model: string | null;
           production_year: number | null; first_registration: string; first_registration_precision: string;
           registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
-          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          price_amount: number; price_currency: string; price_category: string | null; fuel_type: string | null;
           transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
           description: string | null; options: Json; source_url: string; primary_image_url: string | null;
           source_updated_at: string | null; last_seen_at: string | null; verified_at: string | null; updated_at: string;
+          vehicle_class: string; source_price_basis: string; source_price_source_path: string; net_price_amount: number | null;
+          net_price_source_path: string | null; price_status: string | null; net_price_observed_at: string | null;
         };
         Relationships: [];
       };

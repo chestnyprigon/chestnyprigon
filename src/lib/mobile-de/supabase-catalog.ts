@@ -7,13 +7,13 @@ import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingP
 const listingColumns = [
   "master_id", "source_id", "title", "make", "model", "first_registration",
   "first_registration_precision", "registration_year", "mileage_km", "engine_cc", "power_ps",
-  "net_price_amount", "net_price_source_path", "price_status", "price_currency", "price_category", "fuel_type", "transmission", "drive", "body_type",
+  "price_amount", "price_currency", "source_price_basis", "source_price_source_path", "vehicle_class", "net_price_amount", "net_price_source_path", "price_status", "net_price_observed_at", "price_category", "fuel_type", "transmission", "drive", "body_type",
   "color", "description", "options", "source_url", "primary_image_url", "source_updated_at", "last_seen_at",
   "verified_at", "updated_at",
 ].join(",");
 
-const TURNKEY_LISTINGS_VIEW = "mobile_de_catalog_turnkey_v2";
-const TURNKEY_IMAGES_VIEW = "mobile_de_catalog_turnkey_images_v2";
+const TURNKEY_LISTINGS_VIEW = "mobile_de_catalog_public_listings";
+const TURNKEY_IMAGES_VIEW = "mobile_de_catalog_public_images";
 
 function normalizedQuery(filters: MobileDeFilters) {
   return JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([key, value]) => key !== "cursor" && value).sort(([a], [b]) => a.localeCompare(b))));
@@ -53,14 +53,18 @@ function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string,
     source: "mobile_de",
     source_id: String(row.source_id),
     title: String(row.title),
+    vehicle_class: row.vehicle_class === "VAN" ? "VAN" : "CAR",
     make: typeof row.make === "string" ? row.make : null,
     model: typeof row.model === "string" ? row.model : null,
     first_registration: row.first_registration ? { value: String(row.first_registration), precision: String(row.first_registration_precision) } : null,
     mileage_km: typeof row.mileage_km === "number" ? row.mileage_km : null,
     engine_cc: typeof row.engine_cc === "number" ? row.engine_cc : null,
     power: { value: typeof row.power_ps === "number" ? row.power_ps : null, unit: "PS", label_ru: "л. с." },
-    price: null,
-    net_price: { amount: typeof row.net_price_amount === "number" ? row.net_price_amount : null, currency: "EUR", type: "source_netto", basis: "netto", status: row.price_status === "source_reported" ? "source_reported" : "unknown", source_path: typeof row.net_price_source_path === "string" ? row.net_price_source_path : null },
+    price: { amount: typeof row.price_amount === "number" ? row.price_amount : null, currency: typeof row.price_currency === "string" ? row.price_currency : "EUR", type: "original_asking", basis: row.source_price_basis === "netto" ? "netto" : "gross", status: "source_reported", source_path: "price.grs.amount" },
+    source_price: { amount: typeof row.price_amount === "number" ? row.price_amount : null, currency: typeof row.price_currency === "string" ? row.price_currency : "EUR", type: "original_asking", basis: row.source_price_basis === "netto" ? "netto" : "gross", status: "source_reported", source_path: typeof row.source_price_source_path === "string" ? row.source_price_source_path : "price.grs.amount" },
+    net_price: typeof row.net_price_amount === "number" && row.price_status === "source_reported" && row.net_price_source_path === "price.nt.amount"
+      ? { amount: row.net_price_amount, currency: "EUR", type: "source_netto", basis: "netto", status: "source_reported", source_path: "price.nt.amount", observed_at: typeof row.net_price_observed_at === "string" ? row.net_price_observed_at : null }
+      : null,
     primary_image: primaryUrl ? { url: primaryUrl, position: 0, is_primary: true } : null,
     freshness: { availability: "unknown", source_updated_at: typeof row.source_updated_at === "string" ? row.source_updated_at : null, master_updated_at: typeof row.updated_at === "string" ? row.updated_at : null, last_successful_source_check_at: typeof row.verified_at === "string" ? row.verified_at : null },
     fuel_type: typeof row.fuel_type === "string" ? row.fuel_type : null,
@@ -86,8 +90,8 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
-  if (filters.price_min) query = query.gte("net_price_amount", Number(filters.price_min));
-  if (filters.price_max) query = query.lte("net_price_amount", Number(filters.price_max));
+  if (filters.price_min) query = query.gte("price_amount", Number(filters.price_min));
+  if (filters.price_max) query = query.lte("price_amount", Number(filters.price_max));
   if (filters.registration_year_min) query = query.gte("registration_year", Number(filters.registration_year_min));
   if (filters.registration_year_max) query = query.lte("registration_year", Number(filters.registration_year_max));
   if (filters.mileage_min) query = query.gte("mileage_km", Number(filters.mileage_min));
@@ -99,7 +103,7 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
 
   const sort = filters.sort || "updated_desc";
   const sortBy: Record<string, { column: string; ascending: boolean }> = {
-    price_asc: { column: "net_price_amount", ascending: true }, price_desc: { column: "net_price_amount", ascending: false },
+    price_asc: { column: "price_amount", ascending: true }, price_desc: { column: "price_amount", ascending: false },
     mileage_asc: { column: "mileage_km", ascending: true }, mileage_desc: { column: "mileage_km", ascending: false },
     updated_asc: { column: "source_updated_at", ascending: true }, updated_desc: { column: "source_updated_at", ascending: false },
   };
@@ -128,8 +132,8 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
-  if (filters.price_min) query = query.gte("net_price_amount", Number(filters.price_min));
-  if (filters.price_max) query = query.lte("net_price_amount", Number(filters.price_max));
+  if (filters.price_min) query = query.gte("price_amount", Number(filters.price_min));
+  if (filters.price_max) query = query.lte("price_amount", Number(filters.price_max));
   if (filters.registration_year_min) query = query.gte("registration_year", Number(filters.registration_year_min));
   if (filters.registration_year_max) query = query.lte("registration_year", Number(filters.registration_year_max));
   if (filters.mileage_min) query = query.gte("mileage_km", Number(filters.mileage_min));
@@ -155,7 +159,7 @@ export async function getSupabaseMobileDeListing(masterId: string): Promise<Mobi
 
 export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDeFacets> {
   const client = createSupabaseEuropePublicServerClient();
-  const { data, error } = await client.rpc("get_mobile_de_catalog_turnkey_facets_v2", { p_make: make || null });
+  const { data, error } = await client.rpc("get_mobile_de_catalog_facets", { p_make: make || null });
   if (error) throw new Error(`Europe Supabase facets query failed: ${error.message}`);
   const row = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
   const strings = (key: string) => Array.isArray(row[key]) ? row[key]!.filter((value): value is string => typeof value === "string") : undefined;

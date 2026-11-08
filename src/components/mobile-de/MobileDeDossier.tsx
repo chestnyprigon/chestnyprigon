@@ -44,7 +44,15 @@ export async function MobileDeDossier({ listing, id }: { listing: MobileDeListin
           <section className="dossier-card"><h2>Общие данные</h2><div className="dossier-spec-cards">{specs.slice(0, 4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div><div className="dossier-lines">{specs.slice(4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></section>
           {options.length > 0 && <section className="dossier-card"><h2>Комплектация и опции</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}
         </div>
-        <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} />
+        {listing.vehicle_class === "VAN" || !listing.net_price || listing.net_price.status !== "source_reported" ? (
+          <aside className="dossier-price-source" aria-label="Исходная цена объявления">
+            <p>Цена в Европе</p>
+            <strong>{typeof (listing.source_price?.amount ?? listing.price?.amount) === "number"
+              ? new Intl.NumberFormat("ru-RU", { style: "currency", currency: listing.source_price?.currency || "EUR", maximumFractionDigits: 0 }).format((listing.source_price?.amount ?? listing.price?.amount)!)
+              : "Не указана"}</strong>
+            {listing.source_price?.basis === "gross" && <small>Brutto по объявлению Mobile.de. Стоимость доставки и оформления не рассчитана.</small>}
+          </aside>
+        ) : <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} />}
       </section>
     </main>
   );
