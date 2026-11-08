@@ -12,7 +12,7 @@ import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filt
 import { MobileDeFilterForm } from "./MobileDeFilterForm";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "./InfoTooltip";
 import { formatPowerPs } from "@/lib/format/power";
@@ -50,14 +50,22 @@ function russiaInputForListing(listing: MobileDeListing) {
 
 export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null }) {
   const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}?destination=${destination}&currency=${currency}`;
-  const price = listing.net_price?.amount;
+  const price = listing.price?.amount;
   const firstRegistration = listing.first_registration?.value;
-  const calculation = exchangeRates && typeof price === "number" && listing.net_price?.basis === "netto" && listing.net_price?.status === "source_reported" && listing.net_price?.source_path === "cars.price_net" && firstRegistration && listing.engine_cc
-    ? calculateEuropeBelarusPrice({ netPriceEur: price, firstRegistration, engineCc: listing.engine_cc, exchangeRates })
+  const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof price === "number" && firstRegistration && listing.engine_cc
+    ? calculateEuropeBelarusPrice({ sourcePriceEur: price, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
-  const russiaPrice = russiaCalculation
+  const russiaPrice = listing.transport_class !== "VAN" && russiaCalculation
     ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
     : "Расчёт уточняется";
+  const sourcePriceDisplay = typeof price === "number"
+    ? exchangeRates ? formatEuropeSourcePrice(price, exchangeRates.eurByn) : `${new Intl.NumberFormat("ru-RU").format(price)} €`
+    : "";
+  const priceDisplay = listing.transport_class === "VAN"
+    ? sourcePriceDisplay
+    : destination === "ru"
+      ? russiaCalculation ? russiaPrice : sourcePriceDisplay
+      : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : sourcePriceDisplay;
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
@@ -81,8 +89,8 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <div className={styles.cardEstimate}>
-            <strong>{destination === "ru" ? russiaPrice : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : ""}</strong>
-            <small>{destination === "ru" ? "предварительно под ключ в России" : <>под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></>}</small>
+            <strong>{priceDisplay}</strong>
+            <small>{listing.transport_class === "VAN" ? "Итоговый расчёт в ходе консультации с менеджером" : destination === "ru" && russiaCalculation ? "предварительно под ключ в России" : destination === "by" && calculation ? <>предварительно под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></> : "Цена в Европе"}</small>
           </div>
         </div>
       </div>
@@ -166,6 +174,7 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
   const russiaCalculations = new Map<string, RussiaPriceResult | null>();
   if (destination === "ru" && catalog) {
     const entries = catalog.data.flatMap((listing) => {
+      if (listing.transport_class === "VAN") return [];
       const vehicle = russiaInputForListing(listing);
       return vehicle ? [{ listingId: listing.master_id, vehicle }] : [];
     });

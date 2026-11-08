@@ -3,7 +3,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { ArrowRight, Calculator, Check, ExternalLink, ShieldCheck } from "lucide-react";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { InfoTooltip } from "./InfoTooltip";
@@ -36,18 +36,24 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   const [leadSent, setLeadSent] = useState(false);
   const [leadSending, setLeadSending] = useState(false);
   const [leadError, setLeadError] = useState("");
-  const amount = listing.net_price?.amount;
+  const isVan = listing.transport_class === "VAN";
+  const amount = listing.price?.amount;
   const firstRegistration = listing.first_registration?.value;
   const calculation = useMemo(() => {
-    if (!exchangeRates || exchangeRates.source !== "nbrb" || amount == null || listing.net_price?.basis !== "netto" || listing.net_price?.status !== "source_reported" || listing.net_price?.source_path !== "cars.price_net" || !firstRegistration || !listing.engine_cc) return null;
-    return calculateEuropeBelarusPrice({ netPriceEur: amount, firstRegistration, engineCc: listing.engine_cc, preferential, exchangeRates });
-  }, [amount, exchangeRates, listing.engine_cc, listing.net_price?.basis, listing.net_price?.status, listing.net_price?.source_path, preferential, firstRegistration]);
+    if (isVan || !exchangeRates || exchangeRates.source !== "nbrb" || amount == null || !firstRegistration || !listing.engine_cc) return null;
+    return calculateEuropeBelarusPrice({ sourcePriceEur: amount, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, preferential, exchangeRates });
+  }, [amount, exchangeRates, isVan, listing.engine_cc, listing.price?.basis, preferential, firstRegistration]);
   const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
   const source = sourceUrl(listing.source_id);
   const activeRussiaCalculation = liveRussiaCalculation ?? russiaCalculation;
-  const formattedTotal = destination === "ru" && activeRussiaCalculation
+  const formattedTotal = isVan
+    ? amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—"
+    : destination === "ru" && activeRussiaCalculation
     ? formatRussiaTotal(activeRussiaCalculation, currency === "BYN" ? "RUB" : currency)
-    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "";
+    : destination === "ru"
+      ? amount != null ? money(amount, "EUR") : "—"
+      : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
+        : amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—";
 
   async function refreshRussiaPrice() {
     setRussiaRefreshing(true);
@@ -70,7 +76,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
 
   async function submitLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (destination === "ru" ? !activeRussiaCalculation : !calculation) return;
+    if (destination === "ru" ? (!isVan && !activeRussiaCalculation) : (!isVan && !calculation)) return;
     const data = new FormData(event.currentTarget);
     setLeadSending(true);
     setLeadError("");
@@ -84,7 +90,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
             source: "Mobile.de", masterId: listing.master_id, sourceId: listing.source_id, title,
             firstRegistration, mileageKm: listing.mileage_km, sourceUrl: source,
           },
-          calculationSnapshot: destination === "ru" ? { ...activeRussiaCalculation, destination: "RU", currency, displayTotal: formattedTotal } : { ...calculation, preferential, destination: "BY", currency: "BYN" },
+          calculationSnapshot: isVan ? { type: "manager_consultation", transportClass: "VAN", sourcePriceEur: amount, priceBasis: listing.price?.basis, destination, displayPrice: formattedTotal } : destination === "ru" ? { ...activeRussiaCalculation, destination: "RU", currency, displayTotal: formattedTotal } : { ...calculation, preferential, destination: "BY", currency: "BYN" },
           pageUrl: window.location.href,
         }),
       });
@@ -99,26 +105,27 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   }
 
   return <>
-    <aside className="dossier-price" aria-label="Предварительная стоимость автомобиля">
+    <aside className="dossier-price" aria-label={isVan ? "Цена автомобиля в Европе" : "Предварительная стоимость автомобиля"}>
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
-      <div className="dossier-badges"><span>Расчёт для {destination === "ru" ? "России" : "Беларуси"}</span><span>{destination === "ru" ? "RUB" : "Минск"}</span></div>
+      <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{isVan ? "EUR" : destination === "ru" ? "RUB" : "Минск"}</span></div>
       <div className="dossier-total">
-        <span>{destination === "ru" ? "Предварительная цена под ключ" : <>Цена под ключ <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></>}</span>
+        <span>{isVan ? "Цена в Европе" : destination === "ru" ? "Предварительная цена под ключ" : <>Цена под ключ <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></>}</span>
         <strong>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
-        <small>{destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
+        <small>{isVan ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
-      {destination === "ru" ? <div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div> : null}
-      {destination === "by" && <div className="dossier-preferential-block">
+      {isVan ? <div className="dossier-notice">Итоговый расчёт в ходе консультации с менеджером.</div> : null}
+      {destination === "ru" && !isVan ? <div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div> : null}
+      {destination === "by" && !isVan && <div className="dossier-preferential-block">
         <label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation} onChange={(event) => setPreferential(event.target.checked)} /><span>Льготная растаможка 50% <b className={preferential ? "" : "is-off"}>{preferential ? "Включена" : "Выключена"}</b></span></label>
       </div>}
-      {destination === "ru"
+      {isVan ? null : destination === "ru"
         ? activeRussiaCalculation
           ? <RussiaPriceBreakdown calculation={activeRussiaCalculation} isRefreshing={isRussiaRefreshing} refreshError={russiaRefreshError} onRefresh={() => void refreshRussiaPrice()} />
           : <details className="dossier-calculation" open><summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary><div><p><span>Цена появится после обновления расчёта</span></p><button className="dossier-price-refresh" type="button" onClick={() => void refreshRussiaPrice()} disabled={isRussiaRefreshing}>{isRussiaRefreshing ? "Обновляем цену…" : "Обновить цену"}</button>{russiaRefreshError ? <p className="dossier-price-refresh-error" role="alert">{russiaRefreshError}</p> : null}</div></details>
         : <details className="dossier-calculation">
         <summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary>
         {calculation ? <div>
-          <p><span>Цена Netto</span><b>{money(calculation.netPriceEur, "EUR")}</b></p>
+          <p><span>{calculation.priceBasis === "unknown" ? "Цена по объявлению" : `Цена автомобиля (${calculation.priceBasis === "brutto" ? "Brutto" : "Netto"})`}</span><b>{money(calculation.sourcePriceEur, "EUR")}</b></p>
           <p><span>Услуги компании в ЕС</span><b>{money(calculation.ecServiceEur, "EUR")}</b></p>
           <p><span>Перевод</span><b>{money(calculation.translationEur, "EUR")}</b></p>
           <p><span>Доставка до Минска <InfoTooltip label="О стоимости доставки">Это средняя сумма доставки. Для более точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{money(calculation.deliveryMinskEur, "EUR")}</b></p>
@@ -128,13 +135,13 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
           <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{formattedTotal}</b></p>
         </div> : <div><p><span>{exchangeRates ? "Недостаточно данных для расчёта" : "Расчёт временно недоступен"}</span></p></div>}
       </details>}
-      <button className="dossier-lead" type="button" disabled={destination === "ru" ? !activeRussiaCalculation : !calculation} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>Оставить заявку <ArrowRight size={17} /></button>
+      <button className="dossier-lead" type="button" disabled={!isVan && (destination === "ru" ? !activeRussiaCalculation : !calculation)} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>{isVan ? "Запросить расчёт" : "Оставить заявку"} <ArrowRight size={17} /></button>
     </aside>
 
     {leadOpen && <div className="consult-modal-backdrop" onMouseDown={() => setLeadOpen(false)}><div className="consult-modal vehicle-lead-modal" role="dialog" aria-modal="true" aria-label="Заявка на автомобиль из Европы" onMouseDown={(event) => event.stopPropagation()}>
       <button className="consult-close" type="button" onClick={() => setLeadOpen(false)} aria-label="Закрыть">×</button>
       {leadSent ? <div className="lead-success"><Check /><b>Заявка принята</b><span>Менеджер свяжется с вами по этому автомобилю.</span></div> : <>
-        <header className="vehicle-lead-heading"><p className="premium-kicker"><span />Заявка на автомобиль</p><h2>{title}</h2><p>Mobile.de · первая регистрация {firstRegistration || "не указана"}</p><strong>{formattedTotal} <small>предварительно под ключ</small></strong></header>
+        <header className="vehicle-lead-heading"><p className="premium-kicker"><span />Заявка на автомобиль</p><h2>{title}</h2><p>Mobile.de · первая регистрация {firstRegistration || "не указана"}</p><strong>{formattedTotal} <small>{isVan ? "цена в Европе; расчёт при консультации" : "предварительно под ключ"}</small></strong></header>
         <form className="vehicle-lead-form" onSubmit={submitLead}>
           <div className="vehicle-lead-grid"><label><span>Ваше имя</span><input name="name" placeholder="Например, Евгений" required /></label><label><span>Телефон</span><input name="phone" placeholder="+375 (__) ___-__-__" inputMode="tel" required /></label></div>
           <label><span>Комментарий <i>необязательно</i></span><textarea name="message" placeholder="Ваш вопрос по автомобилю" rows={3} /></label>

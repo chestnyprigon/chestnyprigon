@@ -10,7 +10,10 @@ export const EUROPE_BELARUS_PRICING_PROFILE = {
 } as const;
 
 export type EuropeBelarusPriceInput = {
-  netPriceEur: number;
+  sourcePriceEur?: number;
+  /** @deprecated Kept for existing callers; new Europe listings may use source Brutto. */
+  netPriceEur?: number;
+  priceBasis?: "netto" | "brutto" | "unknown";
   firstRegistration: string;
   engineCc: number;
   preferential?: boolean;
@@ -23,6 +26,9 @@ export type EuropeBelarusPriceCalculation = {
   preliminary: true;
   preferential: boolean;
   ageBand: "up_to_three_years" | "three_to_five_years" | "over_five_years";
+  sourcePriceEur: number;
+  priceBasis: "netto" | "brutto" | "unknown";
+  /** @deprecated Compatibility alias. */
   netPriceEur: number;
   ecServiceEur: number;
   translationEur: number;
@@ -75,19 +81,20 @@ function dutyRate(priceEur: number, engineCc: number, band: EuropeBelarusPriceCa
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
-/** Preliminary individual-import estimate from the listing Netto price and first-registration date. */
+/** Preliminary individual-import estimate from the available source price and first-registration date. */
 export function calculateEuropeBelarusPrice(input: EuropeBelarusPriceInput): EuropeBelarusPriceCalculation {
-  if (!Number.isFinite(input.netPriceEur) || input.netPriceEur <= 0) throw new Error("A source Netto price is required");
+  const sourcePriceEur = input.sourcePriceEur ?? input.netPriceEur;
+  if (!Number.isFinite(sourcePriceEur) || sourcePriceEur! <= 0) throw new Error("A positive source price is required");
   if (!Number.isFinite(input.engineCc) || input.engineCc <= 0) throw new Error("Engine displacement is required for a preliminary estimate");
   if (input.exchangeRates.source !== "nbrb" || input.exchangeRates.eurByn <= 0) throw new Error("An official NBRB EUR/BYN rate is required");
 
   const now = input.now ?? new Date();
   const preferential = input.preferential ?? true;
   const band = ageBand(input.firstRegistration, now);
-  const ecServiceEur = roundMoney(input.netPriceEur * EUROPE_BELARUS_PRICING_PROFILE.ecServiceRate);
-  const translationEur = roundMoney((input.netPriceEur + ecServiceEur) * EUROPE_BELARUS_PRICING_PROFILE.translationRate);
-  const subtotalEur = roundMoney(input.netPriceEur + ecServiceEur + translationEur + EUROPE_BELARUS_PRICING_PROFILE.deliveryMinskEur + EUROPE_BELARUS_PRICING_PROFILE.companyServiceEur);
-  const fullCustomsDuty = dutyRate(input.netPriceEur, input.engineCc, band);
+  const ecServiceEur = roundMoney(sourcePriceEur! * EUROPE_BELARUS_PRICING_PROFILE.ecServiceRate);
+  const translationEur = roundMoney((sourcePriceEur! + ecServiceEur) * EUROPE_BELARUS_PRICING_PROFILE.translationRate);
+  const subtotalEur = roundMoney(sourcePriceEur! + ecServiceEur + translationEur + EUROPE_BELARUS_PRICING_PROFILE.deliveryMinskEur + EUROPE_BELARUS_PRICING_PROFILE.companyServiceEur);
+  const fullCustomsDuty = dutyRate(sourcePriceEur!, input.engineCc, band);
   const customsDutyEur = roundMoney(fullCustomsDuty * (preferential ? 0.5 : 1));
   const recyclingFeeByn = band === "up_to_three_years"
     ? EUROPE_BELARUS_PRICING_PROFILE.recyclingFeeByn.upToThreeYears
@@ -99,7 +106,9 @@ export function calculateEuropeBelarusPrice(input: EuropeBelarusPriceInput): Eur
     preliminary: true,
     preferential,
     ageBand: band,
-    netPriceEur: roundMoney(input.netPriceEur),
+    sourcePriceEur: roundMoney(sourcePriceEur!),
+    priceBasis: input.priceBasis ?? (input.netPriceEur !== undefined && input.sourcePriceEur === undefined ? "netto" : "brutto"),
+    netPriceEur: roundMoney(sourcePriceEur!),
     ecServiceEur,
     translationEur,
     deliveryMinskEur: EUROPE_BELARUS_PRICING_PROFILE.deliveryMinskEur,

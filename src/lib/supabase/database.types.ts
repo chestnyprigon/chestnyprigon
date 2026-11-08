@@ -133,8 +133,10 @@ export type Database = {
         Row: {
           master_id: string; source_id: string; title: string; make: string; model: string | null;
           production_year: number | null; first_registration: string; first_registration_precision: string;
-          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
-          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number | null;
+          price_amount: number; price_currency: string; price_category: string | null; fuel_type: string | null;
+          transport_class: string; customer_cohort: string; model_group: string | null; source_gross_amount: number | null;
+          reported_net_amount: number | null; price_basis: string; price_provenance: Json;
           transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
           description: string | null; options: Json; source_url: string; primary_image_url: string | null;
           source_status: string; proof_status: string; is_new_vehicle: boolean; catalog_visible: boolean;
@@ -144,8 +146,10 @@ export type Database = {
         Insert: {
           master_id: string; source_id: string; title: string; make: string; model?: string | null;
           production_year?: number | null; first_registration: string; first_registration_precision: string;
-          registration_year: number; mileage_km: number; engine_cc?: number | null; power_ps: number;
-          price_amount: number; price_currency?: string; price_category: string; fuel_type?: string | null;
+          registration_year: number; mileage_km: number; engine_cc?: number | null; power_ps?: number | null;
+          price_amount: number; price_currency?: string; price_category?: string | null; fuel_type?: string | null;
+          transport_class?: string; customer_cohort?: string; model_group?: string | null; source_gross_amount?: number | null;
+          reported_net_amount?: number | null; price_basis?: string; price_provenance?: Json;
           transmission?: string | null; drive?: string | null; body_type?: string | null; color?: string | null;
           description?: string | null; options?: Json; source_url: string; primary_image_url?: string | null;
           source_status: string; proof_status: string; is_new_vehicle?: boolean; catalog_visible?: boolean;
@@ -257,8 +261,10 @@ export type Database = {
         Row: {
           master_id: string; source_id: string; title: string; make: string; model: string | null;
           production_year: number | null; first_registration: string; first_registration_precision: string;
-          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number;
-          price_amount: number; price_currency: string; price_category: string; fuel_type: string | null;
+          registration_year: number; mileage_km: number; engine_cc: number | null; power_ps: number | null;
+          price_amount: number; price_currency: string; price_category: string | null; fuel_type: string | null;
+          transport_class: string; customer_cohort: string; model_group: string | null; source_gross_amount: number | null;
+          reported_net_amount: number | null; price_basis: string;
           transmission: string | null; drive: string | null; body_type: string | null; color: string | null;
           description: string | null; options: Json; source_url: string; primary_image_url: string | null;
           source_updated_at: string | null; last_seen_at: string | null; verified_at: string | null; updated_at: string;

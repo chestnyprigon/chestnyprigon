@@ -2,9 +2,11 @@ export type MobileDePrice = {
   amount: number | null;
   currency: string;
   type?: string | null;
-  basis?: "netto" | "unknown";
+  basis?: "netto" | "brutto" | "unknown";
   status?: "source_reported" | "unknown";
   source_path?: string | null;
+  gross_amount?: number | null;
+  provenance?: Record<string, unknown> | null;
 };
 
 export type MobileDePower = {
@@ -47,6 +49,9 @@ export type MobileDeListing = {
   price: MobileDePrice | null;
   /** Source-reported Netto persisted by the Mobile.de import pipeline. */
   net_price?: MobileDePrice | null;
+  transport_class?: "CAR" | "VAN";
+  customer_cohort?: string | null;
+  model_group?: string | null;
   primary_image: MobileDeImage | null;
   freshness: MobileDeFreshness | null;
   fuel_type?: string | null;

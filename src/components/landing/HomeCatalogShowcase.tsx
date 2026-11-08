@@ -9,7 +9,7 @@ import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
@@ -67,9 +67,9 @@ function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | 
 
 function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | null, destination: "by" | "ru", currency: "USD" | "BYN" | "RUB" | "EUR", russiaCalculation?: import("@/lib/pricing/russia-pricing").RussiaPriceResult | null): ShowcaseCard {
   const firstRegistration = listing.first_registration?.value;
-  const netPrice = listing.net_price;
-  const calculation = exchangeRates && typeof netPrice?.amount === "number" && netPrice.basis === "netto" && netPrice.status === "source_reported" && netPrice.source_path === "cars.price_net" && firstRegistration && listing.engine_cc
-    ? calculateEuropeBelarusPrice({ netPriceEur: netPrice.amount, firstRegistration, engineCc: listing.engine_cc, exchangeRates })
+  const sourcePrice = listing.price;
+  const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof sourcePrice?.amount === "number" && firstRegistration && listing.engine_cc
+    ? calculateEuropeBelarusPrice({ sourcePriceEur: sourcePrice.amount, priceBasis: sourcePrice.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
   return {
     id: listing.master_id,
@@ -79,11 +79,15 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     eyebrow: "Mobile.de",
     title: listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы",
     details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${formatPowerPs(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
-    price: destination === "ru" && russiaCalculation
+    price: listing.transport_class === "VAN"
+      ? exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : ""
+      : destination === "ru" && russiaCalculation
       ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
-      : destination === "ru" ? "Расчёт уточняется" : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : "",
-    priceNote: destination === "ru" ? "предварительно под ключ в России" : "под ключ в Минске",
-    priceInfo: "Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.",
+      : destination === "ru" && !russiaCalculation
+        ? typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : ""
+        : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : "",
+    priceNote: listing.transport_class === "VAN" ? "Итоговый расчёт в ходе консультации с менеджером" : destination === "ru" && russiaCalculation ? "предварительно под ключ в России" : destination === "by" && calculation ? "предварительно под ключ в Минске" : "Цена в Европе",
+    priceInfo: (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation)) && listing.transport_class !== "VAN" ? "Стоимость предварительная. Для точного расчёта обратитесь к менеджеру." : undefined,
   };
 }
 
@@ -135,7 +139,8 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
   try {
     const [listings, exchangeRates] = await Promise.all([getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }), destination === "by" ? fetchNbrbRates() : Promise.resolve(null)]);
     const entries = listings.data.flatMap((listing) => {
-      const price = listing.net_price?.amount ?? listing.price?.amount;
+      if (listing.transport_class === "VAN") return [];
+      const price = listing.price?.amount;
       if (typeof price !== "number" || price <= 0) return [];
       const powerValue = listing.power?.value;
       const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);

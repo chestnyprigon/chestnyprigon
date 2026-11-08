@@ -51,7 +51,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   let russiaCalculation: RussiaPriceResult | null = null;
   if (destination === "by") { try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; } }
   else {
-    const vehicle = russiaInputForListing(listing);
+    const vehicle = listing.transport_class === "VAN" ? null : russiaInputForListing(listing);
     if (vehicle) russiaCalculation = (await loadRussiaPriceSnapshotsOrCalculate("europe", [{ listingId: listing.master_id, vehicle }])).get(listing.master_id) ?? null;
   }
 
