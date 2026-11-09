@@ -1,4 +1,5 @@
 import { Calculator, RefreshCw } from "lucide-react";
+import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { RUSSIA_KOREA_COMMERCIAL_PROFILE, type RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 
 const rub = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 });
@@ -71,8 +72,8 @@ export function RussiaPriceBreakdown({
       </p>)}
       <p className="is-emphasis"><span>Итого коммерческие расходы</span><b>{rub.format(calculation.commercial.subtotalRub)}</b></p>
       {governmentLines.map(([label, value]) => <p key={label}><span>{label}</span><b>{rub.format(value)}</b></p>)}
-      <p className="is-total"><span>ИТОГО в России:</span><b>{rub.format(calculation.totalRub)}</b></p>
-      <small className="dossier-rate-note">Курсы и расчёт обновлены {dateTime(calculation.rates.fetchedAt)} · курс действителен на {calculation.rates.effectiveDate} · расчёт предварительный.</small>
+      <p className="is-total"><span>ИТОГО в России: <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, параметров автомобиля и условий оформления. Точную стоимость подтвердит менеджер.</InfoTooltip></span><b>{rub.format(calculation.totalRub)}</b></p>
+      <small className="dossier-rate-note">Курсы и расчёт обновлены {dateTime(calculation.rates.fetchedAt)} · курс действителен на {calculation.rates.effectiveDate}.</small>
     </div>
   </details>;
 }

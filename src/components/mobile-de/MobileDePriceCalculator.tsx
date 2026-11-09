@@ -109,12 +109,12 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
       <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{isVan ? "EUR" : destination === "ru" ? "RUB" : "Минск"}</span></div>
       <div className="dossier-total">
-        <span>{isVan ? "Цена в Европе" : destination === "ru" ? "Предварительная цена под ключ" : <>Цена под ключ <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></>}</span>
+        <span>{isVan
+          ? <>Цена в Европе <InfoTooltip label="О цене в Европе">Цена указана по объявлению Mobile.de. Итоговый расчёт подготовит менеджер после консультации.</InfoTooltip></>
+          : <>Предварительная цена под ключ <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, даты оформления и параметров автомобиля. Точную стоимость подтвердит менеджер.</InfoTooltip></>}</span>
         <strong>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
         <small>{isVan ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
-      {isVan ? <div className="dossier-notice">Итоговый расчёт в ходе консультации с менеджером.</div> : null}
-      {destination === "ru" && !isVan ? <div className="dossier-notice">Предварительный расчёт: итог зависит от курса, даты оформления и параметров автомобиля.</div> : null}
       {destination === "by" && !isVan && <div className="dossier-preferential-block">
         <label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation} onChange={(event) => setPreferential(event.target.checked)} /><span>Льготная растаможка 50% <b className={preferential ? "" : "is-off"}>{preferential ? "Включена" : "Выключена"}</b></span></label>
       </div>}
@@ -132,7 +132,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
           <p><span>Услуга компании</span><b>{money(calculation.companyServiceEur, "EUR")}</b></p>
           <p><span>Таможенный платёж</span><b>{money(calculation.customsDutyEur, "EUR")}</b></p>
           <p><span>Утилизационный сбор</span><b>{money(calculation.recyclingFeeByn, "BYN")}</b></p>
-          <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{formattedTotal}</b></p>
+          <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, даты оформления и параметров автомобиля. Точную стоимость подтвердит менеджер.</InfoTooltip></span><b>{formattedTotal}</b></p>
         </div> : <div><p><span>{exchangeRates ? "Недостаточно данных для расчёта" : "Расчёт временно недоступен"}</span></p></div>}
       </details>}
       <button className="dossier-lead" type="button" disabled={!isVan && (destination === "ru" ? !activeRussiaCalculation : !calculation)} onClick={() => { setLeadOpen(true); setLeadSent(false); setLeadError(""); }}>{isVan ? "Запросить расчёт" : "Оставить заявку"} <ArrowRight size={17} /></button>

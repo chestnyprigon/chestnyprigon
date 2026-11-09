@@ -28,6 +28,7 @@ type ShowcaseCard = {
   eyebrow: string;
   title: string;
   details: string;
+  power?: string;
   price: string;
   priceNote: string;
   priceInfo?: string;
@@ -59,9 +60,11 @@ function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | 
     imageAlt: `${car.brand} ${car.model}`,
     eyebrow: history,
     title: `${car.brand} ${car.model}`,
-    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, formatCatalogPower(car.powerPs, car.electric30MinKw), car.fuel, car.drive].filter(Boolean).join(" · "),
+    details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.fuel, car.drive].filter(Boolean).join(" · "),
+    power: formatCatalogPower(car.powerPs, car.electric30MinKw) || undefined,
     price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
-    priceNote: destination === "ru" ? "предварительно под ключ в России" : "Ориентировочный расчёт",
+    priceNote: "Предварительный расчёт",
+    priceInfo: "Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, параметров автомобиля и условий оформления. Точную стоимость подтвердит менеджер.",
   };
 }
 
@@ -86,8 +89,12 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
       : destination === "ru" && !russiaCalculation
         ? typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : ""
         : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : "",
-    priceNote: listing.transport_class === "VAN" ? "Итоговый расчёт в ходе консультации с менеджером" : destination === "ru" && russiaCalculation ? "предварительно под ключ в России" : destination === "by" && calculation ? "предварительно под ключ в Минске" : "Цена в Европе",
-    priceInfo: (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation)) && listing.transport_class !== "VAN" ? "Стоимость предварительная. Для точного расчёта обратитесь к менеджеру." : undefined,
+    priceNote: listing.transport_class === "VAN" ? "Цена в Европе" : destination === "ru" && russiaCalculation ? "Предварительный расчёт" : destination === "by" && calculation ? "Предварительный расчёт" : "Цена в Европе",
+    priceInfo: listing.transport_class === "VAN"
+      ? "Цена указана по объявлению Mobile.de. Итоговый расчёт подготовит менеджер после консультации."
+      : (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation))
+        ? "Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, параметров автомобиля и условий оформления. Точную стоимость подтвердит менеджер."
+        : "Показана цена объявления Mobile.de. Расчёт под ключ зависит от параметров автомобиля и условий оформления.",
   };
 }
 
@@ -102,7 +109,7 @@ function ShowcaseSection({ id, country, href, action, destination, currency, car
         {card.image ? <Image src={card.image} alt={card.imageAlt} fill sizes="(max-width: 700px) 78vw, (max-width: 1100px) 33vw, 25vw" unoptimized /> : <span className="home-showcase-no-image">Фото появится позже</span>}
         <span className="home-showcase-badge">{card.eyebrow}</span>
       </Link>
-      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}</p><footer><span><small>{card.priceNote}{card.priceInfo ? <InfoTooltip label="О предварительной стоимости">{card.priceInfo}</InfoTooltip> : null}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
+      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Данные о мощности получены из открытых источников и могут отличаться от фактических. Уточните характеристику у продавца.</InfoTooltip></> : null}</p><footer><span><small>{card.priceNote}{card.priceInfo ? <InfoTooltip label="Пояснение к цене">{card.priceInfo}</InfoTooltip> : null}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
     </article>)}</div> : <div className="home-showcase-empty">Сейчас подборка обновляется. Откройте каталог, чтобы посмотреть все объявления.</div>}
     <div className="home-showcase-mobile-action"><Link className="premium-button secondary" href={`${href}?destination=${destination}&currency=${currency}`}>{action} <span aria-hidden="true">→</span></Link></div>
   </section>;
