@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SORT_OPTIONS, mobileDeFilterParams, parseMobileDeFilters, type FilterErrors, type FilterSearch, type FilterValues } from "@/lib/mobile-de/filters";
 import { mobileDeModelKey, normalizeMobileDeModels } from "@/lib/mobile-de/models";
+import { mobileDeMakeKey, normalizeMobileDeMakes } from "@/lib/mobile-de/makes";
 import type { MobileDeFacets } from "@/lib/mobile-de/types";
 import styles from "./MobileDeCatalog.module.css";
 
@@ -65,8 +66,11 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   const [countPending, setCountPending] = useState(() => parseMobileDeFilters(params).valid);
   const [pending, startTransition] = useTransition();
   const globalDictionary = useDictionary();
-  const makeDictionary = useDictionary(values.make?.trim(), Boolean(values.make?.trim()));
   const facets = globalDictionary.data;
+  const makeOptions = useMemo(() => normalizeMobileDeMakes(facets.makes || []), [facets.makes]);
+  const selectedMake = makeOptions.find((option) => mobileDeMakeKey(option.value) === mobileDeMakeKey(values.make || ""));
+  const selectedMakeValue = selectedMake?.value || values.make?.trim();
+  const makeDictionary = useDictionary(selectedMakeValue, Boolean(selectedMakeValue));
   const scoped = makeDictionary.data;
   const registrationYears = useMemo(() => {
     const min = facets.ranges?.registration_year_min;
@@ -75,7 +79,6 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
     return Array.from({ length: Math.min(80, max - min + 1) }, (_, index) => max - index);
   }, [facets.ranges?.registration_year_min, facets.ranges?.registration_year_max]);
 
-  const makeOptions = useMemo(() => [...new Set(facets.makes || [])].sort((a, b) => a.localeCompare(b, "ru")), [facets.makes]);
   const modelOptions = useMemo(() => normalizeMobileDeModels(scoped.models || []), [scoped.models]);
   const selectedModel = modelOptions.find((model) => mobileDeModelKey(model) === mobileDeModelKey(values.model || ""));
 
@@ -118,7 +121,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
   }
 
   const valueOptions = (key: keyof typeof dictionaryKeys) => {
-    if (key === "make") return makeOptions;
+    if (key === "make") return makeOptions.map((option) => option.value);
     if (key === "model") return modelOptions;
     const dictionary = scoped[dictionaryKeys[key]] !== undefined ? scoped : facets;
     const values = dictionary[dictionaryKeys[key]] || [];
@@ -139,13 +142,13 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
         const options = valueOptions(key);
         const status = dictionaryState(key);
         const disabled = (key === "model" && !values.make) || status === "loading" || status === "error";
-        const selectedValue = key === "model" ? selectedModel || values.model || "" : values[key] || "";
+        const selectedValue = key === "make" ? selectedMakeValue || "" : key === "model" ? selectedModel || values.model || "" : values[key] || "";
         return <label className={styles.field} key={key}>
           <span>{label}</span>
           <select name={key} value={selectedValue} onChange={(event) => update(key, event.target.value)} disabled={disabled} aria-invalid={Boolean(errors[key])}>
             <option value="">{key === "make" ? "Все марки" : key === "model" ? !values.make ? "Сначала выберите марку" : status === "loading" ? "Загружаем модели…" : "Все модели" : status === "loading" ? "Загружаем варианты…" : "Любое"}</option>
             {selectedValue && !options.includes(selectedValue) && <option value={selectedValue}>{selectedValue}</option>}
-            {options.map((option) => <option value={option} key={key === "model" ? mobileDeModelKey(option) : option}>{option}</option>)}
+            {options.map((option) => <option value={option} key={key === "model" ? mobileDeModelKey(option) : key === "make" ? mobileDeMakeKey(option) : option}>{key === "make" ? makeOptions.find((makeOption) => makeOption.value === option)?.label || option : option}</option>)}
           </select>
           {status === "error" && <small role="status">Список временно недоступен. <button type="button" onClick={key === "model" ? makeDictionary.retry : globalDictionary.retry}>Повторить</button></small>}
           {errors[key] && <small role="alert">{errors[key]}</small>}

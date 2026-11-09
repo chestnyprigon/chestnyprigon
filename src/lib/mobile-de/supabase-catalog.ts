@@ -2,6 +2,7 @@ import "server-only";
 
 import { createSupabaseEuropePublicServerClient } from "@/lib/supabase/public-client";
 import { mobileDeText } from "./normalize";
+import { mobileDeMakeKey } from "./makes";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 const listingColumns = [
@@ -36,6 +37,14 @@ function offsetFromCursor(cursor: string | undefined, query: string) {
 
 function literalIlikePattern(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/([%_])/g, "\\$1");
+}
+
+function applyMakeFilter<T extends { ilike: (column: string, pattern: string) => T; or: (filters: string) => T }>(query: T, make: string) {
+  const key = mobileDeMakeKey(make);
+  if (key === "mercedesbenz") return query.ilike("make", "%mercedes%");
+  if (key === "volkswagen") return query.or("make.ilike.*Volkswagen*,make.ilike.VW");
+  if (key === "citroen") return query.or("make.ilike.*Citroen*,make.ilike.*Citroën*");
+  return query.ilike("make", literalIlikePattern(make));
 }
 
 function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string, unknown>>): MobileDeListing {
@@ -91,7 +100,7 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   const limit = Math.min(50, Math.max(1, Number(filters.limit) || 20));
   let query = client.from("mobile_de_catalog_public_listings").select(listingColumns, { count: "exact" });
 
-  if (filters.make) query = query.eq("make", filters.make);
+  if (filters.make) query = applyMakeFilter(query, filters.make);
   if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
@@ -133,7 +142,7 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
 export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promise<number> {
   const client = createSupabaseEuropePublicServerClient();
   let query = client.from("mobile_de_catalog_public_listings").select("master_id", { count: "exact", head: true });
-  if (filters.make) query = query.eq("make", filters.make);
+  if (filters.make) query = applyMakeFilter(query, filters.make);
   if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
@@ -168,10 +177,38 @@ export async function getSupabaseMobileDeListing(masterId: string): Promise<Mobi
 
 export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDeFacets> {
   const client = createSupabaseEuropePublicServerClient();
-  const { data, error } = await client.rpc("get_mobile_de_catalog_facets", { p_make: make || null });
-  if (error) throw new Error(`Europe Supabase facets query failed: ${error.message}`);
-  const row = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const strings = (key: string) => Array.isArray(row[key]) ? row[key]!.filter((value): value is string => typeof value === "string") : undefined;
-  const ranges = row.ranges && typeof row.ranges === "object" && !Array.isArray(row.ranges) ? row.ranges as MobileDeFacets["ranges"] : undefined;
-  return { makes: strings("makes"), models: strings("models"), fuel_types: strings("fuel_types"), transmissions: strings("transmissions"), body_types: strings("body_types"), ranges };
+  const readFacets = async (selectedMake: string | null) => {
+    const { data, error } = await client.rpc("get_mobile_de_catalog_facets", { p_make: selectedMake });
+    if (error) throw new Error(`Europe Supabase facets query failed: ${error.message}`);
+    return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  };
+  const row = await readFacets(null);
+  const strings = (source: Record<string, unknown>, key: string) => Array.isArray(source[key]) ? source[key]!.filter((value): value is string => typeof value === "string") : [];
+  const rawMakes = strings(row, "makes");
+  if (!make) {
+    const ranges = row.ranges && typeof row.ranges === "object" && !Array.isArray(row.ranges) ? row.ranges as MobileDeFacets["ranges"] : undefined;
+    return { makes: rawMakes, ranges };
+  }
+
+  const aliases = rawMakes.filter((value) => mobileDeMakeKey(value) === mobileDeMakeKey(make));
+  const selectedRows = await Promise.all((aliases.length ? aliases : [make]).map(readFacets));
+  const merge = (key: string) => [...new Set(selectedRows.flatMap((source) => strings(source, key)))];
+  const rangeRows = selectedRows.flatMap((source) => source.ranges && typeof source.ranges === "object" && !Array.isArray(source.ranges) ? [source.ranges as Record<string, unknown>] : []);
+  const ranges: NonNullable<MobileDeFacets["ranges"]> = {};
+  for (const rangeKey of new Set(rangeRows.flatMap((range) => Object.keys(range)))) {
+    const numbers = rangeRows.map((range) => range[rangeKey]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (!numbers.length) continue;
+    if (rangeKey.endsWith("_min")) ranges[rangeKey] = Math.min(...numbers);
+    else if (rangeKey.endsWith("_max")) ranges[rangeKey] = Math.max(...numbers);
+    else if (rangeKey === "count") ranges[rangeKey] = numbers.reduce((sum, value) => sum + value, 0);
+    else ranges[rangeKey] = numbers[0];
+  }
+  return {
+    makes: aliases,
+    models: merge("models"),
+    fuel_types: merge("fuel_types"),
+    transmissions: merge("transmissions"),
+    body_types: merge("body_types"),
+    ranges,
+  };
 }

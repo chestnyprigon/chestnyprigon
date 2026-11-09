@@ -64,7 +64,7 @@ function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | 
     power: formatCatalogPower(car.powerPs, car.electric30MinKw) || undefined,
     price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
     priceNote: "Предварительный расчёт",
-    priceInfo: "Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, параметров автомобиля и условий оформления. Точную стоимость подтвердит менеджер.",
+    priceInfo: "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер.",
   };
 }
 
@@ -91,9 +91,9 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
         : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : "",
     priceNote: listing.transport_class === "VAN" ? "Цена в Европе" : destination === "ru" && russiaCalculation ? "Предварительный расчёт" : destination === "by" && calculation ? "Предварительный расчёт" : "Цена в Европе",
     priceInfo: listing.transport_class === "VAN"
-      ? "Цена указана по объявлению Mobile.de. Итоговый расчёт подготовит менеджер после консультации."
+      ? "Цена из объявления Mobile.de. Итоговый расчёт уточнит менеджер."
       : (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation))
-        ? "Расчёт предварительный. Итоговая стоимость может измениться из-за курса валют, параметров автомобиля и условий оформления. Точную стоимость подтвердит менеджер."
+        ? "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер."
         : "Показана цена объявления Mobile.de. Расчёт под ключ зависит от параметров автомобиля и условий оформления.",
   };
 }
@@ -109,7 +109,7 @@ function ShowcaseSection({ id, country, href, action, destination, currency, car
         {card.image ? <Image src={card.image} alt={card.imageAlt} fill sizes="(max-width: 700px) 78vw, (max-width: 1100px) 33vw, 25vw" unoptimized /> : <span className="home-showcase-no-image">Фото появится позже</span>}
         <span className="home-showcase-badge">{card.eyebrow}</span>
       </Link>
-      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Данные о мощности получены из открытых источников и могут отличаться от фактических. Уточните характеристику у продавца.</InfoTooltip></> : null}</p><footer><span><small>{card.priceNote}{card.priceInfo ? <InfoTooltip label="Пояснение к цене">{card.priceInfo}</InfoTooltip> : null}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
+      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Данные о мощности из открытых источников и могут отличаться. Уточните у продавца.</InfoTooltip></> : null}</p><footer><span><small>{card.priceNote}{card.priceInfo ? <InfoTooltip label="Пояснение к цене">{card.priceInfo}</InfoTooltip> : null}</small><strong>{card.price}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
     </article>)}</div> : <div className="home-showcase-empty">Сейчас подборка обновляется. Откройте каталог, чтобы посмотреть все объявления.</div>}
     <div className="home-showcase-mobile-action"><Link className="premium-button secondary" href={`${href}?destination=${destination}&currency=${currency}`}>{action} <span aria-hidden="true">→</span></Link></div>
   </section>;

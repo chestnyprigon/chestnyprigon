@@ -309,13 +309,11 @@ a { color: inherit; text-decoration: none; }
 .dossier-preferential-block .dossier-preferential b { background: rgba(95,205,164,.14); border: 1px solid rgba(95,205,164,.28); border-radius: 99px; color: #bcebd9; font-size: 8px; padding: 3px 6px; }
 .dossier-preferential-block .dossier-preferential b.is-off { background: rgba(151,168,180,.1); border-color: rgba(151,168,180,.22); color: #b5c1ca; }
 .dossier-preferential-block>small { color: #b8c1b8; display: block; font-size: 8px; line-height: 1.45; margin-top: 7px; }
-.info-tooltip { display: inline-flex; margin-left: 4px; position: relative; vertical-align: middle; z-index: 5; }
-.info-tooltip>summary, .dossier-calculation .info-tooltip>summary { align-items: center; border: 0; border-radius: 50%; box-sizing: border-box; color: #8d99a6; cursor: pointer; display: inline-flex; font-size: 0; height: 16px; justify-content: center; list-style: none; line-height: 1; min-height: 0; padding: 0; width: 16px; }
-.info-tooltip>summary svg { display: block; height: 15px; width: 15px; }
-.info-tooltip>summary::-webkit-details-marker { display: none; }
-.info-tooltip>summary:hover,.info-tooltip>summary:focus-visible,.info-tooltip[open]>summary { color: #c2ccd3; outline: none; }
-.info-tooltip>span { background: #152531; border: 1px solid #344a59; border-radius: 6px; bottom: calc(100% + 8px); box-shadow: 0 10px 28px rgba(0,0,0,.35); color: #d2dbe1; display: none; font-size: 10px; font-weight: 500; left: 0; line-height: 1.45; max-width: min(240px,75vw); min-width: 180px; padding: 9px 10px; position: absolute; text-transform: none; width: max-content; z-index: 80; }
-.info-tooltip:hover>span,.info-tooltip:focus-within>span,.info-tooltip[open]>span { display: block; }
+.info-tooltip { display: inline-flex; margin-left: 4px; position: relative; vertical-align: middle; }
+.info-tooltip-trigger { align-items: center; background: transparent; border: 0; color: #8d99a6; cursor: pointer; display: inline-flex; height: 18px; justify-content: center; margin: 0; padding: 0; width: 18px; }
+.info-tooltip-trigger svg { display: block; height: 15px; width: 15px; }
+.info-tooltip-trigger:hover,.info-tooltip-trigger:focus-visible,.info-tooltip-trigger[aria-expanded="true"] { color: #c2ccd3; outline: none; }
+.info-tooltip-content { background: #152531; border: 1px solid #344a59; border-radius: 7px; box-shadow: 0 10px 28px rgba(0,0,0,.4); color: #d2dbe1; font-size: 12px; font-weight: 500; left: 0; line-height: 1.45; max-width: min(260px,calc(100vw - 24px)); min-width: min(190px,calc(100vw - 24px)); padding: 10px 12px; position: fixed; text-transform: none; visibility: hidden; width: max-content; z-index: 10000; }
 .dossier-calculation p.dossier-calculation-total { border-top: 1px solid var(--line); color: #fff; font-size: 9px; font-weight: 800; margin: 10px 0 7px; padding-top: 9px; }
 .dossier-price .dossier-lead:disabled { cursor: not-allowed; opacity: .55; }
 @media (max-width: 900px) { .dossier-layout { grid-template-columns: minmax(0,1fr); }.dossier-layout > * { max-width: 100%; min-width: 0; } }
