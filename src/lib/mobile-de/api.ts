@@ -33,7 +33,7 @@ const getCachedSupabaseFacets = unstable_cache(
     const { getSupabaseMobileDeFacets } = await import("./supabase-catalog");
     return getSupabaseMobileDeFacets(make);
   },
-  ["mobile-de-supabase-facets-v1"],
+  ["mobile-de-supabase-facets-v2"],
   { revalidate: 300 },
 );
 const getCachedSupabaseListing = unstable_cache(
