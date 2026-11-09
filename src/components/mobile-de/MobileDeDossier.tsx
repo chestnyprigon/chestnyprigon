@@ -1,3 +1,4 @@
+import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { mobileDeSpecifications } from "@/lib/mobile-de/specifications";
@@ -45,7 +46,7 @@ function russiaInputForListing(listing: MobileDeListing) {
 export async function MobileDeDossier({ listing, id, destination = "by", currency = "USD" }: { listing: MobileDeListing; id?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR" }) {
   const options = optionsList(listing.options);
   const gallery = galleryImages(listing);
-  const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
+  const { name: title, trim } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const specs = mobileDeSpecifications(listing);
   let exchangeRates: ExchangeRates | null = null;
   let russiaCalculation: RussiaPriceResult | null = null;
@@ -61,7 +62,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
       <div className="dossier-contextbar"><Link href={`/catalog/europe?destination=${destination}&currency=${currency}`}><ArrowLeft size={16} />К каталогу</Link></div>
       <section className="dossier-layout">
         <div className="dossier-content">
-          <section className="dossier-vehicle-heading"><div><p>Автомобиль из Европы · Mobile.de</p><h1>{[listing.make, listing.model].filter(Boolean).join(" ") || title}</h1>{title !== [listing.make, listing.model].filter(Boolean).join(" ") && <h2>{title}</h2>}</div></section>
+          <section className="dossier-vehicle-heading"><div><p>Автомобиль из Европы · Mobile.de</p><h1>{title}</h1>{trim && <h2>{trim}</h2>}</div></section>
           <section className="dossier-gallery"><MobileDeGallery images={gallery.map((image) => image.url)} title={title} /></section>
           <section className="dossier-card"><h2>Общие данные</h2><div className="dossier-spec-cards">{specs.slice(0, 4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div><div className="dossier-lines">{specs.slice(4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></section>
           {options.length > 0 && <section className="dossier-card"><h2>{listing.transport_class === "VAN" ? "Комплектация и данные автомобиля" : "Комплектация и опции"}</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}

@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-img-element -- image hosts are supplied by Master DB and are not fixed at build time. */
+import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import Link from "next/link";
 import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -51,6 +51,7 @@ function russiaInputForListing(listing: MobileDeListing) {
 
 export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null }) {
   const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}?destination=${destination}&currency=${currency}`;
+  const { name } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const price = listing.price?.amount;
   const firstRegistration = listing.first_registration?.value;
   const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof price === "number" && firstRegistration && listing.engine_cc
@@ -67,6 +68,7 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
     : destination === "ru"
       ? russiaCalculation ? russiaPrice : sourcePriceDisplay
       : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : sourcePriceDisplay;
+  const isEstimate = listing.transport_class !== "VAN" && (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation));
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
@@ -75,23 +77,16 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
 
   return (
     <article className={styles.card}>
-      <Link prefetch={false} className={styles.cardImage} href={href} aria-label={`Открыть ${listing.title}`}>
-        {listing.primary_image?.url ? <MobileDeCardPhoto src={listing.primary_image.url} alt={listing.title} /> : <span className={styles.noImage}>Фото появится позже</span>}
+      <Link prefetch={false} className={styles.cardImage} href={href} aria-label={`Открыть ${name}`}>
+        {listing.primary_image?.url ? <MobileDeCardPhoto src={listing.primary_image.url} alt={name} /> : <span className={styles.noImage}>Фото появится позже</span>}
         <span className={styles.countryTag}>Европа</span>
       </Link>
       <div className={styles.cardBody}>
-        <div className={styles.cardTopline}>
-          <span>{listing.make || "Европа"}{listing.model ? ` · ${listing.model}` : ""}</span>
-          <span>{listing.freshness?.availability === "unknown" ? "Наличие не подтверждено" : "Данные Master DB"}</span>
-        </div>
-        <Link prefetch={false} className={styles.cardTitle} href={href}>
-          {listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы"}
-        </Link>
+        <Link prefetch={false} className={styles.cardTitle} href={href}>{name}</Link>
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <div className={styles.cardEstimate}>
-            <strong>{priceDisplay}</strong>
-            <small>{listing.transport_class === "VAN" ? "Итоговый расчёт в ходе консультации с менеджером" : destination === "ru" && russiaCalculation ? "предварительно под ключ в России" : destination === "by" && calculation ? <>предварительно под ключ в Минске <InfoTooltip label="О предварительной стоимости">Стоимость предварительная. Для точного расчёта обратитесь к менеджеру.</InfoTooltip></> : "Цена в Европе"}</small>
+            {priceDisplay && <strong className="price-with-info"><span>{priceDisplay}</span><InfoTooltip label="Пояснение к цене">{isEstimate ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."}</InfoTooltip></strong>}
           </div>
         </div>
       </div>

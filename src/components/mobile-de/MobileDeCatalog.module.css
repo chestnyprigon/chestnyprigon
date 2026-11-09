@@ -35,8 +35,6 @@
 .noImage { display: grid; place-items: center; width: 100%; height: 100%; padding: 12px; color: #91a0ab; font-size: 11px; line-height: 1.4; text-align: center; }
 .countryTag { position: absolute; left: 10px; top: 10px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.16); border-radius: 99px; background: rgba(5,15,10,.75); color: #dce8d6; font-size: 8px; font-weight: 800; letter-spacing: .06em; }
 .cardBody { padding: 13px; }
-.cardTopline { display: flex; justify-content: space-between; gap: 10px; color: #ef4b43; font-size: 8px; font-weight: 800; }
-.cardTopline span+span { color: #829188; font-weight: 500; text-align: right; }
 .cardTitle { display: block; margin-top: 9px; color: #f3f5f0; font-size: 15px; font-weight: 800; letter-spacing: -.035em; overflow-wrap: anywhere; text-decoration: none; }
 .specs { min-height: 14px; margin: 8px 0 13px; color: #91a0ab; font-size: 9px; line-height: 1.6; }
 .cardFooter { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; padding-top: 11px; border-top: 1px solid rgba(255,255,255,.09); }
@@ -85,8 +83,6 @@
 .cardTitle { font-size: 19px; margin-top: 12px; }
 .cardBody { padding: 16px; }
 .specs { font-size: 11px; line-height: 1.8; min-height: 40px; }
-.cardTopline { font-size: 10px; color: #91a0ab; }
-.cardTopline span+span { display: none; }
 .cardFooter { align-items: center; }
 .cardFooter strong { font-size: 22px; }
 .cardFooter a { font-size: 11px; color: #ef4b43; }
@@ -366,4 +362,18 @@
   .europeIntroStat { max-width: 220px; padding: 14px; }
   .europeIntroStat strong { font-size: 21px; }
   .europeIntroStat small { display: none; }
+}
+
+
+.card { display: flex; flex-direction: column; }
+.cardImage { flex: none; }
+.cardBody { display: flex; flex: 1; flex-direction: column; }
+.cardTitle { margin-top: 0; line-height: 1.25; }
+.cardFooter { margin-top: auto; }
+.cardEstimate strong { display: flex; }
+
+@media (max-width: 640px) {
+  .cardTitle { min-block-size: 2.5em; }
+  .specs { min-height: 0; margin-bottom: 10px; }
+  .cardFooter strong { font-size: clamp(11px, 2.8vw, 15px); }
 }

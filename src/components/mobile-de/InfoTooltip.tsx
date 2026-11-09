@@ -74,6 +74,7 @@ export function InfoTooltip({ label, children }: { label: string; children: stri
         id={tooltipId}
         ref={tooltipRef}
         role="tooltip"
+        onClick={(event) => event.stopPropagation()}
         style={position ? { left: position.left, top: position.top, visibility: "visible" } : { visibility: "hidden" }}
       >
         {children}

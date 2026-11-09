@@ -6,6 +6,7 @@ import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
 import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
+import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import { InfoTooltip } from "./InfoTooltip";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
@@ -43,7 +44,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
     if (isVan || !exchangeRates || exchangeRates.source !== "nbrb" || amount == null || !firstRegistration || !listing.engine_cc) return null;
     return calculateEuropeBelarusPrice({ sourcePriceEur: amount, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, preferential, exchangeRates });
   }, [amount, exchangeRates, isVan, listing.engine_cc, listing.price?.basis, preferential, firstRegistration]);
-  const title = listing.title || [listing.make, listing.model].filter(Boolean).join(" ") || "Автомобиль из Европы";
+  const title = vehicleDisplayName(listing.make, listing.model, listing.title).name;
   const source = sourceUrl(listing.source_id);
   const activeRussiaCalculation = liveRussiaCalculation ?? russiaCalculation;
   const formattedTotal = isVan
@@ -109,10 +110,8 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
       <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{isVan ? "EUR" : destination === "ru" ? "RUB" : "Минск"}</span></div>
       <div className="dossier-total">
-        <span>{isVan
-          ? <>Цена в Европе <InfoTooltip label="О цене в Европе">Цена указана в Mobile.de. Итог уточнит менеджер.</InfoTooltip></>
-          : <>Предварительная цена под ключ <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итоговую стоимость уточнит менеджер.</InfoTooltip></>}</span>
-        <strong>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</strong>
+        <span>{isVan ? "Цена в Европе" : "Предварительная цена под ключ"}</span>
+        <strong className="price-with-info"><span>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</span><InfoTooltip label="Пояснение к цене">{isVan ? "Цена указана в Mobile.de. Итог уточнит менеджер." : "Расчёт предварительный. Итоговую стоимость уточнит менеджер."}</InfoTooltip></strong>
         <small>{isVan ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
       {destination === "by" && !isVan && <div className="dossier-preferential-block">

@@ -1,5 +1,8 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+import { mobileDeModelKey, normalizeMobileDeModels } from "./models";
+
 import { createSupabaseEuropePublicServerClient } from "@/lib/supabase/public-client";
 import { normalizeMobileDeField, normalizeMobileDeOptions } from "./localization";
 import { mobileDeMakeKey } from "./makes";
@@ -101,7 +104,10 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
   let query = client.from("mobile_de_catalog_public_listings").select(listingColumns, { count: "exact" });
 
   if (filters.make) query = applyMakeFilter(query, filters.make);
-  if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
+  if (filters.model) {
+    const aliases = filters.make ? await matchingModelValues(filters.make, filters.model) : [];
+    query = aliases.length ? query.in("model", aliases) : query.ilike("model", literalIlikePattern(filters.model));
+  }
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
@@ -143,7 +149,10 @@ export async function getSupabaseMobileDeCount(filters: MobileDeFilters): Promis
   const client = createSupabaseEuropePublicServerClient();
   let query = client.from("mobile_de_catalog_public_listings").select("master_id", { count: "exact", head: true });
   if (filters.make) query = applyMakeFilter(query, filters.make);
-  if (filters.model) query = query.ilike("model", literalIlikePattern(filters.model));
+  if (filters.model) {
+    const aliases = filters.make ? await matchingModelValues(filters.make, filters.model) : [];
+    query = aliases.length ? query.in("model", aliases) : query.ilike("model", literalIlikePattern(filters.model));
+  }
   if (filters.fuel_type) query = query.eq("fuel_type", filters.fuel_type);
   if (filters.transmission) query = query.eq("transmission", filters.transmission);
   if (filters.body_type) query = query.eq("body_type", filters.body_type);
@@ -175,7 +184,7 @@ export async function getSupabaseMobileDeListing(masterId: string): Promise<Mobi
   return mapListing(data as unknown as Record<string, unknown>, (imagesResult.data ?? []) as unknown as Array<Record<string, unknown>>);
 }
 
-export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDeFacets> {
+const readRawFacets = unstable_cache(async (make?: string): Promise<MobileDeFacets> => {
   const client = createSupabaseEuropePublicServerClient();
   const readFacets = async (selectedMake: string | null) => {
     const { data, error } = await client.rpc("get_mobile_de_catalog_facets", { p_make: selectedMake });
@@ -211,4 +220,15 @@ export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDe
     body_types: merge("body_types"),
     ranges,
   };
+}, ["mobile-de-raw-facets-v1"], { revalidate: 300 });
+
+async function matchingModelValues(make: string, model: string) {
+  const key = mobileDeModelKey(model, make);
+  const facets = await readRawFacets(make);
+  return (facets.models ?? []).filter((value) => mobileDeModelKey(value, make) === key);
+}
+
+export async function getSupabaseMobileDeFacets(make?: string): Promise<MobileDeFacets> {
+  const facets = await readRawFacets(make);
+  return make ? { ...facets, models: normalizeMobileDeModels(facets.models ?? [], make) } : facets;
 }

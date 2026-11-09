@@ -80,8 +80,8 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
     return Array.from({ length: Math.min(80, max - min + 1) }, (_, index) => max - index);
   }, [facets.ranges?.registration_year_min, facets.ranges?.registration_year_max]);
 
-  const modelOptions = useMemo(() => normalizeMobileDeModels(scoped.models || []), [scoped.models]);
-  const selectedModel = modelOptions.find((model) => mobileDeModelKey(model) === mobileDeModelKey(values.model || ""));
+  const modelOptions = useMemo(() => normalizeMobileDeModels(scoped.models || [], selectedMakeValue), [scoped.models, selectedMakeValue]);
+  const selectedModel = modelOptions.find((model) => mobileDeModelKey(model) === mobileDeModelKey(values.model || "", selectedMakeValue));
 
   useEffect(() => {
     const controller = new AbortController();
