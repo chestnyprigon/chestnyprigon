@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { SORT_OPTIONS, mobileDeFilterParams, parseMobileDeFilters, type FilterErrors, type FilterSearch, type FilterValues } from "@/lib/mobile-de/filters";
 import { mobileDeModelKey, normalizeMobileDeModels } from "@/lib/mobile-de/models";
 import { mobileDeMakeKey, normalizeMobileDeMakes } from "@/lib/mobile-de/makes";
+import { normalizeMobileDeField } from "@/lib/mobile-de/localization";
 import type { MobileDeFacets } from "@/lib/mobile-de/types";
 import styles from "./MobileDeCatalog.module.css";
 
@@ -148,7 +149,7 @@ export function MobileDeFilterForm({ params, initialErrors }: { params: FilterSe
           <select name={key} value={selectedValue} onChange={(event) => update(key, event.target.value)} disabled={disabled} aria-invalid={Boolean(errors[key])}>
             <option value="">{key === "make" ? "Все марки" : key === "model" ? !values.make ? "Сначала выберите марку" : status === "loading" ? "Загружаем модели…" : "Все модели" : status === "loading" ? "Загружаем варианты…" : "Любое"}</option>
             {selectedValue && !options.includes(selectedValue) && <option value={selectedValue}>{selectedValue}</option>}
-            {options.map((option) => <option value={option} key={key === "model" ? mobileDeModelKey(option) : key === "make" ? mobileDeMakeKey(option) : option}>{key === "make" ? makeOptions.find((makeOption) => makeOption.value === option)?.label || option : option}</option>)}
+            {options.map((option) => <option value={option} key={key === "model" ? mobileDeModelKey(option) : key === "make" ? mobileDeMakeKey(option) : option}>{key === "make" ? makeOptions.find((makeOption) => makeOption.value === option)?.label || option : key === "fuel_type" ? normalizeMobileDeField(option, "fuel") : key === "transmission" ? normalizeMobileDeField(option, "transmission") : option}</option>)}
           </select>
           {status === "error" && <small role="status">Список временно недоступен. <button type="button" onClick={key === "model" ? makeDictionary.retry : globalDictionary.retry}>Повторить</button></small>}
           {errors[key] && <small role="alert">{errors[key]}</small>}

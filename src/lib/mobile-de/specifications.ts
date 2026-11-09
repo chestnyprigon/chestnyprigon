@@ -1,5 +1,6 @@
 import type { MobileDeListing } from "./types";
 import { formatPowerPs } from "@/lib/format/power";
+import { normalizeMobileDeField } from "./localization";
 
 const number = (value: number) => new Intl.NumberFormat("ru-RU").format(value);
 const numeric = (text: string, engine: boolean) => {
@@ -51,8 +52,11 @@ export function mobileDeSpecifications(listing: MobileDeListing): Array<[string,
     ["Пробег", listing.mileage_km == null ? null : `${number(listing.mileage_km)} км`],
     ["Объём двигателя", listing.engine_cc == null ? null : `${number(listing.engine_cc)} см³`],
     ["Мощность", listing.power?.value == null ? null : `${formatPowerPs(listing.power.value)} ${listing.power.label_ru || listing.power.unit || "л. с."}`],
-    ["Топливо", listing.fuel_type], ["Коробка передач", listing.transmission], ["Привод", listing.drive],
-    ["Кузов", listing.body_type], ["Цвет", listing.color],
+    ["Топливо", normalizeMobileDeField(listing.fuel_type, "fuel")],
+    ["Коробка передач", normalizeMobileDeField(listing.transmission, "transmission")],
+    ["Привод", normalizeMobileDeField(listing.drive, "drive")],
+    ["Кузов", normalizeMobileDeField(listing.body_type, "body")],
+    ["Цвет", normalizeMobileDeField(listing.color, "color")],
   ];
   const result: Array<[string, string]> = structured.map(([label, value]) => [label, known(value) || parsed.get(label) || "Не указано"]);
   for (const label of ["Количество дверей", "Количество мест", "Техосмотр", "Количество владельцев"]) {

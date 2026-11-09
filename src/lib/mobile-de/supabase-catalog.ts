@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createSupabaseEuropePublicServerClient } from "@/lib/supabase/public-client";
-import { mobileDeText } from "./normalize";
+import { normalizeMobileDeField, normalizeMobileDeOptions } from "./localization";
 import { mobileDeMakeKey } from "./makes";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
@@ -48,7 +48,7 @@ function applyMakeFilter<T extends { ilike: (column: string, pattern: string) =>
 }
 
 function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string, unknown>>): MobileDeListing {
-  const options = Array.isArray(row.options) ? row.options.flatMap((item) => mobileDeText(item) || []) : [];
+  const options = normalizeMobileDeOptions(row.options);
   const images = gallery?.map((item) => ({
     url: String(item.source_url),
     position: Number(item.position),
@@ -84,9 +84,9 @@ function mapListing(row: Record<string, unknown>, gallery?: Array<Record<string,
     freshness: { availability: "unknown", source_updated_at: typeof row.source_updated_at === "string" ? row.source_updated_at : null, master_updated_at: typeof row.updated_at === "string" ? row.updated_at : null, last_successful_source_check_at: typeof row.verified_at === "string" ? row.verified_at : null },
     fuel_type: typeof row.fuel_type === "string" ? row.fuel_type : null,
     transmission: typeof row.transmission === "string" ? row.transmission : null,
-    drive: typeof row.drive === "string" ? row.drive : null,
-    body_type: typeof row.body_type === "string" ? row.body_type : null,
-    color: typeof row.color === "string" ? row.color : null,
+    drive: normalizeMobileDeField(row.drive, "drive"),
+    body_type: normalizeMobileDeField(row.body_type, "body"),
+    color: normalizeMobileDeField(row.color, "color"),
     description: typeof row.description === "string" ? row.description : null,
     options,
     ...(gallery ? { gallery: images } : {}),

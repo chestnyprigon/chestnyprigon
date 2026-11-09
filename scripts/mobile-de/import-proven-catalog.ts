@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeMobileDeField, normalizeMobileDeOptions } from "@/lib/mobile-de/localization";
 
 const envCandidates = [process.env.DOTENV_CONFIG_PATH, ".env.local", "../../.env.local", ".env"]
   .filter((path): path is string => Boolean(path));
@@ -254,14 +255,30 @@ function eligibleCustomerCohort(item: Record<string, unknown>, cohort: Record<st
       price_category_eligible: true, source_gross_amount: grossAmount,
       reported_net_amount: netAmount, price_basis: priceBasis,
       price_provenance: { basis: priceBasis, source_path: priceBasis === "netto" ? text(reportedNet.source_path) || "price.nt.amount" : text(price.source_path) || "price.grs.amount", provenance: price.provenance ?? null },
-      fuel_type: fuel, transmission: text(item.transmission), drive: text(nested(item, "drive").code ?? item.drive),
-      body_type: text(nested(item, "body").code ?? item.body_type ?? item.body), color: text(item.color ?? item.color_ru), description: text(item.description),
-      options: Array.isArray(item.options) ? item.options : [], source_url: sourceUrl,
+      fuel_type: fuel, transmission: normalizeMobileDeField(text(item.transmission), "transmission"),
+      drive: normalizeMobileDeField(text(nested(item, "drive").code ?? item.drive), "drive"),
+      body_type: normalizeMobileDeField(text(nested(item, "body").code ?? item.body_type ?? item.body), "body"),
+      color: normalizeMobileDeField(text(item.color ?? item.color_ru), "color"), description: text(item.description),
+      options: normalizeMobileDeOptions(item.options), source_url: sourceUrl,
       primary_image_url: text(nested(item, "primary_image").url) || images.find((image) => image.is_primary)?.source_url || images[0]?.source_url || null,
       source_status: availability === "active" ? "active" : "unknown", proof_status: "customer_selected", is_new_vehicle: false,
       catalog_visible: true, source_updated_at: text(freshness.source_updated_at),
       last_seen_at: text(freshness.last_seen_at), verified_at: text(freshness.last_successful_source_check_at),
-      source_payload: { import_policy: "explicit_customer_allowlist", model_group: modelGroup, transport_class: vehicleClass, availability_at_import: availability },
+      source_payload: {
+        import_policy: "explicit_customer_allowlist", model_group: modelGroup, transport_class: vehicleClass,
+        availability_at_import: availability,
+        presentation_normalization: {
+          version: "mobile-de-de-ru/2026-11-09.1",
+          original_values: {
+            fuel_type: fuel,
+            transmission: text(item.transmission),
+            drive: text(nested(item, "drive").code ?? item.drive),
+            body_type: text(nested(item, "body").code ?? item.body_type ?? item.body),
+            color: text(item.color ?? item.color_ru),
+            options: item.options ?? [],
+          },
+        },
+      },
     },
     images: [...new Map(images.map((image) => [`${image.position}:${image.source_url}`, image])).values()],
   };
