@@ -598,3 +598,9 @@ a { color: inherit; text-decoration: none; }
 .catalog-card-price-main .info-tooltip {
   vertical-align: middle;
 }
+
+@media (min-width: 901px) {
+  .dossier-content { grid-template-columns: minmax(0, 1fr); }
+  .dossier-gallery { min-width: 0; width: 100%; }
+  .dossier-price { top: 100px; }
+}
