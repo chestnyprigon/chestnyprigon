@@ -7,12 +7,12 @@ import Link from "next/link";
 import type { CatalogCar } from "@/data/cars";
 import { loadCatalogPage } from "@/lib/catalog/load-catalog";
 import { catalogYearFrom, catalogYearTo, CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD } from "@/lib/catalog/catalog-rules";
-import { formatUsdWithByn } from "@/lib/pricing/display";
+import { formatBelarusCurrencyPair } from "@/lib/pricing/display";
 import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeBelarusPrice, formatEuropeRussiaPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
@@ -65,7 +65,7 @@ function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | 
     title: name,
     details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.fuel, car.drive].filter(Boolean).join(" · "),
     power: formatCatalogPower(car.powerPs, car.electric30MinKw) || undefined,
-    price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
+    price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatBelarusCurrencyPair(car.price, car.calculation.rates, currency === "BYN" ? "BYN" : "USD") : "Расчёт уточняется",
     priceInfo: "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер.",
   };
 }
@@ -88,9 +88,9 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     price: destination === "ru"
       ? formatEuropeRussiaPrice(sourcePrice?.amount, currency, russiaCalculation, rubRates)
       : calculation && exchangeRates
-        ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
+        ? formatEuropeBelarusPrice(calculation.totalByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD")
         : typeof sourcePrice?.amount === "number"
-          ? exchangeRates ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : `${distance.format(sourcePrice.amount)} €`
+          ? exchangeRates ? formatEuropeBelarusPrice(sourcePrice.amount * exchangeRates.eurByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : `${distance.format(sourcePrice.amount)} €`
           : "",
     priceInfo: listing.transport_class === "VAN"
       ? "Цена указана в Mobile.de. Итог уточнит менеджер."

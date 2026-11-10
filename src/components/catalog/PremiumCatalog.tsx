@@ -29,7 +29,7 @@ import {
 } from "@/lib/catalog/filter-options";
 import { useCatalogFilterCount } from "@/hooks/use-catalog-filter-count";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
-import { formatKrwAsUsd, formatUsdWithByn } from "@/lib/pricing/display";
+import { formatBelarusCurrencyPair, formatKrwAsUsd } from "@/lib/pricing/display";
 import { trackMetrikaGoal } from "@/lib/analytics/metrika";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
@@ -72,7 +72,7 @@ function catalogPrice(car: CatalogCar, destination: "BY" | "RU", currency: "USD"
     if (!car.russiaCalculation) return "Расчёт уточняется";
     return formatRussiaTotal(car.russiaCalculation, currency === "BYN" ? "RUB" : currency);
   }
-  return car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется";
+  return car.calculation.calculationAvailable ? formatBelarusCurrencyPair(car.price, car.calculation.rates, currency === "BYN" ? "BYN" : "USD") : "Расчёт уточняется";
 }
 
 export function PremiumCatalog({ catalog, initialSearch, destination, currency }: { catalog: CatalogPage; initialSearch: CatalogSearch; destination: "BY" | "RU"; currency: "USD" | "BYN" | "RUB" | "EUR" }) {

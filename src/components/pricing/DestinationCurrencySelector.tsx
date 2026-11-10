@@ -31,8 +31,8 @@ export function DestinationCurrencySelector({ initialDestination, initialCurrenc
   const currencies: Currency[] = destination === "ru" ? ["RUB", "USD", "EUR"] : ["USD", "BYN"];
   return <div className="destination-currency-bar destination-currency-hero" aria-label="Страна назначения и валюта">
     <strong className="destination-currency-title"><Globe2 size={18} />Страна и валюта</strong>
-    <label><span>Страна назначения</span><select value={destination} onChange={(event) => { const next = event.target.value as Destination; update(next, next === "ru" ? "RUB" : "USD"); }}>
-      <option value="by">Беларусь</option><option value="ru">Россия</option>
+    <label><span>Страна и город</span><select value={destination} onChange={(event) => { const next = event.target.value as Destination; update(next, next === "ru" ? "RUB" : "USD"); }}>
+      <option value="by">Беларусь · Минск</option><option value="ru">Россия · Москва</option>
     </select></label>
     <label><span>Валюта</span><select value={currency} onChange={(event) => update(destination, event.target.value as Currency)}>
       {currencies.map((item) => <option key={item} value={item}>{item}</option>)}

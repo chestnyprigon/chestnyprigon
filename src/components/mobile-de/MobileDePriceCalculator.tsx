@@ -3,7 +3,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { ArrowRight, Calculator, Check, ExternalLink, ShieldCheck } from "lucide-react";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeBelarusPrice, formatEuropeRussiaPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
@@ -12,6 +12,7 @@ import { InfoTooltip } from "./InfoTooltip";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 import type { RubExchangeRates } from "@/lib/pricing/cbr-rates";
 import { RussiaPriceBreakdown } from "@/components/pricing/RussiaPriceBreakdown";
+import { DossierDestinationSelector } from "@/components/pricing/DossierDestinationSelector";
 
 const money = (amount: number, currency: "EUR" | "BYN") => new Intl.NumberFormat("ru-RU", {
   style: "currency", currency, maximumFractionDigits: 2,
@@ -51,8 +52,8 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   const activeRussiaCalculation = liveRussiaCalculation ?? russiaCalculation;
   const formattedTotal = destination === "ru"
     ? formatEuropeRussiaPrice(amount, currency, isVan ? null : activeRussiaCalculation, rubRates)
-    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
-      : amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—";
+    : calculation && exchangeRates ? formatEuropeBelarusPrice(calculation.totalByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD")
+      : amount != null ? exchangeRates ? formatEuropeBelarusPrice(amount * exchangeRates.eurByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : money(amount, "EUR") : "—";
   const hasTurnkeyTotal = !isVan && (destination === "ru" ? Boolean(activeRussiaCalculation) : Boolean(calculation));
 
   async function refreshRussiaPrice() {
@@ -107,7 +108,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   return <>
     <aside className="dossier-price" aria-label={isVan ? "Цена автомобиля в Европе" : "Предварительная стоимость автомобиля"}>
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
-      <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{destination === "ru" ? (rubRates || hasTurnkeyTotal ? currency === "BYN" ? "RUB" : currency : "EUR") : isVan ? "EUR" : "Минск"}</span></div>
+      <DossierDestinationSelector initialDestination={destination} initialCurrency={currency} />
       <div className="dossier-total">
         <span>{hasTurnkeyTotal ? "Цена под ключ" : "Цена в Европе"}</span>
         <CatalogPrice price={formattedTotal || "—"} info={hasTurnkeyTotal ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."} />

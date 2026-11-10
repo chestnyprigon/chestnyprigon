@@ -22,6 +22,14 @@ export function formatEuropeTurnkeyPrice(totalByn: number, eurByn: number) {
   return `${eur} (≈ ${byn} BYN)`;
 }
 
+/** Displays a Belarus turnkey amount using the selected Belarus currency first. */
+export function formatEuropeBelarusPrice(totalByn: number, usdByn: number, currency: "USD" | "BYN") {
+  if (!Number.isFinite(totalByn) || totalByn <= 0 || !Number.isFinite(usdByn) || usdByn <= 0) return "";
+  const byn = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(Math.round(totalByn));
+  const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(totalByn / usdByn);
+  return currency === "BYN" ? `${byn} BYN (≈ ${usd})` : `${usd} (≈ ${byn} BYN)`;
+}
+
 /** Displays a Mobile.de source price with an approximate BYN conversion. */
 export function formatEuropeSourcePrice(sourceEur: number, eurByn: number) {
   if (!Number.isFinite(sourceEur) || sourceEur <= 0 || !Number.isFinite(eurByn) || eurByn <= 0) return "";

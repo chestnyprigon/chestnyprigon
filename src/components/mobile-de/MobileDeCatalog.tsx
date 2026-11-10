@@ -12,7 +12,7 @@ import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filt
 import { MobileDeFilterForm } from "./MobileDeFilterForm";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeBelarusPrice, formatEuropeRussiaPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { fetchCbrRates, type RubExchangeRates } from "@/lib/pricing/cbr-rates";
 import { CatalogPrice } from "@/components/catalog/CatalogPrice";
@@ -58,11 +58,11 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
     ? calculateEuropeBelarusPrice({ sourcePriceEur: price, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
   const sourcePriceDisplay = typeof price === "number"
-    ? exchangeRates ? formatEuropeSourcePrice(price, exchangeRates.eurByn) : `${new Intl.NumberFormat("ru-RU").format(price)} €`
+    ? exchangeRates ? formatEuropeBelarusPrice(price * exchangeRates.eurByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : `${new Intl.NumberFormat("ru-RU").format(price)} €`
     : "";
   const priceDisplay = destination === "ru"
     ? formatEuropeRussiaPrice(price, currency, russiaCalculation, rubRates)
-    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : sourcePriceDisplay;
+    : calculation && exchangeRates ? formatEuropeBelarusPrice(calculation.totalByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : sourcePriceDisplay;
   const isEstimate = listing.transport_class !== "VAN" && (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation));
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
