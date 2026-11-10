@@ -268,7 +268,7 @@ function eligibleCustomerCohort(item: Record<string, unknown>, cohort: Record<st
         import_policy: "explicit_customer_allowlist", model_group: modelGroup, transport_class: vehicleClass,
         availability_at_import: availability,
         presentation_normalization: {
-          version: "mobile-de-de-ru/2026-11-09.1",
+          version: "mobile-de-de-ru/2026-11-10.1",
           original_values: {
             fuel_type: fuel,
             transmission: text(item.transmission),

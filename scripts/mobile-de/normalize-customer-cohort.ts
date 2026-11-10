@@ -5,7 +5,7 @@ import { normalizeMobileDeField, normalizeMobileDeOptions } from "@/lib/mobile-d
 loadEnv({ path: ".env.local", quiet: true });
 
 const cohort = "customer_europe_2026";
-const version = "mobile-de-de-ru/2026-11-09.1";
+const version = "mobile-de-de-ru/2026-11-10.1";
 const write = process.argv.includes("--write");
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
