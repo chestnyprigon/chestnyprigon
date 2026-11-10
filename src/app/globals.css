@@ -584,3 +584,12 @@ a { color: inherit; text-decoration: none; }
   .result-car-body h2, .result-car-body h3 { min-block-size: 2.5em; line-height: 1.25; }
   .result-specs > span { gap: 3px; padding: 2px 4px; }
 }
+
+.catalog-card-price-main,
+.catalog-card-price-equivalent {
+  display: inline-block;
+  max-width: 100%;
+}
+.catalog-card-price-main .info-tooltip {
+  vertical-align: middle;
+}

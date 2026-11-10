@@ -370,10 +370,10 @@
 .cardBody { display: flex; flex: 1; flex-direction: column; }
 .cardTitle { margin-top: 0; line-height: 1.25; }
 .cardFooter { margin-top: auto; }
-.cardEstimate strong { display: flex; }
+.cardEstimate strong { display: block; line-height: 1.35; }
 
 @media (max-width: 640px) {
   .cardTitle { min-block-size: 2.5em; }
   .specs { min-height: 0; margin-bottom: 10px; }
-  .cardFooter strong { font-size: clamp(11px, 2.8vw, 15px); }
+  .cardFooter strong { font-size: clamp(15px, 4vw, 18px); }
 }

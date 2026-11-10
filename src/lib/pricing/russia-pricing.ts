@@ -71,12 +71,17 @@ export function compactRussiaPriceSnapshot(result: RussiaPriceResult): RussiaPri
   };
 }
 
-export function formatRussiaTotal(result: RussiaPriceResult, currency: "RUB" | "USD" | "EUR" = "RUB") {
-  const rub = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(result.totalRub);
+export function formatRussiaRubAmount(amount: number, currency: "RUB" | "USD" | "EUR", rubPerUnit: Record<string, number>) {
+  const rub = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(amount);
   if (currency === "RUB") return rub;
-  const rate = result.rates.rubPerUnit[currency];
-  const display = new Intl.NumberFormat("ru-RU", { style: "currency", currency, maximumFractionDigits: 0 }).format(result.totalRub / (rate && rate > 0 ? rate : 1));
+  const rate = rubPerUnit[currency];
+  if (rate === undefined || !Number.isFinite(rate) || rate <= 0) return rub;
+  const display = new Intl.NumberFormat("ru-RU", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount / rate);
   return `${display} (${rub})`;
+}
+
+export function formatRussiaTotal(result: RussiaPriceResult, currency: "RUB" | "USD" | "EUR" = "RUB") {
+  return formatRussiaRubAmount(result.totalRub, currency, result.rates.rubPerUnit);
 }
 
 const roundRub = (value: number) => Math.round(value * 100) / 100;

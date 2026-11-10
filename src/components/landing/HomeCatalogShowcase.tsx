@@ -1,3 +1,5 @@
+import { fetchCbrRates, type RubExchangeRates } from "@/lib/pricing/cbr-rates";
+import { CatalogPrice } from "@/components/catalog/CatalogPrice";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import { Suspense } from "react";
 import Image from "next/image";
@@ -10,7 +12,7 @@ import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
@@ -31,7 +33,6 @@ type ShowcaseCard = {
   details: string;
   power?: string;
   price: string;
-  priceNote: string;
   priceInfo?: string;
 };
 
@@ -65,12 +66,11 @@ function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | 
     details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.fuel, car.drive].filter(Boolean).join(" · "),
     power: formatCatalogPower(car.powerPs, car.electric30MinKw) || undefined,
     price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatUsdWithByn(car.price, car.calculation.rates) : "Расчёт уточняется",
-    priceNote: "Предварительный расчёт",
     priceInfo: "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер.",
   };
 }
 
-function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | null, destination: "by" | "ru", currency: "USD" | "BYN" | "RUB" | "EUR", russiaCalculation?: import("@/lib/pricing/russia-pricing").RussiaPriceResult | null): ShowcaseCard {
+function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | null, destination: "by" | "ru", currency: "USD" | "BYN" | "RUB" | "EUR", russiaCalculation: import("@/lib/pricing/russia-pricing").RussiaPriceResult | null, rubRates: RubExchangeRates | null): ShowcaseCard {
   const { name } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const firstRegistration = listing.first_registration?.value;
   const sourcePrice = listing.price;
@@ -85,14 +85,13 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
     eyebrow: "Mobile.de",
     title: name,
     details: [listing.first_registration?.value, listing.mileage_km != null ? `${distance.format(listing.mileage_km)} км` : null, listing.power?.value != null ? `${formatPowerPs(listing.power.value)} л. с.` : null].filter(Boolean).join(" · "),
-    price: listing.transport_class === "VAN"
-      ? exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : ""
-      : destination === "ru" && russiaCalculation
-      ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
-      : destination === "ru" && !russiaCalculation
-        ? typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : ""
-        : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : exchangeRates && typeof sourcePrice?.amount === "number" ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : typeof sourcePrice?.amount === "number" ? `${distance.format(sourcePrice.amount)} €` : "",
-    priceNote: listing.transport_class === "VAN" ? "Цена в Европе" : destination === "ru" && russiaCalculation ? "Предварительный расчёт" : destination === "by" && calculation ? "Предварительный расчёт" : "Цена в Европе",
+    price: destination === "ru"
+      ? formatEuropeRussiaPrice(sourcePrice?.amount, currency, russiaCalculation, rubRates)
+      : calculation && exchangeRates
+        ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
+        : typeof sourcePrice?.amount === "number"
+          ? exchangeRates ? formatEuropeSourcePrice(sourcePrice.amount, exchangeRates.eurByn) : `${distance.format(sourcePrice.amount)} €`
+          : "",
     priceInfo: listing.transport_class === "VAN"
       ? "Цена указана в Mobile.de. Итог уточнит менеджер."
       : (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation))
@@ -112,7 +111,7 @@ function ShowcaseSection({ id, country, href, action, destination, currency, car
         {card.image ? <Image src={card.image} alt={card.imageAlt} fill sizes="(max-width: 700px) 78vw, (max-width: 1100px) 33vw, 25vw" unoptimized /> : <span className="home-showcase-no-image">Фото появится позже</span>}
         <span className="home-showcase-badge">{card.eyebrow}</span>
       </Link>
-      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Мощность указана по открытым источникам и может отличаться. Уточните у продавца.</InfoTooltip></> : null}</p><footer><span><small>{card.priceNote}</small><strong className="price-with-info"><span>{card.price}</span>{card.priceInfo && <InfoTooltip label="Пояснение к цене">{card.priceInfo}</InfoTooltip>}</strong></span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
+      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Мощность указана по открытым источникам и может отличаться. Уточните у продавца.</InfoTooltip></> : null}</p><footer><span>{card.price && <CatalogPrice price={card.price} info={card.priceInfo} />}</span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
     </article>)}</div> : <div className="home-showcase-empty">Сейчас подборка обновляется. Откройте каталог, чтобы посмотреть все объявления.</div>}
     <div className="home-showcase-mobile-action"><Link className="premium-button secondary" href={`${href}?destination=${destination}&currency=${currency}`}>{action} <span aria-hidden="true">→</span></Link></div>
   </section>;
@@ -147,10 +146,14 @@ async function KoreaShowcase({ destination, currency }: { destination: "by" | "r
 async function EuropeShowcase({ destination, currency }: { destination: "by" | "ru"; currency: "USD" | "BYN" | "RUB" | "EUR" }) {
   let cards: ShowcaseCard[] = [];
   try {
-    const [listings, exchangeRates] = await Promise.all([getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }), destination === "by" ? fetchNbrbRates() : Promise.resolve(null)]);
+    const [listings, exchangeRates, rubRates] = await Promise.all([
+      getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }),
+      destination === "by" ? fetchNbrbRates() : null,
+      destination === "ru" ? fetchCbrRates() : null,
+    ]);
     const entries = listings.data.flatMap((listing) => {
       if (listing.transport_class === "VAN") return [];
-      const price = listing.price?.amount;
+      const price = listing.net_price?.amount ?? listing.price?.amount;
       if (typeof price !== "number" || price <= 0) return [];
       const powerValue = listing.power?.value;
       const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
@@ -163,8 +166,8 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
         powerPs: powerValue && !powerIsKw ? powerValue : undefined,
       } }];
     });
-    const stored = destination === "ru" ? await loadRussiaPriceSnapshotsOrCalculate("europe", entries) : new Map();
-    cards = listings.data.map((listing) => europeCard(listing, exchangeRates, destination, currency, stored.get(listing.master_id) ?? null));
+    const stored = destination === "ru" ? await loadRussiaPriceSnapshotsOrCalculate("europe", entries).catch(() => null) : null;
+    cards = listings.data.map((listing) => europeCard(listing, exchangeRates, destination, currency, stored?.get(listing.master_id) ?? null, rubRates));
   } catch (error) {
     const reason = error instanceof MobileDeApiError ? `status ${error.status ?? "network"}` : "catalog request failed";
     console.error("[home-showcase] Europe catalogue unavailable", reason);

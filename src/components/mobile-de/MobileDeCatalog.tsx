@@ -12,15 +12,15 @@ import { parseMobileDeFilters, mobileDeFilterParams } from "@/lib/mobile-de/filt
 import { MobileDeFilterForm } from "./MobileDeFilterForm";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
-import { InfoTooltip } from "./InfoTooltip";
+import { fetchCbrRates, type RubExchangeRates } from "@/lib/pricing/cbr-rates";
+import { CatalogPrice } from "@/components/catalog/CatalogPrice";
 import { MobileDeCardPhoto } from "./MobileDeCardPhoto";
 import { formatPowerPs } from "@/lib/format/power";
 import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
 import { readCalculationPreference } from "@/lib/pricing/country-preference";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
-import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 type SearchParams = Record<string, string | string[] | undefined>;
 
 function formatNumber(value: number | null | undefined) {
@@ -49,7 +49,7 @@ function russiaInputForListing(listing: MobileDeListing) {
   };
 }
 
-export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null }) {
+export function ListingCard({ listing, exchangeRates, detailHref, destination = "by", currency = "USD", russiaCalculation, rubRates }: { listing: MobileDeListing; exchangeRates: ExchangeRates | null; detailHref?: string; destination?: "by" | "ru"; currency?: "USD" | "BYN" | "RUB" | "EUR"; russiaCalculation?: RussiaPriceResult | null; rubRates?: RubExchangeRates | null }) {
   const href = detailHref || `/catalog/europe/${encodeURIComponent(listing.master_id)}?destination=${destination}&currency=${currency}`;
   const { name } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const price = listing.price?.amount;
@@ -57,17 +57,12 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
   const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof price === "number" && firstRegistration && listing.engine_cc
     ? calculateEuropeBelarusPrice({ sourcePriceEur: price, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
-  const russiaPrice = listing.transport_class !== "VAN" && russiaCalculation
-    ? formatRussiaTotal(russiaCalculation, currency === "BYN" ? "RUB" : currency)
-    : "Расчёт уточняется";
   const sourcePriceDisplay = typeof price === "number"
     ? exchangeRates ? formatEuropeSourcePrice(price, exchangeRates.eurByn) : `${new Intl.NumberFormat("ru-RU").format(price)} €`
     : "";
-  const priceDisplay = listing.transport_class === "VAN"
-    ? sourcePriceDisplay
-    : destination === "ru"
-      ? russiaCalculation ? russiaPrice : sourcePriceDisplay
-      : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : sourcePriceDisplay;
+  const priceDisplay = destination === "ru"
+    ? formatEuropeRussiaPrice(price, currency, russiaCalculation, rubRates)
+    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn) : sourcePriceDisplay;
   const isEstimate = listing.transport_class !== "VAN" && (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation));
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
@@ -86,7 +81,7 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
         {specs.length > 0 && <p className={styles.specs}>{specs.join(" · ")}</p>}
         <div className={styles.cardFooter}>
           <div className={styles.cardEstimate}>
-            {priceDisplay && <strong className="price-with-info"><span>{priceDisplay}</span><InfoTooltip label="Пояснение к цене">{isEstimate ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."}</InfoTooltip></strong>}
+            {priceDisplay && <CatalogPrice price={priceDisplay} info={isEstimate ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."} />}
           </div>
         </div>
       </div>
@@ -163,7 +158,12 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
   let catalog: Awaited<ReturnType<typeof getMobileDeListings>> | null = null;
   let error: MobileDeApiError | null = null;
   let exchangeRates: ExchangeRates | null = null;
-  const [catalogResult, ratesResult] = await Promise.allSettled([getMobileDeListings(filters), destination === "by" ? fetchNbrbRates() : Promise.resolve(null)]);
+  const [catalogResult, ratesResult, rubRatesResult] = await Promise.allSettled([
+    getMobileDeListings(filters),
+    destination === "by" ? fetchNbrbRates() : null,
+    destination === "ru" ? fetchCbrRates() : null,
+  ]);
+  const rubRates = rubRatesResult.status === "fulfilled" ? rubRatesResult.value : null;
   if (catalogResult.status === "fulfilled") catalog = catalogResult.value;
   else error = catalogResult.reason instanceof MobileDeApiError ? catalogResult.reason : new MobileDeApiError(null, "Europe catalogue request failed");
   if (ratesResult.status === "fulfilled") exchangeRates = ratesResult.value;
@@ -174,8 +174,8 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
       const vehicle = russiaInputForListing(listing);
       return vehicle ? [{ listingId: listing.master_id, vehicle }] : [];
     });
-    const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", entries);
-    for (const listing of catalog.data) russiaCalculations.set(listing.master_id, stored.get(listing.master_id) ?? null);
+    const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", entries).catch(() => null);
+    for (const listing of catalog.data) russiaCalculations.set(listing.master_id, stored?.get(listing.master_id) ?? null);
   }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);
   if (destination) { nextParams.set("destination", destination); nextParams.set("currency", currency); }
@@ -189,7 +189,7 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
           </div>
           {error ? <ApiMessage error={error} /> : catalog?.data.length ? (
             <>
-              <div className={styles.cards}>{catalog.data.map((listing) => <ListingCard listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} russiaCalculation={russiaCalculations.get(listing.master_id)} key={listing.master_id} />)}</div>
+              <div className={styles.cards}>{catalog.data.map((listing) => <ListingCard listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} rubRates={rubRates} russiaCalculation={russiaCalculations.get(listing.master_id)} key={listing.master_id} />)}</div>
               {catalog.page.has_more && catalog.page.next_cursor && <Link prefetch={false} className={styles.nextPage} href={`/catalog/europe?${nextParams.toString()}`}>Показать следующие объявления <span>→</span></Link>}
             </>
           ) : <div className={styles.empty}><strong>Пока нет объявлений по этим параметрам</strong><span>Измените фильтры или сбросьте их.</span></div>}

@@ -3,13 +3,14 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { ArrowRight, Calculator, Check, ExternalLink, ShieldCheck } from "lucide-react";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
-import { formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
+import { formatEuropeRussiaPrice, formatEuropeSourcePrice, formatEuropeTurnkeyPrice } from "@/lib/pricing/europe-display";
 import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
+import { CatalogPrice } from "@/components/catalog/CatalogPrice";
 import { InfoTooltip } from "./InfoTooltip";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
-import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
+import type { RubExchangeRates } from "@/lib/pricing/cbr-rates";
 import { RussiaPriceBreakdown } from "@/components/pricing/RussiaPriceBreakdown";
 
 const money = (amount: number, currency: "EUR" | "BYN") => new Intl.NumberFormat("ru-RU", {
@@ -22,12 +23,13 @@ function sourceUrl(sourceId: string) {
   return url.toString();
 }
 
-export function MobileDePriceCalculator({ listing, exchangeRates, destination = "by", currency = "USD", russiaCalculation = null }: {
+export function MobileDePriceCalculator({ listing, exchangeRates, destination = "by", currency = "USD", russiaCalculation = null, rubRates }: {
   listing: MobileDeListing;
   exchangeRates: ExchangeRates | null;
   destination?: "by" | "ru";
   currency?: "USD" | "BYN" | "RUB" | "EUR";
   russiaCalculation?: RussiaPriceResult | null;
+  rubRates?: RubExchangeRates | null;
 }) {
   const [preferential, setPreferential] = useState(true);
   const [liveRussiaCalculation, setLiveRussiaCalculation] = useState<RussiaPriceResult | null>(null);
@@ -47,14 +49,11 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   const title = vehicleDisplayName(listing.make, listing.model, listing.title).name;
   const source = sourceUrl(listing.source_id);
   const activeRussiaCalculation = liveRussiaCalculation ?? russiaCalculation;
-  const formattedTotal = isVan
-    ? amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—"
-    : destination === "ru" && activeRussiaCalculation
-    ? formatRussiaTotal(activeRussiaCalculation, currency === "BYN" ? "RUB" : currency)
-    : destination === "ru"
-      ? amount != null ? money(amount, "EUR") : "—"
-      : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
-        : amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—";
+  const formattedTotal = destination === "ru"
+    ? formatEuropeRussiaPrice(amount, currency, isVan ? null : activeRussiaCalculation, rubRates)
+    : calculation && exchangeRates ? formatEuropeTurnkeyPrice(calculation.totalByn, exchangeRates.eurByn)
+      : amount != null ? exchangeRates ? formatEuropeSourcePrice(amount, exchangeRates.eurByn) : money(amount, "EUR") : "—";
+  const hasTurnkeyTotal = !isVan && (destination === "ru" ? Boolean(activeRussiaCalculation) : Boolean(calculation));
 
   async function refreshRussiaPrice() {
     setRussiaRefreshing(true);
@@ -108,11 +107,11 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   return <>
     <aside className="dossier-price" aria-label={isVan ? "Цена автомобиля в Европе" : "Предварительная стоимость автомобиля"}>
       <div className="dossier-source"><span><ShieldCheck size={14} />Источник Mobile.de</span><a href={source} target="_blank" rel="noreferrer">Оригинал <ExternalLink size={12} /></a></div>
-      <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{isVan ? "EUR" : destination === "ru" ? "RUB" : "Минск"}</span></div>
+      <div className="dossier-badges"><span>{isVan ? "Цена по объявлению" : `Расчёт для ${destination === "ru" ? "России" : "Беларуси"}`}</span><span>{destination === "ru" ? (rubRates || hasTurnkeyTotal ? currency === "BYN" ? "RUB" : currency : "EUR") : isVan ? "EUR" : "Минск"}</span></div>
       <div className="dossier-total">
-        <span>{isVan ? "Цена в Европе" : "Предварительная цена под ключ"}</span>
-        <strong className="price-with-info"><span>{formattedTotal || (destination === "by" && calculation ? money(calculation.totalByn, "BYN") : "—")}</span><InfoTooltip label="Пояснение к цене">{isVan ? "Цена указана в Mobile.de. Итог уточнит менеджер." : "Расчёт предварительный. Итоговую стоимость уточнит менеджер."}</InfoTooltip></strong>
-        <small>{isVan ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
+        <span>{hasTurnkeyTotal ? "Цена под ключ" : "Цена в Европе"}</span>
+        <CatalogPrice price={formattedTotal || "—"} info={hasTurnkeyTotal ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."} />
+        <small>{!hasTurnkeyTotal ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
       {destination === "by" && !isVan && <div className="dossier-preferential-block">
         <label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation} onChange={(event) => setPreferential(event.target.checked)} /><span>Льготная растаможка 50% <b className={preferential ? "" : "is-off"}>{preferential ? "Включена" : "Выключена"}</b></span></label>

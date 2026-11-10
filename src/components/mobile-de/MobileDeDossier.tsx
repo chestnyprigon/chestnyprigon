@@ -1,3 +1,4 @@
+import { fetchCbrRates } from "@/lib/pricing/cbr-rates";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown } from "lucide-react";
@@ -50,10 +51,14 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   const specs = mobileDeSpecifications(listing);
   let exchangeRates: ExchangeRates | null = null;
   let russiaCalculation: RussiaPriceResult | null = null;
+  const rubRatesPromise = destination === "ru" ? fetchCbrRates() : null;
   if (destination === "by") { try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; } }
   else {
     const vehicle = listing.transport_class === "VAN" ? null : russiaInputForListing(listing);
-    if (vehicle) russiaCalculation = (await loadRussiaPriceSnapshotsOrCalculate("europe", [{ listingId: listing.master_id, vehicle }])).get(listing.master_id) ?? null;
+    if (vehicle) {
+      const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", [{ listingId: listing.master_id, vehicle }]).catch(() => null);
+      russiaCalculation = stored?.get(listing.master_id) ?? null;
+    }
   }
 
   return (
@@ -67,7 +72,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
           <section className="dossier-card"><h2>Общие данные</h2><div className="dossier-spec-cards">{specs.slice(0, 4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div><div className="dossier-lines">{specs.slice(4).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div></section>
           {options.length > 0 && <section className="dossier-card"><h2>{listing.transport_class === "VAN" ? "Комплектация и данные автомобиля" : "Комплектация и опции"}</h2><div className="dossier-options"><details><summary><span><b>Опции автомобиля</b><small>{options.length} пунктов</small></span><ChevronDown size={18} /></summary><div>{options.map((option, index) => <article key={`${index}-${option}`}><span className="equipment-mark">✓</span><span>{option}</span></article>)}</div></details></div></section>}
         </div>
-        <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} russiaCalculation={russiaCalculation} />
+        <MobileDePriceCalculator listing={listing} exchangeRates={exchangeRates} destination={destination} currency={currency} rubRates={await rubRatesPromise} russiaCalculation={russiaCalculation} />
       </section>
     </main>
   );
