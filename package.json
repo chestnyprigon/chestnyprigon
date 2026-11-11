@@ -47,6 +47,7 @@
     "test:control-center": "tsx --test scripts/control-center/*.test.ts",
     "pricing:recalculate": "tsx scripts/pricing/recalculate.ts",
     "pricing:refresh-russia": "node --conditions=react-server --import tsx scripts/pricing/refresh-russia-price-snapshots.ts",
+    "pricing:backfill-russia-power": "node --conditions=react-server --import tsx scripts/pricing/backfill-russia-power-resolution.ts",
     "analytics:metrika": "tsx scripts/analytics/fetch-metrika-report.ts",
     "test:pricing": "tsx --test src/lib/pricing/*.test.ts",
     "catalog:search-local": "tsx scripts/catalog/search-local-candidates.ts",

@@ -36,7 +36,7 @@ export type PersistedPowerResolution = {
   version: typeof POWER_RESOLUTION_VERSION;
   fingerprint: string;
   resolvedAt: string;
-  status: "source_record" | "source_power" | "estimated_fallback";
+  status: "source_record" | "source_power" | "estimated_fallback" | "legacy_snapshot";
   powerRecord: Record<string, unknown> | null;
   power: EstimatedPower | null;
 };
@@ -75,7 +75,7 @@ function validCachedPowerResolution(value: unknown, vehicle: CatalogVehicle, fin
     && cache.fingerprint === fingerprint
     && typeof cache.resolvedAt === "string"
     && Number.isFinite(Date.parse(cache.resolvedAt))
-    && ["source_record", "source_power", "estimated_fallback"].includes(cache.status ?? "")
+    && ["source_record", "source_power", "estimated_fallback", "legacy_snapshot"].includes(cache.status ?? "")
     && (cache.status !== "estimated_fallback" || Date.now() - Date.parse(cache.resolvedAt) < 7 * 24 * 60 * 60 * 1_000)
     && (cache.status === "source_record"
       ? Boolean(cache.powerRecord && typeof cache.powerRecord === "object"
@@ -84,6 +84,58 @@ function validCachedPowerResolution(value: unknown, vehicle: CatalogVehicle, fin
         && cache.power === null)
       : Boolean(cache.powerRecord === null && cache.power && typeof cache.power === "object"
         && Number.isFinite(cache.power.calculationPowerKw) && cache.power.calculationPowerKw > 0));
+}
+
+/** Rebuilds the reusable power input from a saved TKS snapshot without contacting Vehicle Power. */
+export function powerResolutionFromSavedCalculation(vehicle: CatalogVehicle, calculation: unknown): PersistedPowerResolution | null {
+  if (!calculation || typeof calculation !== "object") return null;
+  const result = calculation as { power?: Record<string, unknown> };
+  const savedPower = result.power;
+  if (!savedPower || typeof savedPower !== "object") return null;
+  const calculationPowerKw = Number(savedPower.calculationPowerKw);
+  if (!Number.isFinite(calculationPowerKw) || calculationPowerKw <= 0) return null;
+  const allowedBases = ["combustion_rated", "electric_peak", "electric_30min", "system_combined"] as const;
+  const basis = allowedBases.includes(savedPower.calculationBasis as typeof allowedBases[number])
+    ? savedPower.calculationBasis as EstimatedPower["basis"]
+    : powertrainFor(vehicle.fuelType) === "electric" || powertrainFor(vehicle.fuelType) === "hybrid_sequential"
+      ? "electric_30min"
+      : powertrainFor(vehicle.fuelType) === "hybrid_parallel" || powertrainFor(vehicle.fuelType) === "hybrid_phev"
+        ? "system_combined"
+        : "combustion_rated";
+  const confidence = ["CONFIRMED", "PROBABLE", "ESTIMATED"].includes(String(savedPower.confidence))
+    ? savedPower.confidence as EstimatedPower["confidence"]
+    : "ESTIMATED";
+  const sourceRef = typeof savedPower.sourceRef === "string"
+    ? savedPower.sourceRef.slice(0, 480)
+    : `${vehicle.source}:${vehicle.sourceId}:saved-price-snapshot`;
+  const components = savedPower.components && typeof savedPower.components === "object"
+    ? savedPower.components as Record<string, unknown>
+    : {};
+  const component = (name: string) => {
+    const value = Number(components[name]);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  };
+  const combustionPowerKw = component("combustionPowerKw");
+  const electric30MinPowerKw = component("electric30MinPowerKw");
+  const power: EstimatedPower = {
+    calculationPowerKw, basis, confidence, sourceRef,
+    ...(typeof savedPower.researchRef === "string" ? { researchRef: savedPower.researchRef.slice(0, 480) } : {}),
+    ...(combustionPowerKw ? { combustionPowerKw } : {}),
+    ...(component("electricPeakPowerKw") ? { electricPeakPowerKw: component("electricPeakPowerKw") } : {}),
+    ...(electric30MinPowerKw ? { electric30MinPowerKw } : {}),
+    ...(component("systemCombinedPowerKw") ? { systemCombinedPowerKw: component("systemCombinedPowerKw") } : {}),
+    ...(combustionPowerKw && electric30MinPowerKw
+      ? { hybridDvsAboveElectric30Min: combustionPowerKw > electric30MinPowerKw }
+      : {}),
+  };
+  return {
+    version: POWER_RESOLUTION_VERSION,
+    fingerprint: powerResolutionFingerprint(vehicle),
+    resolvedAt: new Date().toISOString(),
+    status: "legacy_snapshot",
+    powerRecord: null,
+    power,
+  };
 }
 
 function powertrainFor(fuelType: string | null | undefined): VehiclePowerResolveInput["powertrain"] {
