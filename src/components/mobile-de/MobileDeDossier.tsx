@@ -9,7 +9,7 @@ import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { CatalogNavigation } from "./CatalogNavigation";
 import { MobileDeGallery } from "./MobileDeGallery";
 import { MobileDePriceCalculator } from "./MobileDePriceCalculator";
-import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 
 function optionsList(options: MobileDeListing["options"]) {
@@ -56,7 +56,7 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   else {
     const vehicle = listing.transport_class === "VAN" ? null : russiaInputForListing(listing);
     if (vehicle) {
-      const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", [{ listingId: listing.master_id, vehicle }]).catch(() => null);
+      const stored = await loadRussiaPriceSnapshots("europe", [listing.master_id]).catch(() => null);
       russiaCalculation = stored?.get(listing.master_id) ?? null;
     }
   }

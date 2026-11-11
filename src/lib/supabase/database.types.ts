@@ -179,6 +179,7 @@ export type Database = {
           status: "pending" | "ready" | "stale" | "failed";
           revision: number;
           calculation: Json | null;
+          power_resolution: Json | null;
           calculated_at: string | null;
           last_attempt_at: string | null;
           next_refresh_at: string;
@@ -192,6 +193,7 @@ export type Database = {
           status?: "pending" | "ready" | "stale" | "failed";
           revision?: number;
           calculation?: Json | null;
+          power_resolution?: Json | null;
           calculated_at?: string | null;
           last_attempt_at?: string | null;
           next_refresh_at?: string;

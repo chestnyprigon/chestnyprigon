@@ -17,7 +17,7 @@ import type { ExchangeRates } from "@/lib/pricing/chestny-prigon-profile";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { formatPowerPs } from "@/lib/format/power";
-import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
 
 const cardLimit = 12;
@@ -166,7 +166,7 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
         powerPs: powerValue && !powerIsKw ? powerValue : undefined,
       } }];
     });
-    const stored = destination === "ru" ? await loadRussiaPriceSnapshotsOrCalculate("europe", entries).catch(() => null) : null;
+    const stored = destination === "ru" ? await loadRussiaPriceSnapshots("europe", entries.map((entry) => entry.listingId)).catch(() => null) : null;
     cards = listings.data.map((listing) => europeCard(listing, exchangeRates, destination, currency, stored?.get(listing.master_id) ?? null, rubRates));
   } catch (error) {
     const reason = error instanceof MobileDeApiError ? `status ${error.status ?? "network"}` : "catalog request failed";

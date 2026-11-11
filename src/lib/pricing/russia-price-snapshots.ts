@@ -2,7 +2,6 @@ import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import type { RussiaPriceResult } from "./russia-pricing";
-import { calculateRussiaVehiclePrices, type CatalogVehicle } from "./russia-vehicle-pricing";
 
 type SnapshotRow = { listing_id: string; calculation: unknown; status: string };
 
@@ -27,21 +26,5 @@ export async function loadRussiaPriceSnapshots(source: "korea" | "europe", listi
   for (const row of (data ?? []) as SnapshotRow[]) {
     if (isRussiaPriceResult(row.calculation)) snapshots.set(row.listing_id, row.calculation);
   }
-  return snapshots;
-}
-
-/** Keep the previous cached calculation path available for listings still in the initial backfill. */
-export async function loadRussiaPriceSnapshotsOrCalculate(
-  source: "korea" | "europe",
-  entries: Array<{ listingId: string; vehicle: CatalogVehicle }>,
-) {
-  const snapshots = await loadRussiaPriceSnapshots(source, entries.map((entry) => entry.listingId));
-  const missing = entries.filter((entry) => !snapshots.has(entry.listingId));
-  if (!missing.length) return snapshots;
-  const calculations = await calculateRussiaVehiclePrices(missing.map((entry) => entry.vehicle));
-  missing.forEach((entry, index) => {
-    const calculation = calculations[index];
-    if (calculation) snapshots.set(entry.listingId, calculation);
-  });
   return snapshots;
 }

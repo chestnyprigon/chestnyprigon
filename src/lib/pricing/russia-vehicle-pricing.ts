@@ -1,7 +1,7 @@
 import "server-only";
 
-import { unstable_cache } from "next/cache";
-import { calculateRussiaKoreaCommercial, calculateRussiaEuropeCommercial, combineRussiaPrice, type RussiaPriceResult } from "@/lib/pricing/russia-pricing";
+import { createHash } from "node:crypto";
+import { calculateRussiaKoreaCommercial, calculateRussiaEuropeCommercial, combineRussiaPrice } from "@/lib/pricing/russia-pricing";
 import { calculateRussiaTks, resolveBestPowerRecord, type VehiclePowerResolveInput, type VehiclePowerTksInput } from "@/lib/pricing/vehicle-power-tks";
 
 type CatalogVehicle = {
@@ -29,6 +29,62 @@ type CatalogVehicle = {
   powerSourceRef?: string | null;
   krwPerUsd?: number;
 };
+
+const POWER_RESOLUTION_VERSION = "power-resolution-v1";
+type EstimatedPower = NonNullable<VehiclePowerTksInput["vehicle"]["power"]>;
+export type PersistedPowerResolution = {
+  version: typeof POWER_RESOLUTION_VERSION;
+  fingerprint: string;
+  resolvedAt: string;
+  status: "source_record" | "source_power" | "estimated_fallback";
+  powerRecord: Record<string, unknown> | null;
+  power: EstimatedPower | null;
+};
+
+function powerResolutionFingerprint(vehicle: CatalogVehicle) {
+  const inputs = {
+    version: POWER_RESOLUTION_VERSION,
+    source: vehicle.source,
+    sourceId: vehicle.sourceId,
+    brand: vehicle.brand.trim().toLowerCase(),
+    model: vehicle.model.trim().toLowerCase(),
+    generation: vehicle.generation?.trim().toLowerCase() ?? null,
+    trim: vehicle.trim?.trim().toLowerCase() ?? null,
+    year: vehicle.year ?? null,
+    firstRegistration: vehicle.firstRegistration ?? null,
+    engineCc: vehicle.engineCc ?? null,
+    fuelType: vehicle.fuelType?.trim().toLowerCase() ?? null,
+    driveType: vehicle.driveType?.trim().toLowerCase() ?? null,
+    powerKw: vehicle.powerKw ?? null,
+    powerPs: vehicle.powerPs ?? null,
+    electric30MinKw: vehicle.electric30MinKw ?? null,
+    electricPeakKw: vehicle.electricPeakKw ?? null,
+    enginePowerKw: vehicle.enginePowerKw ?? null,
+    systemCombinedPowerKw: vehicle.systemCombinedPowerKw ?? null,
+    powerBasis: vehicle.powerBasis ?? null,
+    powerConfidence: vehicle.powerConfidence ?? null,
+    powerSourceRef: vehicle.powerSourceRef ?? null,
+  };
+  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
+}
+
+function validCachedPowerResolution(value: unknown, vehicle: CatalogVehicle, fingerprint: string): value is PersistedPowerResolution {
+  if (!value || typeof value !== "object") return false;
+  const cache = value as Partial<PersistedPowerResolution>;
+  return cache.version === POWER_RESOLUTION_VERSION
+    && cache.fingerprint === fingerprint
+    && typeof cache.resolvedAt === "string"
+    && Number.isFinite(Date.parse(cache.resolvedAt))
+    && ["source_record", "source_power", "estimated_fallback"].includes(cache.status ?? "")
+    && (cache.status !== "estimated_fallback" || Date.now() - Date.parse(cache.resolvedAt) < 7 * 24 * 60 * 60 * 1_000)
+    && (cache.status === "source_record"
+      ? Boolean(cache.powerRecord && typeof cache.powerRecord === "object"
+        && cache.powerRecord.contractVersion === "power-record-v1"
+        && cache.powerRecord.propulsion === powertrainFor(vehicle.fuelType)
+        && cache.power === null)
+      : Boolean(cache.powerRecord === null && cache.power && typeof cache.power === "object"
+        && Number.isFinite(cache.power.calculationPowerKw) && cache.power.calculationPowerKw > 0));
+}
 
 function powertrainFor(fuelType: string | null | undefined): VehiclePowerResolveInput["powertrain"] {
   const fuel = (fuelType ?? "").toLowerCase();
@@ -71,9 +127,13 @@ function estimatedPower(vehicle: CatalogVehicle): NonNullable<VehiclePowerTksInp
   return { calculationPowerKw: combustion, basis: "combustion_rated", confidence, sourceRef, combustionPowerKw: combustion };
 }
 
-async function resolveOrEstimatePower(vehicle: CatalogVehicle) {
+async function resolveOrEstimatePower(vehicle: CatalogVehicle, cached?: unknown) {
+  const fingerprint = powerResolutionFingerprint(vehicle);
+  if (validCachedPowerResolution(cached, vehicle, fingerprint)) {
+    return { power: cached.power ?? undefined, powerRecord: cached.powerRecord ?? undefined, powerResolution: cached };
+  }
   const powertrain = powertrainFor(vehicle.fuelType);
-  const hasDirectPower = vehicle.source === "korea" && powertrain === "ice"
+  const hasDirectPower = powertrain === "ice"
     ? Boolean(vehicle.enginePowerKw || vehicle.powerBasis === "combustion_rated" && vehicle.powerKw || vehicle.powerPs)
     : powertrain === "electric"
       ? Boolean(vehicle.electric30MinKw)
@@ -95,17 +155,39 @@ async function resolveOrEstimatePower(vehicle: CatalogVehicle) {
         correlation: { source: vehicle.source, sourceListingId: vehicle.sourceId },
       };
       const record = await resolveBestPowerRecord(resolveInput);
-      if (record.propulsion === powertrain && record.resolutionClass !== "INSUFFICIENT_DATA") return { powerRecord: record };
+      if (record.propulsion === powertrain && record.resolutionClass !== "INSUFFICIENT_DATA") {
+        return {
+          powerRecord: record,
+          powerResolution: {
+            version: POWER_RESOLUTION_VERSION, fingerprint, resolvedAt: new Date().toISOString(),
+            status: "source_record" as const, powerRecord: record as Record<string, unknown>, power: null,
+          } as PersistedPowerResolution,
+        };
+      }
     } catch {
       // Keep the estimate path available if the source resolver is unavailable.
     }
   }
-  return { power: estimatedPower(vehicle) };
+  const power = estimatedPower(vehicle);
+  return {
+    power,
+    powerResolution: {
+      version: POWER_RESOLUTION_VERSION, fingerprint, resolvedAt: new Date().toISOString(),
+      status: hasDirectPower ? "source_power" as const : "estimated_fallback" as const,
+      powerRecord: null, power,
+    } as PersistedPowerResolution,
+  };
 }
 
-async function calculateUncached(vehicle: CatalogVehicle): Promise<RussiaPriceResult> {
-  const { power, powerRecord } = await resolveOrEstimatePower(vehicle);
-  const chosenPowertrain = powerRecord?.propulsion ?? powertrainFor(vehicle.fuelType)!;
+async function calculateUncached(
+  vehicle: CatalogVehicle,
+  cachedPowerResolution?: unknown,
+  onPowerResolved?: (powerResolution: PersistedPowerResolution) => Promise<void>,
+) {
+  const { power, powerRecord, powerResolution } = await resolveOrEstimatePower(vehicle, cachedPowerResolution);
+  if (onPowerResolved) await onPowerResolved(powerResolution);
+  const chosenPowertrain = (powerRecord?.propulsion as VehiclePowerTksInput["vehicle"]["powertrain"] | undefined)
+    ?? powertrainFor(vehicle.fuelType)!;
   const tksVehicle: VehiclePowerTksInput["vehicle"] = {
     price: { amount: vehicle.price, currency: vehicle.currency },
     ...modelYearRegistration(vehicle.firstRegistration, vehicle.year),
@@ -120,32 +202,16 @@ async function calculateUncached(vehicle: CatalogVehicle): Promise<RussiaPriceRe
   const commercial = vehicle.currency === "KRW"
     ? calculateRussiaKoreaCommercial({ priceKrw: vehicle.price, krwPerUsd: vehicle.krwPerUsd ?? 1_397, rubPerUsd: rates.USD!, rubPerEur: rates.EUR! })
     : calculateRussiaEuropeCommercial({ netPriceEur: vehicle.price, rubPerEur: rates.EUR! });
-  return combineRussiaPrice(commercial, tks);
+  return { calculation: combineRussiaPrice(commercial, tks), powerResolution };
 }
 
-/** Fresh calculation used only by the explicit price refresh control. */
-export function calculateRussiaVehiclePriceFresh(vehicle: CatalogVehicle) {
-  return calculateUncached(vehicle);
-}
-
-const cachedCalculation = unstable_cache(calculateUncached, ["russia-vehicle-price-v1"], { revalidate: 900 });
-
-export function calculateRussiaVehiclePrice(vehicle: CatalogVehicle) {
-  return cachedCalculation(vehicle);
-}
-
-export async function calculateRussiaVehiclePrices(vehicles: CatalogVehicle[], concurrency = 4) {
-  const results: Array<RussiaPriceResult | null> = Array.from({ length: vehicles.length }, () => null);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), vehicles.length) }, async () => {
-    while (nextIndex < vehicles.length) {
-      const index = nextIndex++;
-      try { results[index] = await cachedCalculation(vehicles[index]!); }
-      catch { results[index] = null; }
-    }
-  });
-  await Promise.all(workers);
-  return results;
+/** Worker path: reuse a matching persisted power resolution and return it for storage. */
+export function calculateRussiaVehicleSnapshotFresh(
+  vehicle: CatalogVehicle,
+  cachedPowerResolution?: unknown,
+  onPowerResolved?: (powerResolution: PersistedPowerResolution) => Promise<void>,
+) {
+  return calculateUncached(vehicle, cachedPowerResolution, onPowerResolved);
 }
 
 export type { CatalogVehicle };

@@ -18,7 +18,7 @@ import { fetchCbrRates, type RubExchangeRates } from "@/lib/pricing/cbr-rates";
 import { CatalogPrice } from "@/components/catalog/CatalogPrice";
 import { MobileDeCardPhoto } from "./MobileDeCardPhoto";
 import { formatPowerPs } from "@/lib/format/power";
-import { loadRussiaPriceSnapshotsOrCalculate } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 import { readCalculationPreference } from "@/lib/pricing/country-preference";
 import type { RussiaPriceResult } from "@/lib/pricing/russia-pricing";
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -174,7 +174,7 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
       const vehicle = russiaInputForListing(listing);
       return vehicle ? [{ listingId: listing.master_id, vehicle }] : [];
     });
-    const stored = await loadRussiaPriceSnapshotsOrCalculate("europe", entries).catch(() => null);
+    const stored = await loadRussiaPriceSnapshots("europe", entries.map((entry) => entry.listingId)).catch(() => null);
     for (const listing of catalog.data) russiaCalculations.set(listing.master_id, stored?.get(listing.master_id) ?? null);
   }
   const nextParams = mobileDeFilterParams(filters, catalog?.page.next_cursor || undefined);

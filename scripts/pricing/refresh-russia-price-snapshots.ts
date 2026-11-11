@@ -1,7 +1,7 @@
 import path from "node:path";
 import { config as loadEnvironment } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { calculateRussiaVehiclePriceFresh, type CatalogVehicle } from "../../src/lib/pricing/russia-vehicle-pricing";
+import { calculateRussiaVehicleSnapshotFresh, type CatalogVehicle, type PersistedPowerResolution } from "../../src/lib/pricing/russia-vehicle-pricing";
 import { compactRussiaPriceSnapshot, type RussiaPriceResult } from "../../src/lib/pricing/russia-pricing";
 import { refreshStoredKrwUsdRate, storedKrwUsdRate } from "../../src/lib/pricing/krw-usdt-rate";
 import { CHESTNY_PRIGON_PRICING_PROFILE } from "../../src/lib/pricing/chestny-prigon-profile";
@@ -10,7 +10,7 @@ import type { Database } from "../../src/lib/supabase/database.types";
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
 type Source = "korea" | "europe";
-type DueSnapshot = { source: Source; listing_id: string; calculation: unknown; revision: number };
+type DueSnapshot = { source: Source; listing_id: string; calculation: unknown; power_resolution: unknown; revision: number };
 let phase = "startup";
 
 function required(name: string) {
@@ -82,7 +82,8 @@ async function main() {
   const now = new Date();
   phase = "read-queue";
   const { data: dueRows, error: dueError } = await client.from("russia_price_snapshots")
-    .select("source,listing_id,calculation,revision")
+    .select("source,listing_id,calculation,power_resolution,revision")
+    .in("status", ["pending", "failed", "stale"])
     .lte("next_refresh_at", now.toISOString())
     .order("next_refresh_at", { ascending: true })
     .order("listing_id", { ascending: true })
@@ -115,7 +116,7 @@ async function main() {
   const europeById = new Map(europeRows.map((row) => [row.master_id, row]));
   phase = "load-rates";
   const krwPerUsd = idsBySource.korea.length ? await currentKrwPerUsd(client) : CHESTNY_PRIGON_PRICING_PROFILE.krwPerUsd;
-  const readyWrites: Array<{ row: DueSnapshot; calculation: RussiaPriceResult }> = [];
+  const readyWrites: Array<{ row: DueSnapshot; calculation: RussiaPriceResult; powerResolution: PersistedPowerResolution }> = [];
   const failures: Array<{ row: DueSnapshot; code: string; hadCalculation: boolean }> = [];
   const inactive: DueSnapshot[] = [];
   let cursor = 0;
@@ -137,8 +138,15 @@ async function main() {
         continue;
       }
       try {
-        const calculation = await calculateRussiaVehiclePriceFresh(vehicle);
-        readyWrites.push({ row, calculation: compactRussiaPriceSnapshot(calculation) });
+        const result = await calculateRussiaVehicleSnapshotFresh(vehicle, row.power_resolution, async (powerResolution) => {
+          if (JSON.stringify(powerResolution) === JSON.stringify(row.power_resolution)) return;
+          const { error } = await client.from("russia_price_snapshots").update({
+            power_resolution: powerResolution as unknown as Database["public"]["Tables"]["russia_price_snapshots"]["Update"]["power_resolution"],
+            updated_at: now.toISOString(),
+          }).eq("source", row.source).eq("listing_id", row.listing_id).eq("destination", "RU").eq("revision", row.revision);
+          if (error) throw new Error("Could not persist resolved vehicle power");
+        });
+        readyWrites.push({ row, calculation: compactRussiaPriceSnapshot(result.calculation), powerResolution: result.powerResolution });
       } catch (error) {
         failures.push({ row, code: safeErrorCode(error), hadCalculation: Boolean(row.calculation) });
       }
@@ -149,11 +157,12 @@ async function main() {
   phase = "save-ready";
   let readyCount = 0;
   for (let offset = 0; offset < readyWrites.length; offset += 10) {
-    const writes = await Promise.all(readyWrites.slice(offset, offset + 10).map(async ({ row, calculation }) => {
+    const writes = await Promise.all(readyWrites.slice(offset, offset + 10).map(async ({ row, calculation, powerResolution }) => {
       const { data, error } = await client.from("russia_price_snapshots").update({
         status: "ready", calculation: calculation as unknown as Database["public"]["Tables"]["russia_price_snapshots"]["Update"]["calculation"],
+        power_resolution: powerResolution as unknown as Database["public"]["Tables"]["russia_price_snapshots"]["Update"]["power_resolution"],
         calculated_at: now.toISOString(), last_attempt_at: now.toISOString(),
-        next_refresh_at: new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+        next_refresh_at: "9999-12-31T00:00:00.000Z",
         last_error_code: null, updated_at: now.toISOString(),
       }).eq("source", row.source).eq("listing_id", row.listing_id).eq("destination", "RU").eq("revision", row.revision).select("listing_id");
       if (error) throw new Error("Could not store refreshed Russian price snapshot");

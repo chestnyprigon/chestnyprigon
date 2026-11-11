@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import { getMobileDeListing } from "@/lib/mobile-de/api";
 import { loadLivePricingContext } from "@/lib/pricing/pricing-context";
-import { calculateRussiaVehiclePriceFresh, type CatalogVehicle } from "@/lib/pricing/russia-vehicle-pricing";
+import { calculateRussiaVehicleSnapshotFresh, type CatalogVehicle } from "@/lib/pricing/russia-vehicle-pricing";
 import { compactRussiaPriceSnapshot } from "@/lib/pricing/russia-pricing";
+import type { Database } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
 
@@ -75,21 +76,43 @@ export async function POST(request: Request) {
       };
     }
 
-    const calculation = await calculateRussiaVehiclePriceFresh(vehicle);
+    const snapshotClient = createSupabaseAdminClient();
+    const listingId = body.source === "korea" ? body.id : vehicle.sourceId;
+    const { data: previousSnapshot, error: snapshotReadError } = await snapshotClient.from("russia_price_snapshots")
+      .select("power_resolution,revision")
+      .eq("source", body.source).eq("listing_id", listingId).eq("destination", "RU").maybeSingle();
+    if (snapshotReadError) return errorResponse("Не удалось загрузить сохранённые данные расчёта.", 503);
+    const result = await calculateRussiaVehicleSnapshotFresh(vehicle, previousSnapshot?.power_resolution, async (powerResolution) => {
+      if (!previousSnapshot || JSON.stringify(powerResolution) === JSON.stringify(previousSnapshot.power_resolution)) return;
+      const { error } = await snapshotClient.from("russia_price_snapshots").update({
+        power_resolution: powerResolution as unknown as Database["public"]["Tables"]["russia_price_snapshots"]["Update"]["power_resolution"],
+        updated_at: new Date().toISOString(),
+      }).eq("source", body.source as "korea" | "europe").eq("listing_id", listingId).eq("destination", "RU").eq("revision", previousSnapshot.revision);
+      if (error) throw new Error("Could not persist resolved vehicle power");
+    });
+    const calculation = result.calculation;
     const storedAt = new Date();
-    const { error: storeError } = await createSupabaseAdminClient().from("russia_price_snapshots").upsert({
+    const snapshotValues: Database["public"]["Tables"]["russia_price_snapshots"]["Insert"] = {
       source: body.source,
-      listing_id: body.source === "korea" ? body.id : vehicle.sourceId,
+      listing_id: listingId,
       destination: "RU",
       status: "ready",
       calculation: compactRussiaPriceSnapshot(calculation) as unknown as import("@/lib/supabase/database.types").Json,
+      power_resolution: result.powerResolution as unknown as import("@/lib/supabase/database.types").Json,
       calculated_at: storedAt.toISOString(),
       last_attempt_at: storedAt.toISOString(),
-      next_refresh_at: new Date(storedAt.getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+      next_refresh_at: "9999-12-31T00:00:00.000Z",
       last_error_code: null,
       updated_at: storedAt.toISOString(),
-    }, { onConflict: "source,listing_id,destination" });
+    };
+    const write = previousSnapshot
+      ? await snapshotClient.from("russia_price_snapshots").update(snapshotValues)
+        .eq("source", body.source).eq("listing_id", listingId).eq("destination", "RU")
+        .eq("revision", previousSnapshot.revision).select("listing_id")
+      : await snapshotClient.from("russia_price_snapshots").insert(snapshotValues).select("listing_id");
+    const storeError = write.error;
     if (storeError) return errorResponse("Не удалось сохранить актуальную цену. Повторите позже.", 503);
+    if (!write.data?.length) return errorResponse("Расчёт изменился во время обновления. Повторите запрос.", 409);
     return NextResponse.json({ calculation }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (error) {
     console.error("[russia-price-refresh] Calculation unavailable", { source: body.source, errorName: error instanceof Error ? error.name : "UnknownError" });
