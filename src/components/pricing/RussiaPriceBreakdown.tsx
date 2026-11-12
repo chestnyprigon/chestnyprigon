@@ -72,18 +72,14 @@ export function RussiaPriceBreakdown({
         </button>
         {refreshError ? <p className="dossier-price-refresh-error" role="alert">{refreshError}</p> : null}
       </> : null}
-      <h4 className="dossier-breakdown-heading">Исходные данные и курсы</h4>
       <p><span>Цена автомобиля ({calculation.commercial.sourceCurrency})</span><b>{sourceMoney(calculation.commercial.sourcePriceAmount, calculation.commercial.sourceCurrency)}</b></p>
       {calculation.commercial.sourceCurrency === "KRW" ? <p><span>Стояночные</span><b>{sourceMoney(RUSSIA_KOREA_COMMERCIAL_PROFILE.parkingKrw, "KRW")}</b></p> : null}
       {exchangeRates.map(([label, value]) => <p key={label}><span>{label}</span><b>{new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(value)}</b></p>)}
-      <h4 className="dossier-breakdown-heading">Автомобиль и коммерческие расходы</h4>
       {commercialLines.map(([key, value]) => <p className={key === "vehicleAndKoreaCost" || key === "vehicle" ? "is-emphasis" : ""} key={key}>
         <span>{COMMERCIAL_LABELS[key] ?? key}</span><b>{rub.format(value)}</b>
       </p>)}
       <p className="is-emphasis"><span>Итого коммерческие расходы</span><b>{rub.format(calculation.commercial.subtotalRub)}</b></p>
-      <h4 className="dossier-breakdown-heading">Государственные платежи в России</h4>
       {governmentLines.map(([label, value]) => <p key={label}><span>{label}</span><b>{rub.format(value)}</b></p>)}
-      <p className="is-emphasis"><span>Итого государственные платежи</span><b>{rub.format(calculation.government.officialSubtotalRub)}</b></p>
       <p className="is-total"><span>ИТОГО в России: <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер.</InfoTooltip></span><b>{rub.format(calculation.totalRub)}</b></p>
       <small className="dossier-rate-note">Курсы и расчёт обновлены {dateTime(calculation.rates.fetchedAt)} · курс действителен на {calculation.rates.effectiveDate}.</small>
     </div>

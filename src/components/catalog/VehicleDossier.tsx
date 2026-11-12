@@ -138,22 +138,18 @@ function ClientPriceTable({
         {isRefreshing ? "Обновляем цену…" : "Обновить цену"}
       </button>
       {refreshError ? <p className="dossier-price-refresh-error">{refreshError}</p> : null}
-      <h4>Автомобиль в Корее</h4>
       <p><span>Цена авто (KRW)</span><b>{krw(calculation.sourcePriceKrw)}</b></p>
       <p><span>Стояночные</span><b>{krw(calculation.parkingFeeKrw)}</b></p>
       <p><span>Рабочий курс KRW/USD</span><b>₩{number.format(calculation.krwPerUsd)}</b></p>
       <p className="is-emphasis"><span>Стоимость в Корее</span><b>{dollar(calculation.costInKoreaUsd)}</b></p>
-      <h4>Доставка и первый платёж</h4>
       <p><span>Доставка до Минска</span><b>{dollar(calculation.deliveryUsd)}</b></p>
       <p><span>Комиссия 2 %</span><b>{dollar(calculation.commissionUsd)}</b></p>
       <p className="is-emphasis"><span>Первый платёж</span><b>{dollar(calculation.firstPaymentUsd)}</b></p>
-      <h4>Платежи при оформлении в Беларуси</h4>
       <p><span>Услуги СВХ и декларант</span><b>{euro(calculation.svhDeclarantEur)}</b></p>
       <p><span>Таможенная пошлина</span><b>{euro(calculation.customsDutyEur)}</b></p>
       <p><span>Утилизационный сбор</span><b>{euro(calculation.utilizationFeeEur)}</b></p>
       <p><span>Таможенный сбор за оформление</span><b>{euro(calculation.customsClearanceEur)}</b></p>
       <p className="is-emphasis"><span>По прибытии в Минск</span><b>{euro(calculation.arrivalMinskEur)}</b></p>
-      <h4>Услуги компании</h4>
       <p><span>Услуга (подбор/выкуп/доставка)</span><b>{dollar(calculation.companyServiceUsd)}</b></p>
       <p className="is-total"><span>ИТОГО в Минске:</span><b>{dollar(calculation.totalUsd)}</b></p>
       <small className="dossier-rate-note">{rateNote(krwUsdRate)}</small>

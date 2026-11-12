@@ -124,14 +124,11 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
         : <details className="dossier-calculation">
         <summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary>
         {calculation ? <div>
-          <h4 className="dossier-breakdown-heading">Автомобиль и расходы в ЕС</h4>
           <p><span>{calculation.priceBasis === "unknown" ? "Цена по объявлению" : `Цена автомобиля (${calculation.priceBasis === "brutto" ? "Brutto" : "Netto"})`}</span><b>{money(calculation.sourcePriceEur, "EUR")}</b></p>
           <p><span>Услуги компании в ЕС</span><b>{money(calculation.ecServiceEur, "EUR")}</b></p>
           <p><span>Перевод</span><b>{money(calculation.translationEur, "EUR")}</b></p>
-          <h4 className="dossier-breakdown-heading">Доставка и оформление</h4>
           <p><span>Доставка до Минска <InfoTooltip label="О стоимости доставки">Это средняя сумма доставки. Для более точного расчёта обратитесь к менеджеру.</InfoTooltip></span><b>{money(calculation.deliveryMinskEur, "EUR")}</b></p>
           <p><span>Услуга компании</span><b>{money(calculation.companyServiceEur, "EUR")}</b></p>
-          <h4 className="dossier-breakdown-heading">Таможенные платежи в Беларуси</h4>
           <p><span>Таможенный платёж</span><b>{money(calculation.customsDutyEur, "EUR")}</b></p>
           <p><span>Утилизационный сбор</span><b>{money(calculation.recyclingFeeByn, "BYN")}</b></p>
           <p className="dossier-calculation-total"><span>Итого до Минска <InfoTooltip label="О предварительном расчёте">Расчёт предварительный. Итоговую стоимость уточнит менеджер.</InfoTooltip></span><b>{formattedTotal}</b></p>
