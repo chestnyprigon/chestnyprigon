@@ -216,6 +216,16 @@ async function currentRun(db: ReturnType<typeof database>) {
   if (localLive.error) throw new Error("Could not read the latest local Encar run");
   if (localLive.data) return localLive.data as Run;
 
+  const poweredLocal = await db.from("chestny_enrichment_runs")
+    .select("id,status,candidate_count,created_at,started_at,source_file,rules,pause_reason")
+    .eq("project", "chestny-prigon").eq("source_file", "local-catalog-launch-search")
+    .in("status", ["approved", "running", "paused", "completed"])
+    .contains("rules", { powerGate: "vehicle_power_required" })
+    .order("started_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false })
+    .limit(1).maybeSingle();
+  if (poweredLocal.error) throw new Error("Could not read the latest Vehicle Power gated run");
+  if (poweredLocal.data) return poweredLocal.data as Run;
+
   const { data: launch, error: launchError } = await db.from("chestny_catalog_launches")
     .select("id").in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1).maybeSingle();
   if (launchError) throw new Error("Could not read catalog launch");
@@ -588,7 +598,7 @@ async function handleMessage(update: TelegramUpdate) {
     return apiResponse("sendMessage", {
       chat_id: chatId,
       disable_web_page_preview: true,
-      text: `🚗 <b>Панель каталога</b>\n\nКнопки показывают статус, квоты и отчёт. Волны запускаются координатором последовательно. При необходимости можно поставить обработку на паузу или остановить её.\n\nПубликация выполняется координатором после screening, только если цель получила необходимые разрешения.`,
+      text: `🚗 <b>Панель каталога</b>\n\nКнопки показывают статус, квоты и отчёт. /catalog_power показывает, каким допущенным карточкам ещё не хватает мощности из Vehicle Power и почему. Волны запускаются координатором последовательно. При необходимости можно поставить обработку на паузу или остановить её.\n\nПубликация выполняется координатором после screening и проверки Vehicle Power; Encar источником мощности не считается.`,
       parse_mode: "HTML",
     });
   }
@@ -649,6 +659,60 @@ async function handleMessage(update: TelegramUpdate) {
       parse_mode: "HTML",
       text: `${reportTitle}\n\n${goal ? `<b>Цель:</b> ${escapeHtml(goal.goal)}\n<b>Состояние цели:</b> ${escapeHtml(goalStateLabel(goal.state))}\n${wave ? `<b>Волна:</b> ${wave}\n` : ""}<b>Прогресс цели:</b> ${goalProgressLabel(goal, processed, published)}\n<b>Этап:</b> ${escapeHtml(stage)}\n` : `<b>Режим:</b> сохранённая очередь отдельного Encar run; Control Center цель не связана.\n`}<b>Run:</b> ${escapeHtml(runStateLabel(run.status))} · транспорт: ${transport}\n<b>Всего по run:</b> ${processed}/${run.candidate_count} обработано · ${counts.queued} ждут · ${counts.leased} в работе\n\n<b>Текущая волна</b>\n${escapeHtml(waveSummary)}\n\n<b>Screening по run:</b> ${decisions.approved} допущено · ${decisions.rejected} отклонено · ${decisions.isolated} изолировано\n<b>Запуск:</b> <code>${run.id}</code>${pause}\n\n<b>Публикация:</b> ${publicationState(goal, run)}\n<b>Обновлено:</b> ${formatDate(goal?.updated_at ?? run.started_at ?? run.created_at)}`,
     });
+  }
+
+  if (command === "/catalog_power") {
+    const db = database();
+    const run = await currentRun(db);
+    if (!run) return apiResponse("sendMessage", { chat_id: chatId, text: "Активный или последний run каталога не найден." });
+    if (run.rules?.powerGate !== "vehicle_power_required") {
+      return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
+        text: `Run <code>${escapeHtml(run.id)}</code> создан без обязательного power gate. Для него отдельный учёт Vehicle Power не выполнялся.` });
+    }
+    const page = Math.max(1, Number(messageText.split(/\s+/)[1] ?? 1) || 1);
+    const approvedIds: string[] = [];
+    for (let from = 0; ; from += 1_000) {
+      const result = await db.from("chestny_catalog_decisions").select("source_listing_id")
+        .eq("run_id", run.id).eq("decision", "approved").order("source_listing_id").range(from, from + 999);
+      if (result.error) throw new Error("Could not read screened candidates for the Vehicle Power report");
+      approvedIds.push(...(result.data ?? []).map((row) => String(row.source_listing_id)));
+      if (!result.data || result.data.length < 1_000) break;
+    }
+    const powerRows: Array<{ source_listing_id: string; status: string; reason_code: string; reason_detail: string | null }> = [];
+    for (let from = 0; ; from += 1_000) {
+      const result = await db.from("chestny_catalog_power_resolutions")
+        .select("source_listing_id,status,reason_code,reason_detail")
+        .eq("run_id", run.id).order("source_listing_id").range(from, from + 999);
+      if (result.error) throw new Error("Could not read Vehicle Power results; check that the power-gate migration is applied");
+      powerRows.push(...(result.data ?? []));
+      if (!result.data || result.data.length < 1_000) break;
+    }
+    const byId = new Map(powerRows.map((row) => [row.source_listing_id, row]));
+    const missing = approvedIds.filter((id) => !byId.has(id)).map((id) => ({ source_listing_id: id,
+      status: "not_requested", reason_code: "resolution_not_recorded", reason_detail: null }));
+    const approvedSet = new Set(approvedIds);
+    const unresolved = [...powerRows.filter((row) => approvedSet.has(row.source_listing_id) && row.status !== "resolved"), ...missing]
+      .sort((a, b) => a.source_listing_id.localeCompare(b.source_listing_id));
+    const counts: Record<string, number> = {};
+    for (const id of approvedIds) {
+      const status = byId.get(id)?.status ?? "not_requested";
+      counts[status] = (counts[status] ?? 0) + 1;
+    }
+    const pageSize = 12;
+    const totalPages = Math.max(1, Math.ceil(unresolved.length / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const selected = unresolved.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const urls = selected.length ? await db.from("chestny_catalog_staging").select("source_listing_id,source_url")
+      .in("source_listing_id", selected.map((row) => row.source_listing_id)) : { data: [], error: null };
+    if (urls.error) throw new Error("Could not read source links for the Vehicle Power report");
+    const urlById = new Map((urls.data ?? []).map((row) => [row.source_listing_id, row.source_url]));
+    const items = selected.map((row) => {
+      const url = String(urlById.get(row.source_listing_id) ?? `https://www.encar.com/dc/dc_cardetailview.do?carid=${encodeURIComponent(row.source_listing_id)}`);
+      const reason = escapeHtml(row.reason_detail || row.reason_code);
+      return `• <a href="${escapeHtml(url)}">${escapeHtml(row.source_listing_id)}</a> — ${escapeHtml(row.status)}: ${reason}`;
+    });
+    return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+      text: `⚡ <b>Мощность Vehicle Power</b>\nRun: <code>${escapeHtml(run.id)}</code>\nДопущено screening: ${approvedIds.length}\nНайдена подходящая мощность: ${counts.resolved ?? 0}\nОжидают/не готовы к публикации: ${unresolved.length}\nПричины: ${Object.entries(counts).filter(([status]) => status !== "resolved").map(([status, count]) => `${escapeHtml(status)} ${count}`).join(" · ") || "нет"}\nСписок ${safePage}/${totalPages}:\n${items.join("\n") || "Список пуст."}${unresolved.length > pageSize ? `\nСледующая страница: /catalog_power ${Math.min(safePage + 1, totalPages)}` : ""}\n\nМощность из Encar не запрашивается; публикация без результата Vehicle Power закрыта.` });
   }
 
   if (command === "/catalog_plan") {

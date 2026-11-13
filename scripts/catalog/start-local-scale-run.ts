@@ -47,8 +47,9 @@ async function main() {
   const rules = run.data.rules as Record<string, unknown>;
   const autoPublication = rules.publication === "auto_after_screening" && rules.publicationAuthorized === true;
   if (run.data.status !== "approved" || rules.transport !== "direct" || !(rules.publication === "disabled" || autoPublication)
-    || rules.discoveryOnly !== true || !rules.catalogLaunchId) {
-    throw new Error("Run must be approved, direct, discovery-only, linked to a catalog launch, and use disabled or explicitly authorized after-screening publication");
+    || rules.discoveryOnly !== true || !rules.catalogLaunchId
+    || rules.powerGate !== "vehicle_power_required" || rules.powerSource !== "vehicle_power_only") {
+    throw new Error("Run must be approved, direct, discovery-only, linked to a catalog launch, protected by the Vehicle Power-only publication gate, and use disabled or explicitly authorized after-screening publication");
   }
   if (run.data.candidate_count < 1) {
     throw new Error(`Expected at least one newly discovered candidate, found ${run.data.candidate_count}`);

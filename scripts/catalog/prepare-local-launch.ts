@@ -10,19 +10,24 @@ async function main() {
   if (!url || !key || !url.includes("ojnybjomttolhsfgkdqq")) throw Error("Expected chestny-prigon Supabase project");
   const db=createClient(url,key);
   const nameArgument = process.argv.find((arg) => arg.startsWith("--name="))?.slice("--name=".length);
-  const name = nameArgument?.trim() || `local-catalog-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
+  const name = nameArgument?.trim() || `local-catalog-power-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
   if (!/^[a-z0-9][a-z0-9-]{5,79}$/.test(name)) throw Error("Launch name must use 6–80 lowercase letters, digits, and hyphens");
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
   if (process.argv.includes("--apply")) {
     if (launch.data?.status !== "capturing") {
-      const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,p_rules:CATALOG_POLICY});
+      const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,
+        p_rules:{...CATALOG_POLICY,powerGate:"vehicle_power_required",powerSource:"vehicle_power_only"}});
       if (prepared.error) throw Error(prepared.error.message);
       launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
       if (launch.error) throw Error(launch.error.message);
     }
   }
   if (!launch.data) throw Error("No launch yet: run with --apply to freeze the baseline");
+  if (launch.data.status !== "capturing"
+    && (launch.data.rules?.powerGate !== "vehicle_power_required" || launch.data.rules?.powerSource !== "vehicle_power_only")) {
+    throw Error(`Launch ${name} predates the Vehicle Power-only gate; prepare a new launch with a unique --name instead of reusing it`);
+  }
   if (launch.data.status === "capturing" && process.argv.includes("--apply")) {
     let inserted = 0;
     const collect = async (table: string, column: string) => {

@@ -82,7 +82,7 @@ async function handleCatalogMessage(update: TelegramUpdate, token: string) {
   const db = catalogDatabase();
 
   if (commandText === "/start" || commandText === "/catalog" || commandText === "/catalog_help") {
-    await ownerMessage(token, chatId, "Пульт каталога:\n/catalog_status — состояние run и очереди\n/catalog_plan — остатки квот по маркам\n/catalog_report — сводка обработки\n/catalog_start — запросить запуск до 50 кандидатов\n/catalog_pause — пауза после текущей карточки\n/catalog_resume — продолжить paused run\n/catalog_stop — отменить run\n/catalog_publish — публикация закрыта до прохождения пилота");
+    await ownerMessage(token, chatId, "Пульт каталога:\n/catalog_status — состояние run и очереди\n/catalog_plan — остатки квот по маркам\n/catalog_report — причины ошибок и исходы обработки\n/catalog_power [страница] — кому не хватает мощности и почему\n/catalog_start — запросить запуск до 50 кандидатов\n/catalog_pause — пауза после текущей карточки\n/catalog_resume — продолжить paused run\n/catalog_stop — отменить run\n/catalog_publish — публикация закрыта до прохождения пилота");
     return NextResponse.json({ ok: true });
   }
 

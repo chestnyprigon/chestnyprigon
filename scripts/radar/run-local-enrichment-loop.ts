@@ -198,14 +198,25 @@ async function publishWaveAfterScreening(wave: WaveRecord) {
   const prepared = await runCatalogScript(["scripts/radar/prepare-publication-cohort.ts",
     `--run-id=${runId}`, `--wave-number=${wave.wave_number}`, `--output=${manifestPath}`], "Publication cohort preparation");
   const selected = Number(prepared.selectedForPublicationReview ?? 0);
+  const powerOutcomeCounts = prepared.powerOutcomeCounts ?? null;
+  const waitingForPower = Number(prepared.waitingForPower ?? 0);
   if (prepared.status !== "prepared_for_review" || prepared.publicationExecuted !== false || !Number.isInteger(selected)) {
     throw new Error("Publication cohort preparation did not return a valid read-only manifest summary");
   }
-  if (selected === 0) return { selected: 0, publishedCount: 0, failedCount: 0, skipped: "no_approved_candidates" };
+  if (selected === 0) return { selected: 0, publishedCount: 0, failedCount: 0, skipped: "no_approved_candidates", powerOutcomeCounts, waitingForPower };
   const result = await runCatalogScript(["scripts/radar/publish-screened-cohort.ts", `--manifest=${manifestPath}`, "--publish"], "Automatic publication");
   if (result.runId !== runId || result.publicationManifestStatus !== "completed"
     || Number(result.selected) !== selected || Number(result.publishedCount) !== selected || Number(result.unfinished) !== 0) {
     throw new Error(`Publication result did not reconcile with the frozen wave roster: ${JSON.stringify(result).slice(0, 1_500)}`);
+  }
+  return { ...result, powerOutcomeCounts, waitingForPower };
+}
+
+async function resolveWavePower(wave: WaveRecord) {
+  const result = await runCatalogScript(["scripts/radar/resolve-wave-vehicle-power.ts", `--run-id=${runId}`,
+    `--wave-number=${wave.wave_number}`, "--concurrency=2"], "Vehicle Power resolution");
+  if (result.runId !== runId || Number(result.waveNumber) !== wave.wave_number || result.publicationExecuted !== false) {
+    throw new Error("Vehicle Power resolution did not return a valid read-only run/wave summary");
   }
   return result;
 }
@@ -235,6 +246,8 @@ function publicationReviewMarkup(readyCount: number) {
 }
 
 async function screenWaveInBackground(wave: WaveRecord, full: boolean, autoPublish: boolean,
+  powerGateEnabled: boolean,
+  resolvePower: (wave: WaveRecord) => Promise<Record<string, unknown>>,
   publishWave: (wave: WaveRecord) => Promise<Record<string, unknown>>,
   notify: (message: string, markup?: PublicationReplyMarkup) => Promise<void>) {
   try {
@@ -243,16 +256,27 @@ async function screenWaveInBackground(wave: WaveRecord, full: boolean, autoPubli
       throw new Error(`Сверка staging не пройдена: успешных строк очереди ${result.succeededQueueRows ?? "?"}, строк staging ${result.stagingRows ?? "?"}, отсутствует или неуспешно сохранено ${result.missingStagingCount ?? "?"}. Публикация заблокирована.`);
     }
     const ready = result.readyForPublication ?? 0;
+    let powerResolution: Record<string, unknown> | null = null;
+    if (powerGateEnabled) {
+      try {
+        powerResolution = await resolvePower(wave);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await notify(`⚠️ Волна ${wave.wave_number}: не удалось завершить сверку Vehicle Power (${message.slice(0, 500)}). Волна и следующий поиск продолжаются; публикация карточек без подтверждённой мощности будет закрыта. Run: ${runId}`);
+      }
+    }
     if (autoPublish && ready > 0) {
       try {
         const publication = await publishWave(wave);
-        await notify(`✅ Волна ${wave.wave_number}: скрининг завершён. Допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}. Автоматически опубликовано ${publication.publishedCount ?? 0} из ${publication.selected ?? ready}; ошибок публикации ${publication.failedCount ?? 0}. Run: ${runId}`);
+        const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}; ожидают мощность ${publication.waitingForPower ?? 0}.` : " Vehicle Power: сверка не завершилась, публикация заблокирована до наличия результата.";
+        await notify(`✅ Волна ${wave.wave_number}: скрининг завершён. Допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}. Автоматически опубликовано ${publication.publishedCount ?? 0} из ${publication.selected ?? ready}; ошибок публикации ${publication.failedCount ?? 0}.${powerMessage} Run: ${runId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await notify(`⚠️ Волна ${wave.wave_number} прошла screening (${ready} кандидатов готовы), но автопубликация не завершена: ${message.slice(0, 900)}. Следующие волны продолжаются; повторно Encar не запрашиваю. Run: ${runId}`);
       }
     } else {
-      await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}.${autoPublish ? " Автопубликация не нужна: допущенных карточек нет." : " Публикация для этого run выключена."} Run: ${runId}`);
+      const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}.` : " Vehicle Power: результат пока не получен.";
+      await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}.${powerMessage}${autoPublish ? " Автопубликация не нужна: допущенных карточек нет." : " Публикация для этого run выключена."} Run: ${runId}`);
     }
     return true;
   } catch (error) {
@@ -282,10 +306,16 @@ async function processPersistedWaves(input: {
   const { waves, lockToken, signal, run, notify, setActiveWave, delayMs, concurrency, allowMatchingStagingRefresh } = input;
   const screeningJobs: Array<Promise<boolean>> = [];
   let publicationTail: Promise<void> = Promise.resolve();
+  let powerResolutionTail: Promise<void> = Promise.resolve();
   const publishWaveSerially = async (wave: WaveRecord) => {
     const publication = publicationTail.then(() => publishWaveAfterScreening(wave));
     publicationTail = publication.then(() => undefined, () => undefined);
     return publication;
+  };
+  const resolveWavePowerSerially = async (wave: WaveRecord) => {
+    const resolution = powerResolutionTail.then(() => resolveWavePower(wave));
+    powerResolutionTail = resolution.then(() => undefined, () => undefined);
+    return resolution;
   };
   let processedThisSession = 0;
   let processed = attemptedEnrichmentItems(await queueCounts());
@@ -312,7 +342,8 @@ async function processPersistedWaves(input: {
       const { error: updateError } = await client.from("chestny_enrichment_waves").update({ status: "screening", updated_at: now })
         .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening", "paused"]);
       if (updateError) throw new Error(`Could not resume screening for wave ${currentWave.wave_number}: ${updateError.message}`);
-      screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true, publishWaveSerially, notify));
+      screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true,
+        run.rules?.powerGate === "vehicle_power_required", resolveWavePowerSerially, publishWaveSerially, notify));
       continue;
     }
     if (!["queued", "enriching", "paused"].includes(currentWave.status)) {
@@ -385,7 +416,8 @@ async function processPersistedWaves(input: {
     const { error: screeningError } = await client.from("chestny_enrichment_waves").update({ status: "screening", last_error: null, updated_at: now })
       .eq("id", currentWave.id).eq("run_id", runId).in("status", ["enriched", "screening"]);
     if (screeningError) throw new Error(`Could not start screening checkpoint for wave ${currentWave.wave_number}: ${screeningError.message}`);
-    screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true, publishWaveSerially, notify));
+    screeningJobs.push(screenWaveInBackground(currentWave, false, run.rules?.publication === "auto_after_screening" && run.rules?.publicationAuthorized === true,
+      run.rules?.powerGate === "vehicle_power_required", resolveWavePowerSerially, publishWaveSerially, notify));
   }
 
   await Promise.all(screeningJobs);

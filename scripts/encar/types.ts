@@ -102,4 +102,6 @@ export type PilotItem = {
   screening: ScreeningResult;
   normalized: NormalizedVehicle | null;
   enrichment?: Omit<import("./publication-gate").PublicationInput, "bundle">;
+  powerFields?: import("./vehicle-power-gate").VehiclePowerFields;
+  powerRecord?: Record<string, unknown>;
 };

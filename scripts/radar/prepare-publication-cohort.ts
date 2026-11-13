@@ -5,6 +5,7 @@ import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { screenStaging } from "../encar/staging-gate";
 import { sourceIdentifiers } from "../encar/identity";
+import { vehiclePowerRecordIssue } from "../encar/vehicle-power-gate";
 import type { EncarBundle } from "../encar/types";
 
 config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
@@ -22,6 +23,10 @@ const OUTPUT = process.argv.find((arg) => arg.startsWith("--output="))?.slice("-
 function required(value: string | undefined, name: string) {
   if (!value?.trim()) throw new Error(`Missing ${name}`);
   return value.trim();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function sha256(ids: string[]) {
@@ -212,9 +217,37 @@ async function main() {
   }
   if (baselineIds.size) rejectedReasons.known_before_launch = baselineIds.size;
   if (alreadyCatalogued.size) rejectedReasons.already_in_catalogue = alreadyCatalogued.size;
-  const selected = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId)
+  const duplicateSafe = passed.filter((item) => !duplicateCanonicalIds.has(item.canonicalId)
     && !alreadyCatalogued.has(item.canonicalId) && !baselineIds.has(item.canonicalId)
     && !identityConflicts.has(item.sourceId) && !cohortIdentityConflicts.has(item.sourceId));
+  const powerGateEnabled = asRecord(runResult.data.rules).powerGate === "vehicle_power_required";
+  const powerReadyIds = new Set<string>();
+  const powerOutcomeCounts: Record<string, number> = {};
+  const powerReasonCounts: Record<string, number> = {};
+  if (powerGateEnabled && passed.length) {
+    const resolutions = new Map<string, { status: string; reason_code: string; power_record: unknown }>();
+    for (const group of chunks(passed.map((item) => item.sourceId), 100)) {
+      const result = await db.from("chestny_catalog_power_resolutions")
+        .select("source_listing_id,status,reason_code,power_record")
+        .eq("run_id", runId).in("source_listing_id", group);
+      if (result.error) throw new Error(`Could not read Vehicle Power outcomes (apply the power-gate migration): ${result.error.message}`);
+      for (const row of result.data ?? []) resolutions.set(String(row.source_listing_id), row);
+    }
+    for (const item of passed) {
+      const resolution = resolutions.get(item.sourceId);
+      const status = resolution?.status ?? "not_requested";
+      powerOutcomeCounts[status] = (powerOutcomeCounts[status] ?? 0) + 1;
+      const issue = status === "resolved" ? vehiclePowerRecordIssue(resolution?.power_record) : null;
+      if (status === "resolved" && !issue) powerReadyIds.add(item.sourceId);
+      else {
+        const reason = issue ?? resolution?.reason_code ?? `power_${status}`;
+        powerReasonCounts[reason] = (powerReasonCounts[reason] ?? 0) + 1;
+      }
+    }
+  }
+  const selected = powerGateEnabled
+    ? duplicateSafe.filter((item) => powerReadyIds.has(item.sourceId))
+    : duplicateSafe;
 
   const sourceIds = cohort.map((row) => String(row.source_listing_id));
   const manifest = {
@@ -229,6 +262,9 @@ async function main() {
     sourceCandidateCount: size,
     successfulEnrichments: successful.length,
     unsuccessfulCandidates: failed.length,
+    powerGate: powerGateEnabled ? "vehicle_power_required" : "not_configured_for_this_run",
+    ...(powerGateEnabled ? { powerOutcomeCounts, powerReasonCounts,
+      powerPendingSourceListingIds: duplicateSafe.filter((item) => !powerReadyIds.has(item.sourceId)).map((item) => item.sourceId) } : {}),
     selectedCount: selected.length,
     selectedSourceIdsSha256: sha256(selected.map((item) => item.sourceId)),
     sourceListingIds: selected.map((item) => item.sourceId),
@@ -246,6 +282,8 @@ async function main() {
     successfulEnrichments: successful.length,
     unsuccessfulCandidates: failed.length,
     screeningPassed: passed.length,
+    ...(powerGateEnabled ? { powerGate: "Vehicle Power only (Encar is not queried for power)", powerOutcomeCounts, powerReasonCounts,
+      waitingForPower: duplicateSafe.length - duplicateSafe.filter((item) => powerReadyIds.has(item.sourceId)).length } : {}),
     reportStatusesAmongScreeningPassed: reportCounts,
     excludedReasons: rejectedReasons,
     previouslyPublishedInThisRun: previouslyPublished.size,

@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { screenStaging } from "../encar/staging-gate";
 import { persistPilot } from "../encar/persistence";
 import type { PilotItem } from "../encar/types";
+import { vehiclePowerFields, vehiclePowerRecordIssue } from "../encar/vehicle-power-gate";
 
 config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
@@ -90,6 +91,17 @@ async function main() {
     stageRows.push(...((result.data ?? []) as StageRow[]));
   }
   const byId = new Map(stageRows.map((row) => [row.source_listing_id, row]));
+  const powerGateEnabled = run.rules?.powerGate === "vehicle_power_required";
+  const powerById = new Map<string, { status: string; power_record: unknown }>();
+  if (powerGateEnabled) {
+    for (const group of chunks(ids, 100)) {
+      const result = await db.from("chestny_catalog_power_resolutions")
+        .select("source_listing_id,status,power_record")
+        .eq("run_id", manifest.runId).in("source_listing_id", group);
+      if (result.error) throw new Error(`Could not verify Vehicle Power resolution: ${result.error.message}`);
+      for (const item of result.data ?? []) powerById.set(item.source_listing_id, item);
+    }
+  }
   const items: PilotItem[] = [];
   const rejected: Array<{ sourceListingId: string; reasons: string[] }> = [];
   for (const sourceId of ids) {
@@ -106,8 +118,17 @@ async function main() {
         : row.enrichment_status !== "succeeded" ? ["enrichment_not_succeeded"] : evaluated.screening.reasonCodes });
       continue;
     }
+    const power = powerGateEnabled ? powerById.get(sourceId) : undefined;
+    const powerIssue = powerGateEnabled
+      ? power?.status !== "resolved" ? `vehicle_power_${power?.status ?? "not_resolved"}` : vehiclePowerRecordIssue(power.power_record)
+      : null;
+    if (powerIssue) {
+      rejected.push({ sourceListingId: sourceId, reasons: [powerIssue] });
+      continue;
+    }
     const { bundle, ...enrichment } = evaluated.input;
-    items.push({ bundle, enrichment, screening: evaluated.screening, normalized: evaluated.normalized });
+    items.push({ bundle, enrichment, screening: evaluated.screening, normalized: evaluated.normalized,
+      ...(powerGateEnabled && power ? { powerRecord: power.power_record as Record<string, unknown>, powerFields: vehiclePowerFields(power.power_record) } : {}) });
   }
   if (stageRows.length !== ids.length || rejected.length || items.length !== ids.length) {
     throw new Error(JSON.stringify({ message: "Saved cohort failed the fresh publication gate; no vehicle rows were written",
@@ -338,6 +359,7 @@ async function main() {
         try {
           const result = await persistPilot(needsPersist, true, {
             source: "chestny-screened-cohort", runId: manifest.runId, publicationManifestId,
+            ...(powerGateEnabled ? { powerGate: "vehicle_power_required" } : {}),
             requested: needsPersist.length, publish: true, cohortSha256: idsHash,
             sourceListingIds: needsPersist.map((item) => String(item.normalized?.sourceListingId ?? "")), selectedByBrand,
             ...(catalogLaunchId ? { catalogLaunchId } : {}),
@@ -382,6 +404,7 @@ async function main() {
               try {
                 await persistPilot([item], true, {
                   source: "chestny-screened-cohort", runId: manifest.runId, publicationManifestId,
+                  ...(powerGateEnabled ? { powerGate: "vehicle_power_required" } : {}),
                   requested: 1, publish: true, cohortSha256: idsHash, sourceListingIds: [sourceId],
                   selectedByBrand: { [String(item.normalized?.manufacturer ?? "unknown")]: 1 },
                   ...(catalogLaunchId ? { catalogLaunchId } : {}),

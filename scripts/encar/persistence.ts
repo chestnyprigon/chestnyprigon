@@ -9,6 +9,7 @@ import { publicationGate } from "./publication-gate";
 import { CATALOG_POLICY } from "./catalog-policy";
 import { evidence } from "./catalog-policy";
 import { accidentSummary, inspectionSummary } from "./enrich";
+import { vehiclePowerRecordIssue } from "./vehicle-power-gate";
 
 function requireEnvironment(name: string) {
   const value = process.env[name]?.trim();
@@ -46,6 +47,12 @@ export async function persistPilot(
       decision: "isolated", rules_version: CATALOG_POLICY.version, evidence: [e], proof: { validated: false }, decided_at: e.observedAt }));
   }
   const proofs = new Map<string, ReturnType<typeof publicationGate>>();
+  if (publish && runCursor.powerGate === "vehicle_power_required") {
+    for (const item of items) {
+      const issue = vehiclePowerRecordIssue(item.powerRecord);
+      if (issue || !item.powerFields) throw new Error(`publication_power_gate:${issue ?? "power_fields_missing"}`);
+    }
+  }
   if (publish) items = items.map(item => {
     const result = publicationGate({ bundle: item.bundle, sourceUrl: item.normalized?.sourceUrl ?? "", ...item.enrichment });
     proofs.set(canonicalSourceId(item.bundle), result);
@@ -171,6 +178,7 @@ export async function persistPilot(
                 price_usd: calculation.totalUsd,
                 krw_per_usd: profile.krwPerUsd,
                 engine_cc: vehicle.engineCc,
+                ...(item.powerFields ?? {}),
                 fuel_type: vehicle.fuelType,
                 transmission: vehicle.transmission,
                 drive_type: vehicle.driveType,

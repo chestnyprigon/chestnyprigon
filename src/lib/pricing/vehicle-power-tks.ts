@@ -68,7 +68,7 @@ export type VehiclePowerTksInput = {
   clearanceDays?: number;
 };
 
-const powerRecordSchema = z.object({
+export const powerRecordSchema = z.object({
   contractVersion: z.literal("power-record-v1"),
   propulsion: z.enum(["ice", "electric", "hybrid_parallel", "hybrid_sequential", "hybrid_phev"]),
   measurements: z.array(z.object({
@@ -108,6 +108,7 @@ export type VehiclePowerResolveInput = {
   combustionKw?: number;
   powertrain?: "ice" | "electric" | "hybrid_parallel" | "hybrid_sequential" | "hybrid_phev";
   hybridTopology?: "parallel" | "sequential";
+  researchMode?: "catalog_only" | "research";
   correlation?: { source?: string; sourceListingId?: string; masterId?: string };
 };
 

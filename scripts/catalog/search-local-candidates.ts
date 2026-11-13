@@ -86,6 +86,9 @@ async function main() {
   else launchQuery = launchQuery.in("status", ["prepared", "running"]).order("baseline_at", { ascending: false }).limit(1);
   const { data: launch, error: launchError } = await launchQuery.single();
   if (launchError) throw new Error(launchError.message);
+  if (asRecord(launch.rules).powerGate !== "vehicle_power_required" || asRecord(launch.rules).powerSource !== "vehicle_power_only") {
+    throw new Error("Catalog launch was not prepared with the Vehicle Power-only publication requirement; prepare a new launch before discovery");
+  }
   if (!(["prepared", "running"] as string[]).includes(launch.status)) throw new Error(`Launch status is ${launch.status}`);
 
   const { data: rows, error } = await client.from("chestny_catalog_brand_search_status")
@@ -145,8 +148,7 @@ async function main() {
   }
 
   const transportArgument = process.argv.find((arg) => arg.startsWith("--transport="))?.slice("--transport=".length)
-    ?? process.env.CHESTNY_ENCAR_TRANSPORT?.trim()
-    ?? "proxy";
+    ?? "direct";
   if (transportArgument !== "direct" && transportArgument !== "proxy") throw new Error("Encar transport must be direct or proxy");
   // Resolve credentials before any search or run mutation. Direct mode removes
   // a possibly inherited proxy URL so encarFetch cannot silently use it.
@@ -175,6 +177,7 @@ async function main() {
       rules: { catalogLaunchId: launch.id, catalogLaunchName: launch.name, policyVersion: CATALOG_POLICY.version,
         discoveryOnly: true, transport: transportArgument, publication: publicationMode,
         publicationAuthorized: publicationMode === "auto_after_screening",
+        powerGate: "vehicle_power_required", powerSource: "vehicle_power_only",
         searchMode: candidatePoolTarget === null ? "all_eligible_until_source_exhaustion" : "balanced_candidate_pool_target",
         candidatePoolTarget },
     }).select("id").single();
@@ -192,6 +195,10 @@ async function main() {
   const savedPublication = asRecord(activeRun.rules).publication ?? "disabled";
   if (savedPublication !== publicationMode) {
     throw new Error(`Run publication mode is ${String(savedPublication)}; refusing to change it to ${publicationMode} after run creation`);
+  }
+  if (asRecord(activeRun.rules).powerGate !== "vehicle_power_required"
+    || asRecord(activeRun.rules).powerSource !== "vehicle_power_only") {
+    throw new Error("Run lacks the required Vehicle Power-only publication gate; refusing to continue with legacy rules");
   }
   const savedTarget = asRecord(activeRun.rules).candidatePoolTarget;
   const normalizedSavedTarget = savedTarget === undefined || savedTarget === null ? null : Number(savedTarget);
