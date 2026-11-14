@@ -76,16 +76,16 @@ async function main() {
   }
   const eligible = stageRows.map((row) => ({ row, screened: screenStaging(row) }))
     .filter(({ screened }) => screened.screening.decision === "approved");
-  const existing = new Map<string, { status: string; attempt_count: number; configuration_fingerprint: string | null; first_attempt_at: string }>();
+  const existing = new Map<string, { status: string; attempt_count: number; configuration_fingerprint: string | null; first_attempt_at: string; power_record: unknown }>();
   for (let i = 0; i < ids.length; i += 100) {
     const saved = await db.from("chestny_catalog_power_resolutions")
-      .select("source_listing_id,status,attempt_count,configuration_fingerprint,first_attempt_at")
+      .select("source_listing_id,status,attempt_count,configuration_fingerprint,first_attempt_at,power_record")
       .eq("run_id", runId).in("source_listing_id", ids.slice(i, i + 100));
     if (saved.error) throw new Error(`Could not read saved power resolutions (apply migration 20261113120000_catalog_vehicle_power_gate.sql): ${saved.error.message}`);
     for (const item of saved.data ?? []) existing.set(item.source_listing_id, item);
   }
 
-  const outcomes: Array<{ id: string; status: string; reason: string }> = [];
+  const outcomes: Array<{ id: string; status: string; reason: string; confidence?: string }> = [];
   let cursor = 0;
   async function resolveNext() {
     while (cursor < eligible.length) {
@@ -93,7 +93,9 @@ async function main() {
       const id = String(item.row.source_listing_id);
       const prior = existing.get(id);
       if (prior?.status === "resolved") {
-        outcomes.push({ id, status: "resolved", reason: "already_resolved" });
+        const savedRecord = record(prior.power_record);
+        outcomes.push({ id, status: "resolved", reason: "already_resolved",
+          confidence: String(savedRecord.resolutionClass ?? "CLASS_NOT_RECORDED").toUpperCase() });
         continue;
       }
       const normalized = item.screened.normalized;
@@ -159,16 +161,22 @@ async function main() {
         resolved_at: status === "resolved" ? timestamp : null,
       }, { onConflict: "run_id,source_listing_id" });
       if (saved.error) throw new Error(`Could not persist power resolution for ${id}: ${saved.error.message}`);
-      outcomes.push({ id, status, reason: reasonCode });
+      outcomes.push({ id, status, reason: reasonCode,
+        ...(powerRecord ? { confidence: String(powerRecord.resolutionClass ?? "CLASS_NOT_RECORDED").toUpperCase() } : {}) });
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, () => resolveNext()));
   const counts: Record<string, number> = {};
+  const confidenceCounts: Record<string, number> = {};
   for (const outcome of outcomes) counts[outcome.status] = (counts[outcome.status] ?? 0) + 1;
+  for (const outcome of outcomes) if (outcome.status === "resolved") {
+    const confidence = outcome.confidence ?? "CLASS_NOT_RECORDED";
+    confidenceCounts[confidence] = (confidenceCounts[confidence] ?? 0) + 1;
+  }
   console.log(JSON.stringify({ runId, waveNumber: WAVE_NUMBER, screenedApproved: eligible.length,
     alreadyResolved: outcomes.filter((item) => item.reason === "already_resolved").length,
-    attempted: outcomes.length, counts, reasonCounts: outcomes.reduce<Record<string, number>>((acc, item) => {
+    attempted: outcomes.length, counts, confidenceCounts, reasonCounts: outcomes.reduce<Record<string, number>>((acc, item) => {
       if (item.reason !== "already_resolved") acc[item.reason] = (acc[item.reason] ?? 0) + 1;
       return acc;
     }, {}), publicationExecuted: false }, null, 2));

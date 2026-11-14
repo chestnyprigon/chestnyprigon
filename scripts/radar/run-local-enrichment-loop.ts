@@ -167,6 +167,47 @@ type ScreeningSummary = { decisions?: Record<string, number>; readyForPublicatio
   succeededQueueRows?: number; stagingRows?: number; missingStagingCount?: number };
 type PublicationReplyMarkup = { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
 
+const waveReasonLabels: Record<string, string> = {
+  temporary_network_error: "временная сеть", transient_request: "временная ошибка запроса",
+  source_access_blocked: "Encar 403", source_rate_limited: "Encar 429",
+  advertisement_not_active: "объявление уже снято", source_unavailable: "карточка недоступна",
+  incomplete_gallery: "неполная галерея фото", gallery_incomplete: "мало фотографий",
+  detail_empty_response: "пустой ответ Encar", identity_run_canonical_duplicate: "дубль ID",
+  identity_source_identifier_already_linked: "ID уже связан", identity_integrity_failed: "конфликт ID",
+  history_confirmed_unavailable: "отчёт Encar недоступен", enrichment_error: "ошибка обработки",
+  reason_not_recorded: "причина не записана",
+};
+
+async function waveOutcomeReasonSummary(waveId: string) {
+  const groups = new Map<string, number>();
+  for (const status of ["failed", "unavailable", "excluded"] as const) {
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await client.from("chestny_enrichment_queue")
+        .select("result,last_error").eq("run_id", runId).eq("wave_id", waveId).eq("status", status)
+        .order("source_listing_id").range(offset, offset + 999);
+      if (error) throw new Error(`Could not read wave ${status} reasons: ${error.message}`);
+      for (const row of data ?? []) {
+        const result = row.result && typeof row.result === "object" ? row.result as Record<string, unknown> : {};
+        const codes = Array.isArray(result.reasonCodes) ? result.reasonCodes.filter((item): item is string => typeof item === "string") : [];
+        const code = codes[0] ?? (typeof result.reasonCode === "string" ? result.reasonCode
+          : typeof result.failureClass === "string" ? result.failureClass : row.last_error ? "enrichment_error" : "reason_not_recorded");
+        const category = status === "excluded" ? "исключено" : status === "unavailable" ? "недоступно" : "ошибка";
+        const key = `${category}: ${waveReasonLabels[code] ?? code.replace(/_/g, " ")}`;
+        groups.set(key, (groups.get(key) ?? 0) + 1);
+      }
+      if (!data || data.length < 1_000) break;
+    }
+  }
+  return [...groups.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(([reason, count]) => `${reason} ${count}`).join("; ") || "ошибок и недоступных нет";
+}
+
+function powerConfidenceSummary(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const labels: Record<string, string> = { CONFIRMED: "подтверждённая", PROBABLE: "вероятная", ESTIMATED: "оценочная", CLASS_NOT_RECORDED: "класс не записан" };
+  return Object.entries(value as Record<string, unknown>).map(([key, count]) => `${labels[key] ?? key} ${Number(count) || 0}`).join(", ");
+}
+
 function lastJsonObject(output: string) {
   for (let start = output.lastIndexOf("{"); start >= 0; start = output.lastIndexOf("{", start - 1)) {
     try {
@@ -256,6 +297,10 @@ async function screenWaveInBackground(wave: WaveRecord, full: boolean, autoPubli
       throw new Error(`Сверка staging не пройдена: успешных строк очереди ${result.succeededQueueRows ?? "?"}, строк staging ${result.stagingRows ?? "?"}, отсутствует или неуспешно сохранено ${result.missingStagingCount ?? "?"}. Публикация заблокирована.`);
     }
     const ready = result.readyForPublication ?? 0;
+    let outcomeReasonSummary = "Причины по ошибкам не удалось прочитать из очереди.";
+    try { outcomeReasonSummary = await waveOutcomeReasonSummary(wave.id); } catch (error) {
+      console.error(`Could not summarize outcomes for wave ${wave.wave_number}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     let powerResolution: Record<string, unknown> | null = null;
     if (powerGateEnabled) {
       try {
@@ -268,15 +313,17 @@ async function screenWaveInBackground(wave: WaveRecord, full: boolean, autoPubli
     if (autoPublish && ready > 0) {
       try {
         const publication = await publishWave(wave);
-        const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}; ожидают мощность ${publication.waitingForPower ?? 0}.` : " Vehicle Power: сверка не завершилась, публикация заблокирована до наличия результата.";
-        await notify(`✅ Волна ${wave.wave_number}: скрининг завершён. Допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}. Автоматически опубликовано ${publication.publishedCount ?? 0} из ${publication.selected ?? ready}; ошибок публикации ${publication.failedCount ?? 0}.${powerMessage} Run: ${runId}`);
+        const powerConfidence = powerConfidenceSummary(powerResolution?.confidenceCounts);
+        const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}${powerConfidence ? `; уверенность: ${powerConfidence}` : ""}; ожидают мощность ${publication.waitingForPower ?? 0}.` : " Vehicle Power: сверка не завершилась, публикация заблокирована до наличия результата.";
+        await notify(`✅ Волна ${wave.wave_number}: скрининг завершён. Допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}. Автоматически опубликовано ${publication.publishedCount ?? 0} из ${publication.selected ?? ready}; ошибок публикации ${publication.failedCount ?? 0}. ${outcomeReasonSummary}.${powerMessage} Run: ${runId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await notify(`⚠️ Волна ${wave.wave_number} прошла screening (${ready} кандидатов готовы), но автопубликация не завершена: ${message.slice(0, 900)}. Следующие волны продолжаются; повторно Encar не запрашиваю. Run: ${runId}`);
       }
     } else {
-      const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}.` : " Vehicle Power: результат пока не получен.";
-      await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}.${powerMessage}${autoPublish ? " Автопубликация не нужна: допущенных карточек нет." : " Публикация для этого run выключена."} Run: ${runId}`);
+      const powerConfidence = powerConfidenceSummary(powerResolution?.confidenceCounts);
+      const powerMessage = powerResolution ? ` Vehicle Power: ${JSON.stringify(powerResolution.counts ?? {})}${powerConfidence ? `; уверенность: ${powerConfidence}` : ""}.` : " Vehicle Power: результат пока не получен.";
+      await notify(`✅ Скрининг волны ${wave.wave_number} завершён: допущено ${result.decisions?.approved ?? 0}, отклонено ${result.decisions?.rejected ?? 0}, изолировано ${result.decisions?.isolated ?? 0}; подготовлено к публикации ${ready}. ${outcomeReasonSummary}.${powerMessage}${autoPublish ? " Автопубликация не нужна: допущенных карточек нет." : " Публикация для этого run выключена."} Run: ${runId}`);
     }
     return true;
   } catch (error) {

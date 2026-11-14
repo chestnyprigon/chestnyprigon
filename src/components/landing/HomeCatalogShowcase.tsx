@@ -19,6 +19,7 @@ import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { formatPowerPs } from "@/lib/format/power";
 import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
+import { russiaPriceStateLabel } from "@/lib/pricing/russia-price-snapshot-state";
 
 const cardLimit = 12;
 const distance = new Intl.NumberFormat("ru-RU");
@@ -47,7 +48,7 @@ type ShowcaseSectionProps = {
 };
 
 function displayRussiaPrice(car: CatalogCar, currency: "USD" | "BYN" | "RUB" | "EUR") {
-  if (!car.russiaCalculation) return "Расчёт уточняется";
+  if (!car.russiaCalculation) return russiaPriceStateLabel(car.russiaPriceSnapshot?.status, false);
   return formatRussiaTotal(car.russiaCalculation, currency === "BYN" ? "RUB" : currency);
 }
 

@@ -344,7 +344,27 @@ function waveStateLabel(status: string) {
 
 async function publishedCountForRun(db: ReturnType<typeof database>, run: Run) {
   const publishedIds = new Set<string>();
+  const manifestPublishedIds = new Set<string>();
   const legacyBatchIds: string[] = [];
+  const manifests = await db.from("chestny_catalog_publication_manifests").select("id")
+    .eq("run_id", run.id).order("id");
+  if (manifests.error) throw new Error("Could not read publication manifests for report");
+  const manifestIds = (manifests.data ?? []).map((item) => String(item.id));
+  for (let group = 0; group < manifestIds.length; group += 100) {
+    const ids = manifestIds.slice(group, group + 100);
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await db.from("chestny_catalog_publication_manifest_items")
+        .select("canonical_id,status").in("manifest_id", ids).eq("status", "published")
+        .order("canonical_id").range(offset, offset + 999);
+      if (error) throw new Error("Could not reconcile published publication-manifest items");
+      for (const row of data ?? []) {
+        const id = String(row.canonical_id);
+        publishedIds.add(id);
+        manifestPublishedIds.add(id);
+      }
+      if (!data || data.length < 1_000) break;
+    }
+  }
   for (let offset = 0; ; offset += 1_000) {
     const { data, error } = await db.from("import_runs").select("id,cursor")
       .contains("cursor", { runId: run.id }).order("id").range(offset, offset + 999);
@@ -369,14 +389,17 @@ async function publishedCountForRun(db: ReturnType<typeof database>, run: Run) {
     }
   }
   let published = 0;
+  const publicIds = new Set<string>();
   const ids = [...publishedIds];
   for (let offset = 0; offset < ids.length; offset += 200) {
     const { data, error } = await db.from("vehicles")
       .select("source_listing_id,is_public").in("source_listing_id", ids.slice(offset, offset + 200));
     if (error) throw new Error("Could not reconcile published catalog vehicles");
-    published += (data ?? []).filter(vehicle => vehicle.is_public).length;
+    for (const vehicle of data ?? []) if (vehicle.is_public) publicIds.add(String(vehicle.source_listing_id));
   }
-  return published;
+  published = publicIds.size;
+  const manifestNotPublic = [...manifestPublishedIds].filter((id) => !publicIds.has(id)).length;
+  return { published, manifestPublished: manifestPublishedIds.size, manifestNotPublic };
 }
 
 async function reportCounts(db: ReturnType<typeof database>, run: Run, published: number) {
@@ -416,7 +439,73 @@ async function reportCounts(db: ReturnType<typeof database>, run: Run, published
     }
   }
 
-  return { ready, unavailable, missing, published, endpointOutcomes };
+  return { ready, unavailable, missing, stagingFound: succeededIds.length - missing, succeeded: succeededIds.length, published, endpointOutcomes };
+}
+
+async function powerReportCounts(db: ReturnType<typeof database>, runId: string) {
+  const statuses = new Map<string, number>();
+  const confidence = new Map<string, number>();
+  const reasons = new Map<string, number>();
+  for (let offset = 0; ; offset += 1_000) {
+    const { data, error } = await db.from("chestny_catalog_power_resolutions")
+      .select("status,reason_code,power_record").eq("run_id", runId)
+      .order("source_listing_id").range(offset, offset + 999);
+    if (error) throw new Error("Could not read Vehicle Power outcomes for catalog report");
+    for (const row of data ?? []) {
+      const status = String(row.status ?? "unknown");
+      statuses.set(status, (statuses.get(status) ?? 0) + 1);
+      if (status !== "resolved") reasons.set(String(row.reason_code ?? "reason_not_recorded"),
+        (reasons.get(String(row.reason_code ?? "reason_not_recorded")) ?? 0) + 1);
+      const record = row.power_record && typeof row.power_record === "object" ? row.power_record as Record<string, unknown> : {};
+      const resolutionClass = String(record.resolutionClass ?? "").toUpperCase();
+      if (status === "resolved") confidence.set(resolutionClass || "CLASS_NOT_RECORDED",
+        (confidence.get(resolutionClass || "CLASS_NOT_RECORDED") ?? 0) + 1);
+    }
+    if (!data || data.length < 1_000) break;
+  }
+  return { statuses, confidence, reasons };
+}
+
+async function publishedRussiaPriceCounts(db: ReturnType<typeof database>, runId: string) {
+  const manifestResult = await db.from("chestny_catalog_publication_manifests").select("id").eq("run_id", runId);
+  if (manifestResult.error) throw new Error("Could not read publication manifests for Russian price reconciliation");
+  const manifestIds = (manifestResult.data ?? []).map((row) => String(row.id));
+  const publishedVehicleIds = new Set<string>();
+  for (let group = 0; group < manifestIds.length; group += 100) {
+    const ids = manifestIds.slice(group, group + 100);
+    for (let offset = 0; ; offset += 1_000) {
+      const { data, error } = await db.from("chestny_catalog_publication_manifest_items")
+        .select("vehicle_id").in("manifest_id", ids).eq("status", "published")
+        .not("vehicle_id", "is", null).range(offset, offset + 999);
+      if (error) throw new Error("Could not read published vehicle IDs for Russian price reconciliation");
+      for (const row of data ?? []) if (row.vehicle_id) publishedVehicleIds.add(String(row.vehicle_id));
+      if (!data || data.length < 1_000) break;
+    }
+  }
+  const counts = new Map<string, number>();
+  const errorCodes = new Map<string, number>();
+  let found = 0;
+  const vehicleIds = [...publishedVehicleIds];
+  for (let group = 0; group < vehicleIds.length; group += 100) {
+    const ids = vehicleIds.slice(group, group + 100);
+    const { data, error } = await db.from("russia_price_snapshots")
+      .select("listing_id,status,last_error_code").eq("source", "korea").eq("destination", "RU").in("listing_id", ids);
+    if (error) throw new Error("Could not read Russian price snapshot states for published vehicles");
+    for (const row of data ?? []) {
+      found += 1;
+      const status = String(row.status ?? "unknown");
+      counts.set(status, (counts.get(status) ?? 0) + 1);
+      if (row.last_error_code) errorCodes.set(String(row.last_error_code), (errorCodes.get(String(row.last_error_code)) ?? 0) + 1);
+    }
+  }
+  counts.set("missing", Math.max(0, vehicleIds.length - found));
+  return { publishedVehicles: vehicleIds.length, counts, errorCodes };
+}
+
+function renderCounts(groups: Map<string, number>, labels: Record<string, string> = {}) {
+  if (!groups.size) return "нет записей";
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, count]) => `${escapeHtml(labels[key] ?? key)} ${count}`).join(" · ");
 }
 
 const reasonLabels: Record<string, string> = {
@@ -618,7 +707,8 @@ async function handleMessage(update: TelegramUpdate) {
         : "Run каталога пока не найден. Используй /catalog_start, чтобы создать цель полного поиска." });
     }
     const counts = await queueCounts(db, run.id);
-    const published = await publishedCountForRun(db, run);
+    const publicationReconciliation = await publishedCountForRun(db, run);
+    const published = publicationReconciliation.published;
     const decisions = await decisionCounts(db, run.id);
     const processed = counts.succeeded + counts.unavailable + counts.excluded + counts.failed + counts.cancelled;
     const { data: waves, error: wavesError } = await db.from("chestny_enrichment_waves")
@@ -646,11 +736,25 @@ async function handleMessage(update: TelegramUpdate) {
     const pause = run.pause_reason ? `\n\n⚠️ <b>Почему остановилось</b>\n${pauseReasonLabel(run.pause_reason)}` : "";
     if (command === "/catalog_report") {
       const reports = await reportCounts(db, run, published);
-      const [queueReasons, screeningReasons] = await Promise.all([
+      const [queueReasons, screeningReasons, power, russianPrices] = await Promise.all([
         queueOutcomeReasons(db, run.id), screeningOutcomeReasons(db, run.id),
+        run.rules?.powerGate === "vehicle_power_required" ? powerReportCounts(db, run.id) : Promise.resolve(null),
+        publishedRussiaPriceCounts(db, run.id),
       ]);
+      const powerLabels: Record<string, string> = {
+        CONFIRMED: "подтверждённая", PROBABLE: "вероятная", ESTIMATED: "оценочная",
+        INSUFFICIENT_DATA: "данных недостаточно", CLASS_NOT_RECORDED: "класс не записан",
+      };
+      const priceLabels: Record<string, string> = { ready: "готово", pending: "в очереди", stale: "устарело/обновляется", failed: "ошибка", missing: "нет записи" };
+      const priceErrorSummary = russianPrices.errorCodes.size
+        ? `; причины: ${renderCounts(russianPrices.errorCodes)}` : "";
+      const powerSummary = power
+        ? `\n<b>Vehicle Power</b>: ${renderCounts(power.statuses)}\nКачество найденной мощности: ${renderCounts(power.confidence, powerLabels)}\nПричины неразрешённых: ${renderReasonGroups(power.reasons)}`
+        : "";
+      const priceSummary = `\n<b>Расчёт РФ по опубликованным карточкам</b> (${russianPrices.publishedVehicles}): ${renderCounts(russianPrices.counts, priceLabels)}${priceErrorSummary}`;
+      const integritySummary = `\n<b>Целостность данных</b>: успешных строк очереди ${reports.succeeded}, staging найдено ${reports.stagingFound}, расхождений ${reports.missing}; manifest published ${publicationReconciliation.manifestPublished}, не подтверждены в public-каталоге ${publicationReconciliation.manifestNotPublic}`;
       return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML",
-        text: `🧾 <b>Отчёт по каталогу</b>\n\n<b>Run:</b> <code>${escapeHtml(run.id)}</code>\n<b>Состояние:</b> ${escapeHtml(runStateLabel(run.status))}\n<b>Транспорт:</b> ${transport}\n\nПричины считаются по карточкам; одна карточка может иметь несколько кодов.\n\n<b>Итоги очереди</b>\nТехнические ошибки (${[...queueReasons.failed.values()].reduce((sum, value) => sum + value, 0)}): ${renderReasonGroups(queueReasons.failed)}\nИсключено из обогащения: совпадения ID/дубли (${queueReasons.identityExcluded}): ${renderReasonGroups(queueReasons.identityReasons)}\nОбъявление недоступно в источнике (${counts.unavailable}): ${renderReasonGroups(queueReasons.unavailable)}\n\n<b>Причины screening</b>\nОтклонено (${decisions.rejected}): ${renderReasonGroups(screeningReasons.rejected)}\nИзолировано (${decisions.isolated}): ${renderReasonGroups(screeningReasons.isolated)}\n\n<b>Обработано:</b> ${processed}/${run.candidate_count}; обогащено ${counts.succeeded}; отменено ${counts.cancelled}; ждут ${counts.queued}; в работе ${counts.leased}\n${escapeHtml(waveSummary)}\n\n<b>Дополнительные данные Encar:</b> готовы ${reports.ready}; недоступны ${reports.unavailable}; записи не найдены ${reports.missing}\nПричины отсутствия: ${renderEndpointOutcomes(reports.endpointOutcomes)}\n<b>Опубликовано из партий этого run:</b> ${reports.published}\n<b>Публикация:</b> ${publicationState(goal, run)}${pause}` });
+        text: `🧾 <b>Отчёт по каталогу</b>\nRun: <code>${escapeHtml(run.id)}</code> · ${escapeHtml(runStateLabel(run.status))} · ${transport}\nОбработано ${processed}/${run.candidate_count}; успешно ${counts.succeeded}; недоступно ${counts.unavailable}; ошибки ${counts.failed}; дубли/конфликты ${queueReasons.identityExcluded}; отменено ${counts.cancelled}\n${escapeHtml(waveSummary)}\n\n<b>Причины технических ошибок</b>: ${renderReasonGroups(queueReasons.failed)}\n<b>Недоступность источника</b>: ${renderReasonGroups(queueReasons.unavailable)}\n<b>Screening — отклонено</b>: ${renderReasonGroups(screeningReasons.rejected)}\n<b>Screening — изолировано</b>: ${renderReasonGroups(screeningReasons.isolated)}${powerSummary}\n\n<b>Encar отчёты</b>: готовы ${reports.ready}; недоступны ${reports.unavailable}; не найдены ${reports.missing}. ${renderEndpointOutcomes(reports.endpointOutcomes)}${integritySummary}\n<b>Публикация этого run</b>: ${reports.published} карточек. ${publicationState(goal, run)}${priceSummary}${pause}` });
     }
     const wave = Number(goal?.progress?.waveNumber ?? 0);
     const stage = goalStageLabel(goal?.progress?.stage);
@@ -678,10 +782,10 @@ async function handleMessage(update: TelegramUpdate) {
       approvedIds.push(...(result.data ?? []).map((row) => String(row.source_listing_id)));
       if (!result.data || result.data.length < 1_000) break;
     }
-    const powerRows: Array<{ source_listing_id: string; status: string; reason_code: string; reason_detail: string | null }> = [];
+    const powerRows: Array<{ source_listing_id: string; status: string; reason_code: string; reason_detail: string | null; power_record: unknown }> = [];
     for (let from = 0; ; from += 1_000) {
       const result = await db.from("chestny_catalog_power_resolutions")
-        .select("source_listing_id,status,reason_code,reason_detail")
+        .select("source_listing_id,status,reason_code,reason_detail,power_record")
         .eq("run_id", run.id).order("source_listing_id").range(from, from + 999);
       if (result.error) throw new Error("Could not read Vehicle Power results; check that the power-gate migration is applied");
       powerRows.push(...(result.data ?? []));
@@ -694,9 +798,16 @@ async function handleMessage(update: TelegramUpdate) {
     const unresolved = [...powerRows.filter((row) => approvedSet.has(row.source_listing_id) && row.status !== "resolved"), ...missing]
       .sort((a, b) => a.source_listing_id.localeCompare(b.source_listing_id));
     const counts: Record<string, number> = {};
+    const confidenceCounts = new Map<string, number>();
     for (const id of approvedIds) {
       const status = byId.get(id)?.status ?? "not_requested";
       counts[status] = (counts[status] ?? 0) + 1;
+      if (status === "resolved") {
+        const record = byId.get(id)?.power_record && typeof byId.get(id)?.power_record === "object"
+          ? byId.get(id)!.power_record as Record<string, unknown> : {};
+        const confidence = String(record.resolutionClass ?? "CLASS_NOT_RECORDED").toUpperCase();
+        confidenceCounts.set(confidence, (confidenceCounts.get(confidence) ?? 0) + 1);
+      }
     }
     const pageSize = 12;
     const totalPages = Math.max(1, Math.ceil(unresolved.length / pageSize));
@@ -712,7 +823,7 @@ async function handleMessage(update: TelegramUpdate) {
       return `• <a href="${escapeHtml(url)}">${escapeHtml(row.source_listing_id)}</a> — ${escapeHtml(row.status)}: ${reason}`;
     });
     return apiResponse("sendMessage", { chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
-      text: `⚡ <b>Мощность Vehicle Power</b>\nRun: <code>${escapeHtml(run.id)}</code>\nДопущено screening: ${approvedIds.length}\nНайдена подходящая мощность: ${counts.resolved ?? 0}\nОжидают/не готовы к публикации: ${unresolved.length}\nПричины: ${Object.entries(counts).filter(([status]) => status !== "resolved").map(([status, count]) => `${escapeHtml(status)} ${count}`).join(" · ") || "нет"}\nСписок ${safePage}/${totalPages}:\n${items.join("\n") || "Список пуст."}${unresolved.length > pageSize ? `\nСледующая страница: /catalog_power ${Math.min(safePage + 1, totalPages)}` : ""}\n\nМощность из Encar не запрашивается; публикация без результата Vehicle Power закрыта.` });
+      text: `⚡ <b>Мощность Vehicle Power</b>\nRun: <code>${escapeHtml(run.id)}</code>\nДопущено screening: ${approvedIds.length}\nПодходящая мощность: ${counts.resolved ?? 0} (${renderCounts(confidenceCounts, { CONFIRMED: "подтверждённая", PROBABLE: "вероятная", ESTIMATED: "оценочная", INSUFFICIENT_DATA: "данных недостаточно", CLASS_NOT_RECORDED: "класс не записан" })})\nОжидают/не готовы к публикации: ${unresolved.length}\nПричины: ${Object.entries(counts).filter(([status]) => status !== "resolved").map(([status, count]) => `${escapeHtml(status)} ${count}`).join(" · ") || "нет"}\nСписок ${safePage}/${totalPages}:\n${items.join("\n") || "Список пуст."}${unresolved.length > pageSize ? `\nСледующая страница: /catalog_power ${Math.min(safePage + 1, totalPages)}` : ""}\n\nМощность из Encar не запрашивается; публикация без результата Vehicle Power закрыта.` });
   }
 
   if (command === "/catalog_plan") {
@@ -780,7 +891,7 @@ async function handleMessage(update: TelegramUpdate) {
     if (run?.rules?.publication === "auto_after_screening" && run.rules.publicationAuthorized === true) {
       const published = await publishedCountForRun(db, run);
       return apiResponse("sendMessage", { chat_id: chatId,
-        text: `${publicationState(goal, run)}\nНа текущий момент опубликовано ${published} карточек. Отдельное подтверждение этой команды не запускает повторную публикацию.${run ? `\nRun: ${run.id} (${run.status}).` : ""}` });
+        text: `${publicationState(goal, run)}\nНа текущий момент публичны ${published.published} карточек. По манифестам отмечено опубликованными ${published.manifestPublished}; расхождений с публичным каталогом ${published.manifestNotPublic}. Отдельное подтверждение этой команды не запускает повторную публикацию.${run ? `\nRun: ${run.id} (${run.status}).` : ""}` });
     }
     if (run?.status === "completed" && goal && Number(goal.progress?.waveNumber ?? 1) >= 1) {
       const { count, error } = await db.from("chestny_catalog_decisions").select("source_listing_id", { count: "exact", head: true })

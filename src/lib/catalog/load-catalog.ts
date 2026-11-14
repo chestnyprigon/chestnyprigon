@@ -10,7 +10,7 @@ import { createSupabasePublicServerClient } from "@/lib/supabase/public-client";
 import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
-import { loadRussiaPriceSnapshots } from "@/lib/pricing/russia-price-snapshots";
+import { loadRussiaPriceSnapshotDetails } from "@/lib/pricing/russia-price-snapshots";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -603,10 +603,11 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}, destination: 
   const [pricingContext, publicBrandOptions] = await Promise.all([pricingContextPromise, publicBrandsPromise]);
   const pageCars = mapVehicleRows((vehicles ?? []) as VehicleRow[], imagesByVehicle, reportsByVehicle, pricingContext);
   if (destination === "ru") {
-    const stored = await loadRussiaPriceSnapshots("korea", pageCars.map((car) => car.id));
+    const stored = await loadRussiaPriceSnapshotDetails("korea", pageCars.map((car) => car.id));
     for (let index = 0; index < pageCars.length; index += 1) {
       const car = pageCars[index]!;
-      pageCars[index] = { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
+      pageCars[index] = { ...car, russiaCalculation: stored.calculations.get(car.id) ?? null,
+        russiaPriceSnapshot: stored.states.get(car.id) ?? null, destination: "RU" };
     }
   }
   return {
@@ -779,6 +780,7 @@ export async function loadCatalogCar(
   const reportsByVehicle = new Map(data.report ? [[data.vehicle.id, data.report]] : []);
   const car = mapVehicleRows([data.vehicle], imagesByVehicle, reportsByVehicle, pricingContext)[0] ?? null;
   if (!car || destination !== "ru") return car;
-  const stored = await loadRussiaPriceSnapshots("korea", [car.id]);
-  return { ...car, russiaCalculation: stored.get(car.id) ?? null, destination: "RU" };
+  const stored = await loadRussiaPriceSnapshotDetails("korea", [car.id]);
+  return { ...car, russiaCalculation: stored.calculations.get(car.id) ?? null,
+    russiaPriceSnapshot: stored.states.get(car.id) ?? null, destination: "RU" };
 }

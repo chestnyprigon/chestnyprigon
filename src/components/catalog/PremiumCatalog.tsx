@@ -35,6 +35,7 @@ import { formatCatalogPower } from "@/lib/catalog/display-power";
 import { vehicleDisplayName } from "@/lib/mobile-de/models";
 import { InfoTooltip } from "@/components/mobile-de/InfoTooltip";
 import { formatRussiaTotal } from "@/lib/pricing/russia-pricing";
+import { russiaPriceStateLabel } from "@/lib/pricing/russia-price-snapshot-state";
 
 const fuels: Array<"Все" | CarFuel> = ["Все", "Бензин", "Дизель", "Гибрид", "Газ"];
 const transmissions = ["Все", "Автомат", "Механика", "Вариатор"] as const;
@@ -69,7 +70,7 @@ function historyText(car: CatalogCar) {
 
 function catalogPrice(car: CatalogCar, destination: "BY" | "RU", currency: "USD" | "BYN" | "RUB" | "EUR") {
   if (destination === "RU") {
-    if (!car.russiaCalculation) return "Расчёт уточняется";
+    if (!car.russiaCalculation) return russiaPriceStateLabel(car.russiaPriceSnapshot?.status, false);
     return formatRussiaTotal(car.russiaCalculation, currency === "BYN" ? "RUB" : currency);
   }
   return car.calculation.calculationAvailable ? formatBelarusCurrencyPair(car.price, car.calculation.rates, currency === "BYN" ? "BYN" : "USD") : "Расчёт уточняется";
