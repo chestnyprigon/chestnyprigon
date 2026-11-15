@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { config } from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { screenStaging } from "../encar/staging-gate";
@@ -42,6 +43,18 @@ function chunks<T>(items: T[], size: number) {
   const result: T[][] = [];
   for (let offset = 0; offset < items.length; offset += size) result.push(items.slice(offset, offset + size));
   return result;
+}
+
+function kickRussiaPriceRefresh() {
+  if (process.platform !== "darwin") return "hourly_fallback_non_macos";
+  const uid = process.getuid?.();
+  if (uid === undefined) return "hourly_fallback_missing_uid";
+  const result = spawnSync("/bin/launchctl", ["kickstart", `gui/${uid}/com.chestnyprigon.russia-price-refresh`], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    console.error(`Could not kick Russian price refresh; hourly fallback remains enabled (${result.error?.message ?? result.stderr.trim() ?? `exit ${result.status}`})`);
+    return "hourly_fallback_kick_failed";
+  }
+  return "started_on_demand";
 }
 
 async function main() {
@@ -481,9 +494,10 @@ async function main() {
       });
       if (statusUpdate.error) throw new Error(`Could not pause incomplete publication manifest: ${statusUpdate.error.message}`);
     }
+    const russianPriceRefresh = publishedCount > 0 ? kickRussiaPriceRefresh() : "not_needed_no_new_publications";
     console.log(JSON.stringify({ ...preview, publicationManifestId,
       publicationManifestStatus: unfinished === 0 ? "completed" : "paused",
-      publicationExecuted: true, publishedCount, failedCount, unfinished }));
+      publicationExecuted: true, publishedCount, failedCount, unfinished, russianPriceRefresh }));
     if (unfinished) process.exitCode = 1;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

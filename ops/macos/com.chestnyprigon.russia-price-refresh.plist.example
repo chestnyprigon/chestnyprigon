@@ -13,8 +13,8 @@
   <string>/Users/koredigital/Developer/chestny-prigon</string>
   <key>RunAtLoad</key>
   <true/>
-  <key>KeepAlive</key>
-  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
