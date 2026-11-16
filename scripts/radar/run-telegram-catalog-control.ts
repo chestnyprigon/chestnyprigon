@@ -346,7 +346,8 @@ async function searchNextWave(launchId?: string) {
     });
   });
   try {
-    return JSON.parse(output.trim()) as { mode: string; runId?: string; queued?: number; pages?: Array<{ manufacturer: string; newCandidates: number }>; noSearchableBrands?: boolean };
+    return JSON.parse(output.trim()) as { mode: string; runId?: string; queued?: number; candidatePoolTarget?: number | null;
+      candidatesFound?: number; targetReached?: boolean; pages?: Array<{ manufacturer: string; newCandidates: number }>; noSearchableBrands?: boolean };
   } catch {
     throw new Error(`Quota search did not return a summary: ${output.trim()}`);
   }
@@ -408,10 +409,10 @@ async function planBalancedWaves(runId: string) {
 async function startInitialWave(task: { id: string; parameters: Record<string, unknown> }) {
   const launchId = String(task.parameters.launchId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(launchId)) throw new Error("Pilot task has an invalid catalog launch id");
-  await sendTelegram(Number(ownerId), "Цель принята. Начинаю последовательный поиск всех подходящих объявлений по маркам; доли марок служат ориентиром разнообразия. После поиска сохраню равномерные волны, затем обогащение, screening и разрешённую run автопубликацию после gate. Прежние запуски не меняю.").catch(() => undefined);
+  await sendTelegram(Number(ownerId), "Цель принята. Начинаю последовательный поиск по сохранённому лимиту пула; доли марок служат ориентиром разнообразия. После поиска сохраню равномерные волны, затем обогащение, screening и разрешённую run автопубликацию после gate. Прежние запуски не меняю.").catch(() => undefined);
   const search = await searchNextWave(launchId);
   if (!search.runId) {
-    const summary = "Поиск завершён: новых подходящих объявлений в доступной выдаче не найдено. Сохранённые позиции марок сохранены.";
+    const summary = `Поиск завершён: новых подходящих объявлений в сохранённом пуле ${search.candidatePoolTarget ?? "без лимита"} не найдено. Сохранённые позиции марок сохранены.`;
     await sendTelegram(Number(ownerId), summary).catch(() => undefined);
     return { runId: null, queued: 0, summary };
   }
@@ -424,7 +425,7 @@ async function startInitialWave(task: { id: string; parameters: Record<string, u
     if (runError) throw new Error(`Could not inspect the discovered pilot run: ${runError.message}`);
     if (discoveredRun.status === "approved") {
       await setRunStatus(search.runId, "completed", ["approved"]);
-      const summary = "Поиск завершён: новых кандидатов нет. Offset и статусы марок сохранены; публикация не выполнялась.";
+      const summary = `Поиск завершён: новых кандидатов для пула ${search.candidatePoolTarget ?? "без лимита"} нет. Offset и статусы марок сохранены; публикация не выполнялась.`;
       await sendTelegram(Number(ownerId), summary).catch(() => undefined);
       return { runId: null, queued: 0, summary };
     }
@@ -432,9 +433,9 @@ async function startInitialWave(task: { id: string; parameters: Record<string, u
   }
   await planBalancedWaves(search.runId);
   const preflight = await startPreparedRun({ id: task.id, telegram_user_id: Number(ownerId), telegram_chat_id: Number(ownerId), command: "start", run_id: search.runId, max_items: 500 });
-  await sendTelegram(Number(ownerId), `Запуск начат: поиск нашёл ${queued} подходящих кандидатов и сохранил равномерный план волн. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Обогащение и screening идут по очереди; для этого нового run публикация разрешена автоматически только карточкам, прошедшим gate каждой волны.`).catch(() => undefined);
+  await sendTelegram(Number(ownerId), `Запуск начат: поиск нашёл ${queued} кандидатов из пула ${search.candidatePoolTarget ?? "без лимита"}${search.targetReached === false ? " (источник исчерпан до достижения цели)" : ""} и сохранил равномерный план волн. Предстартовая проверка пройдена: ${preflight.transport === "direct_home_network" ? "домашняя сеть, без прокси" : "Decodo proxy"}; запросов Encar при проверке не было. Обогащение и screening идут по очереди; публикация разрешена автоматически только карточкам, прошедшим gate каждой волны.`).catch(() => undefined);
   return { runId: search.runId, queued,
-    summary: `Поиск завершён: ${queued} кандидатов в run ${search.runId}. Worker обрабатывает сохранённые равномерные волны; screening и автопубликация после gate выполняются по каждой волне.` };
+    summary: `Поиск завершён: ${queued} кандидатов из пула ${search.candidatePoolTarget ?? "без лимита"} в run ${search.runId}. Worker обрабатывает сохранённые равномерные волны; screening и автопубликация после gate выполняются по каждой волне.` };
 }
 
 async function processCommand(command: Command) {

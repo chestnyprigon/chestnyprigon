@@ -59,21 +59,19 @@ async function existingIdentifiers(client: SupabaseClient, ids: string[]) {
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  const publicationMode = process.argv.find((arg) => arg.startsWith("--publication="))?.slice("--publication=".length)
-    ?? "auto_after_screening";
-  if (!(publicationMode === "disabled" || publicationMode === "auto_after_screening")) {
+  const publicationArgument = process.argv.find((arg) => arg.startsWith("--publication="))?.slice("--publication=".length);
+  if (publicationArgument !== undefined && !(publicationArgument === "disabled" || publicationArgument === "auto_after_screening")) {
     throw new Error("--publication must be disabled or auto_after_screening");
   }
   const pageSize = numberArgument("page-size", 100, 20, 200);
   const targetArgument = process.argv.find((arg) => arg.startsWith("--candidate-pool-target="))
     ?.slice("--candidate-pool-target=".length);
-  const candidatePoolTarget = targetArgument === undefined ? null : Number(targetArgument);
-  if (candidatePoolTarget !== null && (!Number.isInteger(candidatePoolTarget) || candidatePoolTarget < 1 || candidatePoolTarget > 100_000)) {
+  const explicitCandidatePoolTarget = targetArgument === undefined ? undefined : Number(targetArgument);
+  if (explicitCandidatePoolTarget !== undefined && (!Number.isInteger(explicitCandidatePoolTarget) || explicitCandidatePoolTarget < 1 || explicitCandidatePoolTarget > 100_000)) {
     throw new Error("--candidate-pool-target must be 1..100000");
   }
-  // Scan each configured brand to source exhaustion. Brand targets only
-  // influence diversity; an explicit candidate target is available for a
-  // bounded discovery cohort and is filled round-robin across brands.
+  // Brand targets guide diversity. A pool target may be saved on the launch
+  // or explicitly supplied, and is filled round-robin across brands.
   if (process.argv.some((arg) => arg.startsWith("--pilot-candidates=") || arg.startsWith("--max-pages-per-brand="))) {
     throw new Error("Pilot and per-brand page caps are unsupported; use --candidate-pool-target for a balanced cohort");
   }
@@ -91,6 +89,19 @@ async function main() {
   }
   if (!(["prepared", "running"] as string[]).includes(launch.status)) throw new Error(`Launch status is ${launch.status}`);
 
+  const configuredTargetValue = asRecord(launch.rules).candidatePoolTarget;
+  const configuredTarget = configuredTargetValue === undefined || configuredTargetValue === null ? null : Number(configuredTargetValue);
+  if (configuredTarget !== null && (!Number.isInteger(configuredTarget) || configuredTarget < 1 || configuredTarget > 100_000)) {
+    throw new Error("Launch candidatePoolTarget must be an integer from 1 to 100000");
+  }
+  if (explicitCandidatePoolTarget !== undefined && configuredTarget !== null && explicitCandidatePoolTarget !== configuredTarget) {
+    throw new Error(`Search target ${explicitCandidatePoolTarget} does not match launch target ${configuredTarget}`);
+  }
+  const candidatePoolTarget = explicitCandidatePoolTarget ?? configuredTarget;
+  const publicationMode = publicationArgument ?? String(asRecord(launch.rules).publication ?? "auto_after_screening");
+  if (!(publicationMode === "disabled" || publicationMode === "auto_after_screening")) {
+    throw new Error("Launch publication must be disabled or auto_after_screening");
+  }
   const { data: rows, error } = await client.from("chestny_catalog_brand_search_status")
     .select("manufacturer,target,published_count,search_offset,scanned_count,candidate_count,processed_candidates,conversion_rate,status,last_error,run_id")
     .eq("launch_id", launch.id).order("manufacturer");

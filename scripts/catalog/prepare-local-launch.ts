@@ -12,12 +12,20 @@ async function main() {
   const nameArgument = process.argv.find((arg) => arg.startsWith("--name="))?.slice("--name=".length);
   const name = nameArgument?.trim() || `local-catalog-power-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
   if (!/^[a-z0-9][a-z0-9-]{5,79}$/.test(name)) throw Error("Launch name must use 6–80 lowercase letters, digits, and hyphens");
+  const candidateTargetArgument = process.argv.find((arg) => arg.startsWith("--candidate-pool-target="))?.slice("--candidate-pool-target=".length);
+  const candidatePoolTarget = candidateTargetArgument === undefined ? null : Number(candidateTargetArgument);
+  if (candidatePoolTarget !== null && (!Number.isInteger(candidatePoolTarget) || candidatePoolTarget < 1 || candidatePoolTarget > 100_000)) {
+    throw Error("--candidate-pool-target must be 1..100000");
+  }
+  const publication = process.argv.find((arg) => arg.startsWith("--publication="))?.slice("--publication=".length) || "auto_after_screening";
+  if (publication !== "disabled" && publication !== "auto_after_screening") throw Error("--publication must be disabled or auto_after_screening");
   let launch=await db.from("chestny_catalog_launches").select("*").eq("name",name).maybeSingle();
   if (launch.error) throw Error(launch.error.message);
   if (process.argv.includes("--apply")) {
     if (launch.data?.status !== "capturing") {
       const prepared=await db.rpc("prepare_chestny_catalog_launch",{p_name:name,p_quotas:APPROVED_BRAND_MIX_WEIGHTS,
-        p_rules:{...CATALOG_POLICY,powerGate:"vehicle_power_required",powerSource:"vehicle_power_only"}});
+        p_rules:{...CATALOG_POLICY,powerGate:"vehicle_power_required",powerSource:"vehicle_power_only",
+          candidatePoolTarget,publication}});
       if (prepared.error) throw Error(prepared.error.message);
       launch=await db.from("chestny_catalog_launches").select("*").eq("id",prepared.data).single();
       if (launch.error) throw Error(launch.error.message);
@@ -27,6 +35,13 @@ async function main() {
   if (launch.data.status !== "capturing"
     && (launch.data.rules?.powerGate !== "vehicle_power_required" || launch.data.rules?.powerSource !== "vehicle_power_only")) {
     throw Error(`Launch ${name} predates the Vehicle Power-only gate; prepare a new launch with a unique --name instead of reusing it`);
+  }
+  if (launch.data.status !== "capturing"
+    && (launch.data.rules?.candidatePoolTarget ?? null) !== candidatePoolTarget) {
+    throw Error(`Launch ${name} has a different candidate pool target; prepare a new launch with a unique --name`);
+  }
+  if (launch.data.status !== "capturing" && (launch.data.rules?.publication ?? "auto_after_screening") !== publication) {
+    throw Error(`Launch ${name} has a different publication mode; prepare a new launch with a unique --name`);
   }
   if (launch.data.status === "capturing" && process.argv.includes("--apply")) {
     let inserted = 0;

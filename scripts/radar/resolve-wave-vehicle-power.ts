@@ -127,7 +127,10 @@ async function main() {
       try {
         const response = await fetch(`${BASE}/v1/power/resolve`, {
           method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(input), cache: "no-store", signal: AbortSignal.timeout(20_000),
+          // The Encar run only consults the approved Vehicle Power catalog.
+          // Research of missing configurations is a separate, user-directed task;
+          // do not enqueue background research while a catalog wave is running.
+          body: JSON.stringify({ ...input, researchMode: "catalog_only" }), cache: "no-store", signal: AbortSignal.timeout(20_000),
         });
         if (!response.ok) throw new Error(`Vehicle Power returned HTTP ${response.status}`);
         responseBody = record(await response.json());
