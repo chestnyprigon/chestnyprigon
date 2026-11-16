@@ -16,7 +16,7 @@
 
 Для однократного заполнения старых снимков доступна команда `npm run pricing:backfill-russia-power -- --apply`. Она переносит уже сохранённую мощность из расчётов в `power_resolution`, сверяет текущие входные данные объявления и `revision`, не пересчитывает цену и не вызывает Vehicle Power/TKS. Без `--apply` команда работает как dry-run и выводит только число подходящих строк.
 
-Systemd примеры: `ops/russia-price-refresh.service.example`, `ops/russia-price-refresh.timer.example`, `ops/russia-price-refresh.env.example`. Таймер запускает задачу каждые пять минут; systemd не запускает второй экземпляр того же oneshot-сервиса, пока первый ещё работает. На Mac mini LaunchAgent-loop берёт следующую партию через две минуты после завершения предыдущей.
+Systemd примеры: `ops/russia-price-refresh.service.example`, `ops/russia-price-refresh.timer.example`, `ops/russia-price-refresh.env.example`. Таймер запускает задачу каждые пять минут; systemd не запускает второй экземпляр того же oneshot-сервиса, пока первый ещё работает. На Mac mini LaunchAgent запускает цикл каждые пять минут. Перед включением LaunchAgent credentials хранятся в `~/.config/chestny-prigon/russia-price-refresh.env` с правами `600`; скрипт загружает его сам при каждом запуске. В лог пишется только краткое JSON-состояние без вывода stdout/stderr процесса с возможными чувствительными данными.
 
 ## Безопасный rollout
 

@@ -25,12 +25,18 @@ function positiveNumber(value: unknown) {
 }
 
 function safeErrorCode(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
+  const candidate = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown } | null;
+  const message = [candidate?.message, candidate?.details, candidate?.hint].filter((value): value is string => typeof value === "string").join(" ");
+  const pgCode = typeof candidate?.code === "string" ? candidate.code : "";
   if (/\b401\b|\b403\b/.test(message)) return "UPSTREAM_AUTH";
   if (/\b429\b/.test(message)) return "UPSTREAM_RATE_LIMIT";
   if (/timeout|timed out|abort/i.test(message)) return "UPSTREAM_TIMEOUT";
   if (/not configured/i.test(message)) return "UPSTREAM_NOT_CONFIGURED";
   if (/response did not match/i.test(message)) return "UPSTREAM_INVALID_RESPONSE";
+  if (/permission denied|row-level security/i.test(message) || pgCode === "42501") return "DATABASE_PERMISSION";
+  if (/does not exist|schema cache/i.test(message) || pgCode === "42P01" || pgCode === "PGRST205") return "DATABASE_SCHEMA";
+  if (/JWT|invalid API key/i.test(message) || pgCode === "PGRST301") return "DATABASE_AUTH";
+  if (/statement timeout|canceling statement|timeout/i.test(message) || pgCode === "57014") return "DATABASE_TIMEOUT";
   return "CALCULATION_FAILED";
 }
 
@@ -88,7 +94,7 @@ async function main() {
     .order("next_refresh_at", { ascending: true })
     .order("listing_id", { ascending: true })
     .limit(batchSize);
-  if (dueError) throw new Error("Could not read due Russian price snapshots");
+  if (dueError) throw new Error(`Could not read due Russian price snapshots (${safeErrorCode(dueError)})`);
   const due = (dueRows ?? []) as DueSnapshot[];
   if (!due.length) {
     console.log(JSON.stringify({ processed: 0, ready: 0, failed: 0, batchSize }));
