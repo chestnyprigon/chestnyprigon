@@ -10,7 +10,7 @@ import type { Database } from "../../src/lib/supabase/database.types";
 loadEnvironment({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 
 type Source = "korea" | "europe";
-type DueSnapshot = { source: Source; listing_id: string; calculation: unknown; power_resolution: unknown; revision: number };
+type DueSnapshot = { source: Source; listing_id: string; calculation: unknown; power_resolution: unknown; revision: number; next_refresh_at: string };
 let phase = "startup";
 
 function required(name: string) {
@@ -87,15 +87,19 @@ async function main() {
   });
   const now = new Date();
   phase = "read-queue";
-  const { data: dueRows, error: dueError } = await client.from("russia_price_snapshots")
-    .select("source,listing_id,calculation,power_resolution,revision")
-    .in("status", ["pending", "failed", "stale"])
-    .lte("next_refresh_at", now.toISOString())
-    .order("next_refresh_at", { ascending: true })
-    .order("listing_id", { ascending: true })
-    .limit(batchSize);
-  if (dueError) throw new Error(`Could not read due Russian price snapshots (${safeErrorCode(dueError)})`);
-  const due = (dueRows ?? []) as DueSnapshot[];
+  const dueByStatus = await Promise.all((['pending', 'failed', 'stale'] as const).map(async (status) => {
+    const { data, error } = await client.from("russia_price_snapshots")
+      .select("source,listing_id,calculation,power_resolution,revision,next_refresh_at")
+      .eq("status", status)
+      .lte("next_refresh_at", now.toISOString())
+      .order("next_refresh_at", { ascending: true })
+      .order("listing_id", { ascending: true })
+      .limit(batchSize);
+    if (error) throw new Error(`Could not read ${status} Russian price snapshots (${safeErrorCode(error)})`);
+    return data ?? [];
+  }));
+  const due = dueByStatus.flat().sort((a, b) => a.next_refresh_at.localeCompare(b.next_refresh_at)
+    || a.listing_id.localeCompare(b.listing_id)).slice(0, batchSize) as DueSnapshot[];
   if (!due.length) {
     console.log(JSON.stringify({ processed: 0, ready: 0, failed: 0, batchSize }));
     return;
