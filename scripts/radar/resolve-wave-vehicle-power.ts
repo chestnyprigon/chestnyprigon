@@ -22,7 +22,8 @@ function record(value: unknown): Record<string, unknown> {
 function powertrainFor(fuel: string, hybrid: boolean, typeHint = "") {
   const value = `${fuel} ${typeHint}`.toLowerCase();
   if (hybrid || /hybrid|hev|phev|하이브리드|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(value)) {
-    if (/phev|plug[ -]?in|플러그인|(?:^|[^\p{L}\p{N}])e[ -]?(?:hybrid|하이브리드)(?:$|[^\p{L}\p{N}])/u.test(value)) return "hybrid_phev";
+    if (/phev|plug[ -]?in|플러그인|(?:^|[^\p{L}\p{N}])e[ -]?(?:hybrid|하이브리드)(?:$|[^\p{L}\p{N}])/u.test(value)
+        || /volvo.{0,16}\bt8\b/u.test(value)) return "hybrid_phev";
     if (/series|sequential|range[ -]?extender|직렬/u.test(value)) return "hybrid_sequential";
     return "hybrid_parallel";
   }
@@ -112,7 +113,7 @@ async function main() {
         powertrain: powertrainFor(
           normalized.fuelType,
           item.screened.screening.isHybrid,
-          `${String(record(item.row.candidate_snapshot).EvType ?? "")} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`,
+          `${normalized.manufacturer} ${String(record(item.row.candidate_snapshot).EvType ?? "")} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`,
         ),
         correlation: { source: "encar", sourceListingId: id },
       };
