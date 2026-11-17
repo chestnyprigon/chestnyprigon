@@ -11,6 +11,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalogYearTo } from "@/lib/catalog/catalog-rules";
 import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
 import { loadRussiaPriceSnapshotDetails } from "@/lib/pricing/russia-price-snapshots";
+import { driveLabel, exteriorColorLabel } from "@/lib/catalog/vehicle-attributes";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -117,24 +118,8 @@ const ENCAR_BODY_TYPES: Record<string, string[]> = {
   "Седан": ["준중형차", "중형차", "대형차"],
 };
 
-function driveName(value: string | null) {
-  return normalizedValue(value, [["전륜", "Передний"], ["후륜", "Задний"], ["4륜", "Полный"], ["2륜", "2WD"], ["구동", " привод"], ["4WD", "Полный"]], "Не указан");
-}
-
-function resolvedDrive(value: string | null, trim: string | null) {
-  const source = `${value ?? ""} ${trim ?? ""}`.toUpperCase();
-  if (source.includes("AWD") || source.includes("4WD") || source.includes("4륜")) return "Полный";
-  if (source.includes("FWD") || source.includes("전륜")) return "Передний";
-  if (source.includes("RWD") || source.includes("후륜")) return "Задний";
-  return driveName(value) ?? "Не указан";
-}
-
 function transmissionName(value: string | null) {
   return normalizedValue(value, [["오토", "Автомат"], ["자동", "Автомат"], ["수동", "Механика"], ["무단", "Вариатор"]], "Не указана");
-}
-
-function colorName(value: string | null) {
-  return normalizedValue(value, [["검정색", "Чёрный"], ["검정", "Чёрный"], ["블랙", "Чёрный"], ["흰색", "Белый"], ["흰", "Белый"], ["화이트", "Белый"], ["회색", "Серый"], ["그레이", "Серый"], ["은색", "Серебристый"], ["실버", "Серебристый"], ["파란색", "Синий"], ["파랑", "Синий"], ["블루", "Синий"], ["빨간색", "Красный"], ["빨강", "Красный"], ["레드", "Красный"], ["녹색", "Зелёный"], ["초록", "Зелёный"], ["그린", "Зелёный"], ["갈색", "Коричневый"], ["브라운", "Коричневый"], ["노란색", "Жёлтый"], ["노랑", "Жёлтый"], ["옐로", "Жёлтый"], ["주황", "Оранжевый"], ["오렌지", "Оранжевый"], ["보라", "Фиолетовый"], ["퍼플", "Фиолетовый"], ["베이지", "Бежевый"], ["금색", "Золотистый"], ["진주색", "Жемчужный"], ["메탈", "металлик"], ["색", ""]], "Не указан");
 }
 
 function optionLabel(value: string) {
@@ -353,9 +338,9 @@ function mapCatalogRows(data: CatalogRow[], pricingContext: PricingContext): Cat
         fuel: fuelName(row.fuel_type),
         rawFuelType: row.fuel_type,
         sourceFuel: normalizedSourceFuel(row.fuel_type),
-        drive: resolvedDrive(row.drive_type, row.trim),
+        drive: driveLabel(row.drive_type, row.trim),
         bodyType: bodyName(row.body_type),
-        color: colorName(row.exterior_color),
+        color: exteriorColorLabel(row.exterior_color),
         transmission: transmissionName(row.transmission),
         vinMasked: row.vin_masked,
         price: calculation.totalUsd ?? 0,
@@ -411,8 +396,8 @@ function mapVehicleRows(
       powerBasis: row.power_basis,
       powerSourceRef: [row.power_source_type, row.power_source_url].filter(Boolean).join(":") || null,
       powerConfidence: row.power_confidence,
-      fuel: fuelName(row.fuel_type), rawFuelType: row.fuel_type, sourceFuel: normalizedSourceFuel(row.fuel_type), drive: resolvedDrive(row.drive_type, row.trim),
-      bodyType: bodyName(row.body_type), color: colorName(row.exterior_color), transmission: transmissionName(row.transmission),
+      fuel: fuelName(row.fuel_type), rawFuelType: row.fuel_type, sourceFuel: normalizedSourceFuel(row.fuel_type), drive: driveLabel(row.drive_type, row.trim),
+      bodyType: bodyName(row.body_type), color: exteriorColorLabel(row.exterior_color), transmission: transmissionName(row.transmission),
       vinMasked: row.vin_masked, price: row.price_usd ?? calculation.totalUsd ?? 0, sourcePriceKrw: Number(row.price_krw),
       location: locationName(row.location), images, imageGroups: parseImageGroups(report?.inspection_summary, images), sourceUrl: row.source_url,
       publishedAt: row.published_at, sourceUpdatedAt: row.source_updated_at, lastSeenAt: row.last_seen_at, status: "Проверено" as const,
@@ -542,7 +527,7 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}, destination: 
   // `drive` is sometimes recorded in a trim description rather than a
   // dedicated Encar field. Query both sources so the filter matches the
   // drive value shown on the vehicle card.
-  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%");
+  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%,trim.ilike.%xDrive%,trim.ilike.%4MATIC%,trim.ilike.%quattro%,trim.ilike.%4Motion%,trim.ilike.%HTRAC%,trim.ilike.%SH-AWD%");
   if (input.drive === "Передний") query = query.or("drive_type.ilike.%전륜%,drive_type.ilike.%FWD%,trim.ilike.%FWD%");
   if (input.drive === "Задний") query = query.or("drive_type.ilike.%후륜%,drive_type.ilike.%RWD%,trim.ilike.%RWD%");
   if (input.drive === "2WD") query = query.or("drive_type.ilike.%2WD%,drive_type.ilike.%2륜%");
@@ -671,7 +656,7 @@ export async function loadCatalogCount(search: CatalogSearch = {}) {
   if (input.transmission === "Автомат") query = query.or("transmission.ilike.%자동%,transmission.ilike.%오토%");
   if (input.transmission === "Механика") query = query.ilike("transmission", "%수동%");
   if (input.transmission === "Вариатор") query = query.ilike("transmission", "%무단%");
-  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%");
+  if (input.drive === "Полный") query = query.or("drive_type.ilike.%4WD%,drive_type.ilike.%AWD%,drive_type.ilike.%4륜%,trim.ilike.%4WD%,trim.ilike.%AWD%,trim.ilike.%xDrive%,trim.ilike.%4MATIC%,trim.ilike.%quattro%,trim.ilike.%4Motion%,trim.ilike.%HTRAC%,trim.ilike.%SH-AWD%");
   if (input.drive === "Передний") query = query.or("drive_type.ilike.%전륜%,drive_type.ilike.%FWD%,trim.ilike.%FWD%");
   if (input.drive === "Задний") query = query.or("drive_type.ilike.%후륜%,drive_type.ilike.%RWD%,trim.ilike.%RWD%");
   if (input.drive === "2WD") query = query.or("drive_type.ilike.%2WD%,drive_type.ilike.%2륜%");

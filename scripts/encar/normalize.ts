@@ -2,6 +2,7 @@ import type { EncarBundle, NormalizedVehicle } from "./types";
 import { canonicalSourceId } from "./identity";
 import { encarPhotoUrl } from "../../src/lib/encar/images";
 import { encarCoverScore } from "../../src/lib/encar/photo-cover";
+import { inferDriveType } from "../../src/lib/catalog/vehicle-attributes";
 
 const MANUFACTURERS: Array<[RegExp, string]> = [
   [/^현대/u, "Hyundai"],
@@ -109,15 +110,6 @@ function imageUrls(bundle: EncarBundle) {
     .slice(0, 30);
 }
 
-function detectedDrive(...values: Array<string | null | undefined>) {
-  const source = values.filter(Boolean).join(" ").toUpperCase();
-  if (/\b(?:AWD|4WD)\b|4륜/u.test(source)) return "4WD";
-  if (/\bFWD\b|전륜/u.test(source)) return "FWD";
-  if (/\bRWD\b|후륜/u.test(source)) return "RWD";
-  if (/\b2WD\b|2륜/u.test(source)) return "2WD";
-  return null;
-}
-
 export function normalizeListing(bundle: EncarBundle): NormalizedVehicle {
   const category = record(bundle.detail.category);
   const spec = record(bundle.detail.spec);
@@ -163,7 +155,7 @@ export function normalizeListing(bundle: EncarBundle): NormalizedVehicle {
     engineCc: displacement ? Math.floor(displacement) : null,
     fuelType: text(spec.fuelName) ?? text(bundle.search.FuelType) ?? "Не указано",
     transmission: text(spec.transmissionName),
-    driveType: detectedDrive(
+    driveType: inferDriveType(
       text(spec.driveTypeName),
       text(category.driveTypeName),
       text(category.gradeEnglishName),

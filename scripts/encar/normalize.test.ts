@@ -63,6 +63,30 @@ test("normalizes European brands and displacement fallback fields", () => {
   assert.equal(vehicle.engineCc, 3000);
 });
 
+test("infers only explicit AWD badges from trim names", () => {
+  const trims = [
+    ["BMW", "530d xDrive", "4WD"],
+    ["Mercedes-Benz", "E300 4MATIC Exclusive", "4WD"],
+    ["Audi", "40 TFSI quattro", "4WD"],
+    ["Volkswagen", "2.0 TDI 4Motion", "4WD"],
+    ["BMW", "520d sDrive", null],
+  ] as const;
+  for (const [manufacturer, trim, expected] of trims) {
+    const vehicle = normalizeListing({
+      fetchedAt: "2026-11-17T00:00:00.000Z",
+      search: { Id: trim, Manufacturer: manufacturer, Model: "test", Year: 202001, Mileage: 20_000, Price: 1500 },
+      detail: {
+        vehicleId: trim,
+        category: { manufacturerName: manufacturer, modelGroupEnglishName: "Test", gradeEnglishName: trim, yearMonth: "202001" },
+        advertisement: { price: 1500 },
+        spec: { mileage: 20_000, fuelName: "가솔린" },
+        photos: Array.from({ length: 5 }, (_, index) => ({ path: `/photo_${index}.jpg` })),
+      },
+    });
+    assert.equal(vehicle.driveType, expected, trim);
+  }
+});
+
 test("full-car cover outranks arbitrary source ordering and thumbnail flags", () => {
   const vehicle = normalizeListing({
     fetchedAt: "2026-08-09T00:00:00.000Z",
