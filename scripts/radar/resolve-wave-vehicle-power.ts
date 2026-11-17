@@ -21,7 +21,9 @@ function record(value: unknown): Record<string, unknown> {
 }
 function powertrainFor(fuel: string, hybrid: boolean, typeHint = "") {
   const value = `${fuel} ${typeHint}`.toLowerCase();
-  if (hybrid || /hybrid|hev|phev|하이브리드|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(value)) {
+  // Match HEV/PHEV as standalone markers. An unbounded `hev` also matches
+  // inside "Chevrolet", incorrectly classifying every Chevrolet as a hybrid.
+  if (hybrid || /hybrid|(?:^|[^\p{L}\p{N}])(?:hev|phev)(?:$|[^\p{L}\p{N}])|하이브리드|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(value)) {
     if (/phev|plug[ -]?in|플러그인|(?:^|[^\p{L}\p{N}])e[ -]?(?:hybrid|하이브리드)(?:$|[^\p{L}\p{N}])/u.test(value)
         || /volvo.{0,16}\bt8\b/u.test(value)) return "hybrid_phev";
     if (/series|sequential|range[ -]?extender|직렬/u.test(value)) return "hybrid_sequential";
@@ -110,11 +112,19 @@ async function main() {
         market: "South Korea", year: normalized.modelYear,
         ...(normalized.firstRegistrationDate ? { firstRegistrationYear: Number(normalized.firstRegistrationDate.slice(0, 4)) } : {}),
         ...(normalized.engineCc ? { engineCc: normalized.engineCc } : {}),
-        powertrain: powertrainFor(
-          normalized.fuelType,
-          item.screened.screening.isHybrid,
-          `${normalized.manufacturer} ${String(record(item.row.candidate_snapshot).EvType ?? "")} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`,
-        ),
+        powertrain: normalized.manufacturer === "Porsche"
+          && normalized.model === "911"
+          && normalized.modelYear >= 2024
+          && normalized.engineCc === 3591
+          && /targa\s*4\s*gts/i.test(`${normalized.trim ?? ""} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`)
+          // The 2024 992.2 Targa 4 GTS is Porsche's T-Hybrid, although Encar
+          // labels its fuel as gasoline and does not expose the hybrid badge.
+          ? "hybrid_parallel"
+          : powertrainFor(
+            normalized.fuelType,
+            item.screened.screening.isHybrid,
+            `${normalized.manufacturer} ${normalized.model} ${normalized.trim ?? ""} ${String(record(item.row.candidate_snapshot).EvType ?? "")} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`,
+          ),
         correlation: { source: "encar", sourceListingId: id },
       };
       const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
