@@ -23,7 +23,7 @@ function required(name: string) {
 }
 
 const ownerId = required("TELEGRAM_CATALOG_OWNER_ID");
-const botToken = readTelegramBotToken();
+let botToken: string | undefined;
 const db = createClient(required("NEXT_PUBLIC_SUPABASE_URL"), required("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
 const stateDir = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const activeRunFile = join(stateDir, "active-run");
@@ -41,6 +41,7 @@ type Command = {
 };
 
 async function sendTelegram(chatId: number, text: string) {
+  if (!botToken) throw new Error("Telegram bot token was not initialized under the control lock");
   await sendTelegramWithOutbox(botToken, chatId, text);
 }
 
@@ -589,6 +590,9 @@ async function main() {
   if (!handle) return;
 
   try {
+    // Acquire the singleton before touching Keychain. Launchd invokes this job
+    // every 15 seconds; reading first allowed slow Keychain calls to overlap.
+    botToken = readTelegramBotToken();
     try {
       await flushTelegramOutbox(botToken);
     } catch (error) {

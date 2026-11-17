@@ -11,6 +11,12 @@ type QueuedTelegramMessage = { chatId: number | string; text: string; replyMarku
 const notificationDirectory = join(homedir(), "Library", "Application Support", "chestny-prigon");
 const notificationOutbox = join(notificationDirectory, "telegram-outbox.jsonl");
 const notificationOutboxLock = join(notificationDirectory, "telegram-outbox.lock");
+let cachedBotToken: string | undefined;
+
+function telegramBotToken() {
+  cachedBotToken ??= readTelegramBotToken();
+  return cachedBotToken;
+}
 
 export async function sendTelegramMessage(
   token: string,
@@ -137,7 +143,17 @@ export async function flushTelegramOutbox(token: string) {
 export async function notifyCatalogOwner(text: string, replyMarkup?: TelegramReplyMarkup) {
   const ownerId = process.env.TELEGRAM_CATALOG_OWNER_ID?.trim();
   if (!ownerId || !/^\d{5,15}$/.test(ownerId)) throw new Error("TELEGRAM_CATALOG_OWNER_ID is missing or invalid");
-  const token = readTelegramBotToken();
-  await flushTelegramOutbox(token);
+  let token: string;
+  try {
+    token = telegramBotToken();
+  } catch (error) {
+    // Preserve the notification if the login Keychain is temporarily locked or
+    // slow. The controller can flush it after Keychain access recovers.
+    await enqueueTelegramMessage({ chatId: ownerId, text, ...(replyMarkup ? { replyMarkup } : {}), createdAt: new Date().toISOString() });
+    console.error(`Telegram notification saved while Keychain was unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  try { await flushTelegramOutbox(token); }
+  catch (error) { console.error(`Could not flush Telegram outbox before sending: ${error instanceof Error ? error.message : String(error)}`); }
   await sendTelegramWithOutbox(token, ownerId, text, replyMarkup);
 }
