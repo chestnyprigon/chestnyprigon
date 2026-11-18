@@ -190,16 +190,34 @@ async function recoverInterruptedLocalWorker() {
   if (lock) return;
 
   const recoveryFile = join(stateDir, "worker-recovery.json");
-  let previous: { runId?: string; attemptedAt?: string } = {};
+  let previous: { runId?: string; attemptedAt?: string; attempts?: number; exhaustedNotified?: boolean } = {};
   try { previous = JSON.parse(await readFile(recoveryFile, "utf8")) as typeof previous; } catch { /* no prior attempt */ }
-  if (previous.runId === runId && previous.attemptedAt && Date.now() - Date.parse(previous.attemptedAt) < 60_000) return;
+  const sameRun = previous.runId === runId;
+  const attempts = sameRun ? Math.max(0, Number(previous.attempts ?? (previous.attemptedAt ? 1 : 0))) : 0;
+  const retryDelaysMs = [5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
+  if (sameRun && attempts >= retryDelaysMs.length) {
+    if (!previous.exhaustedNotified) {
+      await writeFile(recoveryFile, JSON.stringify({ ...previous, runId, attempts, exhaustedNotified: true }), { mode: 0o600 });
+      await sendTelegram(Number(ownerId), `⏸ Автовосстановление run ${runId} остановлено после ${attempts} попыток. Очередь и сохранённый этап не удалены; новых запросов к Encar нет. Проверьте доступность Supabase, затем возобновите run вручную.`);
+    }
+    return;
+  }
+  const cooldownMs = attempts === 0 ? 0 : retryDelaysMs[attempts - 1];
+  if (sameRun && previous.attemptedAt && Date.now() - Date.parse(previous.attemptedAt) < cooldownMs) return;
 
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error("Could not determine macOS GUI user id during recovery");
+  const attemptedAt = new Date().toISOString();
+  const nextAttempt = attempts + 1;
+  // Persist before kickstart: a failed launch request must not turn into a
+  // notification/restart loop on the next 15-second controller tick.
+  await writeFile(recoveryFile, JSON.stringify({ runId, attemptedAt, attempts: nextAttempt,
+    exhaustedNotified: false }), { mode: 0o600 });
   const kick = spawnSync("/bin/launchctl", ["kickstart", `gui/${uid}/com.chestnyprigon.catalog-worker`], { encoding: "utf8" });
-  if (kick.status !== 0) throw new Error(`Could not recover saved worker ${runId} (launchctl exit ${kick.status ?? "unknown"})`);
-  await writeFile(recoveryFile, JSON.stringify({ runId, attemptedAt: now }), { mode: 0o600 });
-  await sendTelegram(Number(ownerId), `🔄 Восстанавливаю незавершённый run ${runId} из сохранённой очереди после перезапуска процесса. Проверка не делала запросов к Encar; worker продолжит с сохранённого этапа.`);
+  if (kick.status !== 0) throw new Error(`Could not recover saved worker ${runId} (launchctl exit ${kick.status ?? "unknown"}; attempt ${nextAttempt}/${retryDelaysMs.length})`);
+  if (attempts === 0) {
+    await sendTelegram(Number(ownerId), `🔄 Запустил восстановление незавершённого run ${runId} из сохранённой очереди. Проверка не обращалась к Encar; повторные попытки ограничены и будут с увеличенной паузой.`);
+  }
 }
 
 async function monitorCatalogProgress() {
