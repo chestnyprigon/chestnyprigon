@@ -105,11 +105,18 @@ async function main() {
       }
       const normalized = item.screened.normalized;
       if (!normalized) continue;
+      // A Korean LPG bi-fuel listing can be exposed as gasoline + LPG while
+      // Vehicle Power's combustion catalog is keyed to LPG. Normalize only
+      // this non-electrified fuel combination for catalog matching.
+      const powerFuelType = /lpg|lpi|엘피지/i.test(normalized.fuelType)
+        && /gasoline|가솔린/i.test(normalized.fuelType)
+        ? "lpg"
+        : normalized.fuelType;
       const input = {
         brand: normalized.manufacturer, model: normalized.model,
         ...(normalized.generation ? { generation: normalized.generation } : {}),
         ...(normalized.trim ? { trim: normalized.trim } : {}),
-        fuelType: normalized.fuelType,
+        fuelType: powerFuelType,
         ...(normalized.driveType ? { driveType: normalized.driveType } : {}),
         market: "South Korea", year: normalized.modelYear,
         ...(normalized.firstRegistrationDate ? { firstRegistrationYear: Number(normalized.firstRegistrationDate.slice(0, 4)) } : {}),
