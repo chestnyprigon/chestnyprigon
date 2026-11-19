@@ -162,7 +162,7 @@ export async function getSupabaseMobileDeHomepageListings(limit = 12): Promise<M
       .order("master_id", { ascending: true })
       .limit(4);
     if (error) throw new Error(`Europe homepage listing query failed: ${error.message}`);
-    return ((data ?? []) as unknown as Array<Record<string, unknown>>).map(mapListing);
+    return ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) => mapListing(row));
   }));
   const rows = [...new Map(targetRows.flat().map((listing) => [listing.master_id, listing])).values()];
   const selected = selectHomepagePriorityRows(rows, Math.max(1, Math.min(12, limit)), EUROPE_HOMEPAGE_MODEL_PRIORITIES, (listing) => ({
