@@ -12,6 +12,7 @@ import { CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD, catalogYearFrom, catalog
 import { loadCatalogFilterOptions } from "@/lib/catalog/filter-options-server";
 import { loadRussiaPriceSnapshotDetails } from "@/lib/pricing/russia-price-snapshots";
 import { driveLabel, exteriorColorLabel } from "@/lib/catalog/vehicle-attributes";
+import { homepageModelPostgrestFilter, selectHomepagePriorityRows, type HomepageModelPriority } from "@/lib/catalog/homepage-model-priorities";
 
 type CatalogRow = Database["public"]["Views"]["catalog_vehicles"]["Row"];
 type VehicleRow = Database["public"]["Tables"]["vehicles"]["Row"];
@@ -19,6 +20,7 @@ type VehicleReportRow = Database["public"]["Tables"]["vehicle_reports"]["Row"];
 
 export type CatalogSearch = {
   homepageMix?: boolean;
+  homepageTargets?: readonly HomepageModelPriority[];
   includeCount?: boolean;
   includeBrands?: boolean;
   page?: number;
@@ -410,6 +412,7 @@ function mapVehicleRows(
 function normalizedSearch(search: CatalogSearch) {
   return {
     homepageMix: search.homepageMix ?? false,
+    homepageTargets: search.homepageTargets ?? [],
     includeCount: search.includeCount ?? true,
     includeBrands: search.includeBrands ?? true,
     page: Math.max(1, search.page ?? 1), perPage: Math.min(48, Math.max(12, search.perPage ?? 24)),
@@ -465,6 +468,13 @@ function diversifyHomepageRows(rows: VehicleRow[], limit: number) {
     round += 1;
   }
   return mixed;
+}
+
+function prioritizeHomepageRows(rows: VehicleRow[], limit: number, targets: readonly HomepageModelPriority[]) {
+  return selectHomepagePriorityRows(rows, limit, targets, (row) => ({
+    make: row.manufacturer,
+    modelFields: [row.model, row.generation, row.trim],
+  }));
 }
 
 async function loadAccidentVehicleIds(
@@ -561,16 +571,44 @@ async function loadCatalogPageUncached(search: CatalogSearch = {}, destination: 
       count = 0;
     }
   } else {
-    const result = input.homepageMix && input.page === 1
-      ? await query.limit(Math.max(120, input.perPage * 10))
-      : await query.range(from, from + input.perPage - 1 + (input.includeCount ? 0 : 1));
-    if (result.error) throw new Error(`Catalog request failed: ${result.error.message}`);
-    const rows = result.data as VehicleRow[] | null;
-    hasMoreWithoutCount = (rows?.length ?? 0) > input.perPage;
-    vehicles = input.homepageMix && input.page === 1
-      ? diversifyHomepageRows(rows ?? [], input.perPage)
-      : input.includeCount ? rows : (rows ?? []).slice(0, input.perPage);
-    count = result.count;
+    if (input.homepageMix && input.page === 1 && input.homepageTargets.length) {
+      // Fetch a small, independently sorted candidate set for each model so
+      // popular marques cannot crowd rarer priorities out of a global limit.
+      const targetRows = await Promise.all(input.homepageTargets.map(async (target) => {
+        const targetFilter = homepageModelPostgrestFilter([target], {
+          make: "manufacturer",
+          models: ["model", "generation", "trim"],
+        });
+        if (!targetFilter) return [] as VehicleRow[];
+        const { data, error } = await client.from("vehicles")
+          .select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,mileage_km,price_krw,price_usd,engine_cc,engine_power_ps,engine_power_kw,electric_motor_peak_kw,electric_30min_kw,system_combined_power_ps,system_combined_power_kw,power_basis,power_confidence,power_source_type,power_source_url,power_match_method,fuel_type,transmission,drive_type,body_type,exterior_color,location,vin_masked,source_url,published_at,source_updated_at,last_seen_at,status,is_public")
+          .eq("is_public", true).eq("status", "active").neq("fuel_type", "전기").neq("fuel_type", "수소")
+          .gte("model_year", Math.min(input.yearFrom, input.yearTo)).lte("model_year", Math.max(input.yearFrom, input.yearTo))
+          .gte("price_usd", Math.min(input.minPrice, input.maxPrice)).lte("price_usd", Math.max(input.minPrice, input.maxPrice))
+          .gte("mileage_km", Math.min(input.minMileage, input.maxMileage)).lte("mileage_km", Math.max(input.minMileage, input.maxMileage))
+          .gte("engine_cc", Math.min(input.minEngine, input.maxEngine)).lte("engine_cc", Math.max(input.minEngine, input.maxEngine))
+          .or(targetFilter)
+          .order("published_at", { ascending: false, nullsFirst: false }).order("id", { ascending: false })
+          .limit(4);
+        if (error) throw new Error(`Homepage model query failed: ${error.message}`);
+        return (data ?? []) as VehicleRow[];
+      }));
+      const candidates = [...new Map(targetRows.flat().map((row) => [row.id, row])).values()];
+      vehicles = prioritizeHomepageRows(candidates, input.perPage, input.homepageTargets);
+      hasMoreWithoutCount = candidates.length > input.perPage;
+      count = null;
+    } else {
+      const result = input.homepageMix && input.page === 1
+        ? await query.limit(Math.max(120, input.perPage * 10))
+        : await query.range(from, from + input.perPage - 1 + (input.includeCount ? 0 : 1));
+      if (result.error) throw new Error(`Catalog request failed: ${result.error.message}`);
+      const rows = result.data as VehicleRow[] | null;
+      hasMoreWithoutCount = (rows?.length ?? 0) > input.perPage;
+      vehicles = input.homepageMix && input.page === 1
+        ? diversifyHomepageRows(rows ?? [], input.perPage)
+        : input.includeCount ? rows : (rows ?? []).slice(0, input.perPage);
+      count = result.count;
+    }
   }
   const hasMore = count !== null
     ? from + input.perPage < count

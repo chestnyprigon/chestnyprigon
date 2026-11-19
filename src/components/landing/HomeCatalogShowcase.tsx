@@ -6,9 +6,10 @@ import Image from "next/image";
 import Link from "next/link";
 import type { CatalogCar } from "@/data/cars";
 import { loadCatalogPage } from "@/lib/catalog/load-catalog";
+import { KOREA_HOMEPAGE_MODEL_PRIORITIES } from "@/lib/catalog/homepage-model-priorities";
 import { catalogYearFrom, catalogYearTo, CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD } from "@/lib/catalog/catalog-rules";
 import { formatBelarusCurrencyPair } from "@/lib/pricing/display";
-import { getMobileDeListings, MobileDeApiError } from "@/lib/mobile-de/api";
+import { getMobileDeHomepageListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
 import { calculateEuropeBelarusPrice } from "@/lib/pricing/europe-belarus";
@@ -127,6 +128,7 @@ async function KoreaShowcase({ destination, currency }: { destination: "by" | "r
   try {
     const catalog = await loadCatalogPage({
       homepageMix: true,
+      homepageTargets: KOREA_HOMEPAGE_MODEL_PRIORITIES,
       includeCount: false,
       includeBrands: false,
       perPage: cardLimit,
@@ -148,7 +150,7 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
   let cards: ShowcaseCard[] = [];
   try {
     const [listings, exchangeRates, rubRates] = await Promise.all([
-      getMobileDeListings({ limit: String(cardLimit), sort: "updated_desc" }),
+      getMobileDeHomepageListings(),
       destination === "by" ? fetchNbrbRates() : null,
       destination === "ru" ? fetchCbrRates() : null,
     ]);

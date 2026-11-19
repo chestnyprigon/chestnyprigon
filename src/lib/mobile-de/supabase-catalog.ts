@@ -6,6 +6,7 @@ import { mobileDeModelKey, normalizeMobileDeModels } from "./models";
 import { createSupabaseEuropePublicServerClient } from "@/lib/supabase/public-client";
 import { normalizeMobileDeField, normalizeMobileDeOptions } from "./localization";
 import { mobileDeMakeKey } from "./makes";
+import { EUROPE_HOMEPAGE_MODEL_PRIORITIES, homepageModelPostgrestFilter, selectHomepagePriorityRows } from "@/lib/catalog/homepage-model-priorities";
 import type { MobileDeFacets, MobileDeFilters, MobileDeListing, MobileDeListingPage } from "./types";
 
 const listingColumns = [
@@ -142,6 +143,36 @@ export async function getSupabaseMobileDeListings(filters: MobileDeFilters): Pro
     api_version: "mobile-de-supabase/v1",
     data: rows.map((row) => mapListing(row)),
     page: { limit, has_more: hasMore, next_cursor: hasMore ? cursorFor(nextOffset, queryKey) : null },
+  };
+}
+
+/** Bounded, target-only candidate read for the Europe homepage showcase. */
+export async function getSupabaseMobileDeHomepageListings(limit = 12): Promise<MobileDeListingPage> {
+  const client = createSupabaseEuropePublicServerClient();
+  const targetRows = await Promise.all(EUROPE_HOMEPAGE_MODEL_PRIORITIES.map(async (target) => {
+    const targetFilter = homepageModelPostgrestFilter([target], {
+      make: "make",
+      models: ["model", "title"],
+    });
+    if (!targetFilter) return [] as MobileDeListing[];
+    const { data, error } = await client.from("mobile_de_catalog_public_listings")
+      .select(listingColumns)
+      .or(targetFilter)
+      .order("source_updated_at", { ascending: false, nullsFirst: false })
+      .order("master_id", { ascending: true })
+      .limit(4);
+    if (error) throw new Error(`Europe homepage listing query failed: ${error.message}`);
+    return ((data ?? []) as unknown as Array<Record<string, unknown>>).map(mapListing);
+  }));
+  const rows = [...new Map(targetRows.flat().map((listing) => [listing.master_id, listing])).values()];
+  const selected = selectHomepagePriorityRows(rows, Math.max(1, Math.min(12, limit)), EUROPE_HOMEPAGE_MODEL_PRIORITIES, (listing) => ({
+    make: listing.make,
+    modelFields: [listing.model, listing.title],
+  }));
+  return {
+    api_version: "mobile-de-supabase/home-showcase-v1",
+    data: selected,
+    page: { limit: Math.max(1, Math.min(12, limit)), has_more: false, next_cursor: null },
   };
 }
 

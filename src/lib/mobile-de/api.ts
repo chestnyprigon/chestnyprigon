@@ -14,6 +14,7 @@ function shouldUseSupabaseCatalog() {
 
 const API_ROOT = "https://api.koredigital.co.kr/v1/internal/mobile-de";
 const catalogCache = createStaleCache<MobileDeListingPage>(60_000, 15 * 60_000, 96);
+const homepageShowcaseCache = createStaleCache<MobileDeListingPage>(60_000, 5 * 60_000, 4);
 const facetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
 const supabaseCatalogCache = createStaleCache<MobileDeListingPage>(60_000, 5 * 60_000, 96);
 const supabaseFacetsCache = createStaleCache<MobileDeFacets>(5 * 60_000, 30 * 60_000, 64);
@@ -26,6 +27,15 @@ const getCachedSupabaseListings = unstable_cache(
     return { ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) };
   },
   ["mobile-de-supabase-listings-v4"],
+  { revalidate: 60 },
+);
+const getCachedSupabaseHomepageListings = unstable_cache(
+  async () => {
+    const { getSupabaseMobileDeHomepageListings } = await import("./supabase-catalog");
+    const payload = await getSupabaseMobileDeHomepageListings(12);
+    return { ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) };
+  },
+  ["mobile-de-homepage-priority-listings-v1"],
   { revalidate: 60 },
 );
 const getCachedSupabaseFacets = unstable_cache(
@@ -119,6 +129,11 @@ export function getMobileDeListings(filters: MobileDeFilters) {
   return catalogCache(JSON.stringify([consumer, params.toString()]), () =>
     getJson<MobileDeListingPage>("/listings", params).then((payload) => ({ ...payload, data: payload.data.map((listing) => normalizeMobileDeListing(listing)) })),
   );
+}
+
+/** Fresh, model-allowlisted Europe cards for the homepage only. */
+export function getMobileDeHomepageListings() {
+  return homepageShowcaseCache("priority-models-v1", () => getCachedSupabaseHomepageListings());
 }
 
 // Facets are public catalogue metadata. Keep the last known-good set available
