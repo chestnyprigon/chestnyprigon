@@ -76,6 +76,15 @@ async function queueCounts(scopeWaveId?: string) {
   return counts;
 }
 
+async function pendingQueueSample(scopeWaveId?: string) {
+  let query = client.from("chestny_enrichment_queue").select("status")
+    .eq("run_id", runId).in("status", ["queued", "leased"]);
+  if (scopeWaveId) query = query.eq("wave_id", scopeWaveId);
+  const { data, error } = await query.order("status", { ascending: false }).limit(batchSize);
+  if (error) throw new Error(`Could not inspect pending queue: ${error.message}`);
+  return (data ?? []).map((row) => row.status as string);
+}
+
 async function failedOutcomeCounts(scopeWaveId?: string) {
   const counts = await queueCounts(scopeWaveId);
   return { identityConflicts: counts.excluded ?? 0, technicalErrors: counts.failed };
@@ -365,7 +374,6 @@ async function processPersistedWaves(input: {
     return resolution;
   };
   let processedThisSession = 0;
-  let processed = attemptedEnrichmentItems(await queueCounts());
   const proxyUrl = transport === "proxy" ? readEncarProxyUrlFromKeychain() : undefined;
 
   for (const plannedWave of waves) {
@@ -409,16 +417,16 @@ async function processPersistedWaves(input: {
       if (error) throw new Error(`Could not recover leases for wave ${currentWave.wave_number}: ${error.message}`);
     }
 
-    let waveCounts = await queueCounts(currentWave.id);
+    let pending = await pendingQueueSample(currentWave.id);
     let checkPendingRetry = true;
-    while (waveCounts.queued + waveCounts.leased > 0 || checkPendingRetry) {
+    while (pending.length > 0 || checkPendingRetry) {
       const { data: currentRun, error: currentRunError } = await client.from("chestny_enrichment_runs")
         .select("status").eq("id", runId).single();
       if (currentRunError) throw new Error(`Cannot refresh run control status: ${currentRunError.message}`);
       if (["paused", "cancelled"].includes(currentRun.status)) break;
       if (currentRun.status !== "running") throw new Error(`Run changed to unexpected status ${currentRun.status}`);
 
-      const currentLimit = Math.max(1, Math.min(10, waveCounts.queued));
+      const currentLimit = Math.max(1, Math.min(10, pending.filter((status) => status === "queued").length));
       checkPendingRetry = false;
       const workerResults = run.rules?.type === "targeted_report_refresh"
         ? await Promise.all(Array.from({ length: Math.min(concurrency, currentLimit) }, () =>
@@ -426,23 +434,24 @@ async function processPersistedWaves(input: {
         : [await runBatch(lockToken, signal, currentLimit, allowMatchingStagingRefresh, delayMs, proxyUrl, currentWave.id)];
       const result = mergeWorkerResults(workerResults);
       processedThisSession += result.claimed;
-      processed += result.claimed;
-      const globalCounts = await queueCounts();
-      waveCounts = await queueCounts(currentWave.id);
+      pending = await pendingQueueSample(currentWave.id);
       console.log(JSON.stringify({ runId, waveId: currentWave.id, waveNumber: currentWave.wave_number,
-        processedThisSession, processedTotal: processed, recoveredLeases: recoveredIds.length, transport, delayMs,
-        ...globalCounts, wave: waveCounts }));
+        processedThisSession, recoveredLeases: recoveredIds.length, transport, delayMs,
+        hasPendingWaveItems: pending.length > 0 }));
       if (result.results.some((item) => /HTTP (401|403|407|429)|captcha|verification/i.test(item.error ?? "")
         || /^(endpoint_(auth_error|blocked|rate_limited)|auth_error|blocked|rate_limited)$/.test(item.failureClass ?? ""))) {
         throw new Error("Encar access restriction detected; local enrichment paused");
       }
-      if (result.pendingRetries && waveCounts.queued === 0 && waveCounts.leased === 0) {
-        await new Promise(resolve => setTimeout(resolve, 30_000));
-        waveCounts = await queueCounts(currentWave.id);
-        checkPendingRetry = true;
-        continue;
+      if (result.pendingRetries && pending.filter((status) => status === "queued").length === 0) {
+        const waveCounts = await queueCounts(currentWave.id);
+        if (waveCounts.leased === 0) {
+          await new Promise(resolve => setTimeout(resolve, 30_000));
+          pending = await pendingQueueSample(currentWave.id);
+          checkPendingRetry = true;
+          continue;
+        }
       }
-      if (waveCounts.queued + waveCounts.leased === 0) break;
+      if (pending.length === 0) break;
       if (result.claimed === 0) throw new Error(`Wave ${currentWave.wave_number} still has work but the worker claimed none`);
     }
 
@@ -450,8 +459,8 @@ async function processPersistedWaves(input: {
       .select("status").eq("id", runId).single();
     if (afterLoopError) throw new Error(`Cannot read run after wave ${currentWave.wave_number}: ${afterLoopError.message}`);
     if (["paused", "cancelled"].includes(afterLoop.status)) break;
-    waveCounts = await queueCounts(currentWave.id);
-    if (waveCounts.queued + waveCounts.leased > 0) continue;
+    pending = await pendingQueueSample(currentWave.id);
+    if (pending.length > 0) continue;
 
     const now = new Date().toISOString();
     if (!["enriched", "screening"].includes(currentWave.status)) {
