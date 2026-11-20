@@ -160,12 +160,43 @@ export async function getSupabaseMobileDeHomepageListings(limit = 12): Promise<M
       .or(targetFilter)
       .order("source_updated_at", { ascending: false, nullsFirst: false })
       .order("master_id", { ascending: true })
-      .limit(4);
+      // A few newest announcements may use Mobile.de's shared "photos coming
+      // soon" placeholder. Read a wider candidate window so those listings
+      // don't take a homepage slot when real photos are available.
+      .limit(20);
     if (error) throw new Error(`Europe homepage listing query failed: ${error.message}`);
-    return ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) => mapListing(row));
+    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    const ids = rows.map((row) => String(row.master_id));
+    const { data: galleryRows, error: galleryError } = ids.length
+      ? await client.from("mobile_de_catalog_public_images").select("master_id,source_url,position,is_primary").in("master_id", ids).order("position", { ascending: true })
+      : { data: [], error: null };
+    if (galleryError) throw new Error(`Europe homepage image query failed: ${galleryError.message}`);
+    const galleries = new Map<string, Array<Record<string, unknown>>>();
+    for (const image of (galleryRows ?? []) as unknown as Array<Record<string, unknown>>) {
+      const id = String(image.master_id);
+      galleries.set(id, [...(galleries.get(id) ?? []), image]);
+    }
+    return rows.map((row) => mapListing(row, galleries.get(String(row.master_id)) ?? []));
   }));
   const rows = [...new Map(targetRows.flat().map((listing) => [listing.master_id, listing])).values()];
-  const selected = selectHomepagePriorityRows(rows, Math.max(1, Math.min(12, limit)), EUROPE_HOMEPAGE_MODEL_PRIORITIES, (listing) => ({
+  const imageUseCounts = new Map<string, number>();
+  for (const listing of rows) {
+    const urls = new Set([listing.primary_image?.url, ...(listing.gallery ?? []).map((image) => image.url)].filter((url): url is string => Boolean(url)));
+    for (const url of urls) imageUseCounts.set(url, (imageUseCounts.get(url) ?? 0) + 1);
+  }
+  const photoQualifiedRows = rows.flatMap((listing) => {
+    const primaryUrl = listing.primary_image?.url;
+    // Mobile.de can assign the same stock placeholder to different vehicles.
+    // Repeated primary URLs are not useful car photos; prefer a unique gallery
+    // image where possible and omit the listing if none exists.
+    if (primaryUrl && (imageUseCounts.get(primaryUrl) ?? 0) > 1) {
+      const realImage = (listing.gallery ?? []).find((image) => image.url !== primaryUrl && imageUseCounts.get(image.url) === 1);
+      if (realImage) listing.primary_image = { ...realImage, is_primary: true };
+      else listing.primary_image = null;
+    }
+    return listing.primary_image?.url ? [listing] : [];
+  });
+  const selected = selectHomepagePriorityRows(photoQualifiedRows, Math.max(1, Math.min(12, limit)), EUROPE_HOMEPAGE_MODEL_PRIORITIES, (listing) => ({
     make: listing.make,
     modelFields: [listing.model, listing.title],
   }));
