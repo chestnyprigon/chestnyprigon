@@ -8,7 +8,7 @@ import type { CatalogCar } from "@/data/cars";
 import { loadCatalogPage } from "@/lib/catalog/load-catalog";
 import { KOREA_HOMEPAGE_MODEL_PRIORITIES } from "@/lib/catalog/homepage-model-priorities";
 import { catalogYearFrom, catalogYearTo, CATALOG_MAX_MILEAGE_KM, CATALOG_MAX_PRICE_USD } from "@/lib/catalog/catalog-rules";
-import { formatBelarusCurrencyPair } from "@/lib/pricing/display";
+import { formatBelarusCurrencyPair, formatKrwAsUsd } from "@/lib/pricing/display";
 import { getMobileDeHomepageListings, MobileDeApiError } from "@/lib/mobile-de/api";
 import type { MobileDeListing } from "@/lib/mobile-de/types";
 import { fetchNbrbRates } from "@/lib/pricing/nbrb-rates";
@@ -30,9 +30,10 @@ type ShowcaseCard = {
   href: string;
   image: string | null;
   imageAlt: string;
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   details: string;
+  history?: string;
   power?: string;
   price: string;
   priceInfo?: string;
@@ -56,16 +57,16 @@ function displayRussiaPrice(car: CatalogCar, currency: "USD" | "BYN" | "RUB" | "
 function koreaCard(car: CatalogCar, destination: "by" | "ru", currency: "USD" | "BYN" | "RUB" | "EUR"): ShowcaseCard {
   const { name } = vehicleDisplayName(car.brand, car.model);
   const history = car.accidents?.accidentCount
-    ? `Страховые случаи: ${car.accidents.accidentCount}`
+    ? `Страховые случаи: ${car.accidents.accidentCount} · выплаты ${formatKrwAsUsd(car.accidents.ownAccidentCostKrw + car.accidents.otherAccidentCostKrw, car.calculation.krwPerUsd)}`
     : car.accidents?.available ? "Без ДТП по отчёту Encar" : "История Encar";
   return {
     id: car.id,
     href: `/catalog/${encodeURIComponent(car.id)}?destination=${destination}&currency=${currency}`,
     image: car.images[0] ?? null,
     imageAlt: name,
-    eyebrow: history,
     title: name,
     details: [car.year, `${distance.format(car.mileage)} км`, car.engine, car.fuel, car.drive].filter(Boolean).join(" · "),
+    history,
     power: formatCatalogPower(car.powerPs, car.electric30MinKw) || undefined,
     price: destination === "ru" ? displayRussiaPrice(car, currency) : car.calculation.calculationAvailable ? formatBelarusCurrencyPair(car.price, car.calculation.rates, currency === "BYN" ? "BYN" : "USD") : "Расчёт уточняется",
     priceInfo: "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер.",
@@ -111,9 +112,9 @@ function ShowcaseSection({ id, country, href, action, destination, currency, car
     {cards.length ? <div className="home-showcase-grid">{cards.map((card) => <article className="home-showcase-card" key={card.id}>
       <Link className="home-showcase-image" href={card.href} aria-label={`Открыть ${card.title}`}>
         {card.image ? <Image src={card.image} alt={card.imageAlt} fill sizes="(max-width: 700px) 78vw, (max-width: 1100px) 33vw, 25vw" unoptimized /> : <span className="home-showcase-no-image">Фото появится позже</span>}
-        <span className="home-showcase-badge">{card.eyebrow}</span>
+        {card.eyebrow ? <span className="home-showcase-badge">{card.eyebrow}</span> : null}
       </Link>
-      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Мощность указана по открытым источникам и может отличаться. Уточните у продавца.</InfoTooltip></> : null}</p><footer><span>{card.price && <CatalogPrice price={card.price} info={card.priceInfo} />}</span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
+      <div className="home-showcase-card-body"><h3><Link href={card.href}>{card.title}</Link></h3><p>{card.details || "Характеристики в карточке автомобиля"}{card.power ? <> · {card.power} <InfoTooltip label="Об источнике данных о мощности">Мощность указана по открытым источникам и может отличаться. Уточните у продавца.</InfoTooltip></> : null}</p>{card.history ? <p className={`home-showcase-history ${card.history.startsWith("Страховые случаи") ? "is-alert" : card.history.startsWith("Без ДТП") ? "is-clear" : "is-neutral"}`}>{card.history}</p> : null}<footer><span>{card.price && <CatalogPrice price={card.price} info={card.priceInfo} />}</span><Link href={card.href} aria-label={`Подробнее: ${card.title}`}>Подробнее <span aria-hidden="true">→</span></Link></footer></div>
     </article>)}</div> : <div className="home-showcase-empty">Сейчас подборка обновляется. Откройте каталог, чтобы посмотреть все объявления.</div>}
     <div className="home-showcase-mobile-action"><Link className="premium-button secondary" href={`${href}?destination=${destination}&currency=${currency}`}>{action} <span aria-hidden="true">→</span></Link></div>
   </section>;
