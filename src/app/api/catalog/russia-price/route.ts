@@ -62,7 +62,9 @@ export async function POST(request: Request) {
     } else {
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(body.id)) return errorResponse("Некорректный автомобиль.", 400);
       const listing = await getMobileDeListing(body.id);
-      const amount = listing.net_price?.amount ?? listing.price?.amount;
+      // Keep the Russia estimate on the same explicit source-price basis as
+      // the published card and the stored Europe snapshot (Netto or Brutto).
+      const amount = listing.price?.amount;
       if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return errorResponse("В объявлении нет цены для пересчёта.", 422);
       const powerValue = listing.power?.value;
       const powerIsKw = /kw/i.test(`${listing.power?.unit ?? ""} ${listing.power?.label_ru ?? ""}`);
