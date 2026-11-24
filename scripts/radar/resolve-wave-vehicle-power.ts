@@ -114,8 +114,12 @@ async function main() {
         && /boxster|박스터/i.test(String(snapshot.Model ?? "")) ? "718 Boxster" : normalized.model;
       const badgeDetail = String(snapshot.BadgeDetail ?? "");
       const normalizedTrim = String(normalized.trim ?? "");
+      // Encar also places short chassis codes such as C7, 4G, L33, G15 and
+      // G70 in BadgeDetail. These identify a generation, not an engine trim;
+      // passing them as a trim blocks otherwise exact make/model/year/cc matches.
       const generationOnlyTrim = normalizedTrim === badgeDetail
-        && (/^\d[A-Z]\d{1,2}$/i.test(normalizedTrim) || /^\d+(?:st|nd|rd|th)$/i.test(normalizedTrim) && /세대/.test(badgeDetail));
+        && (/^(?:\d[A-Z]\d{1,2}|[A-Z]\d{1,2}|L\d{2,3}|G\d{2})$/i.test(normalizedTrim)
+          || /^\d+(?:st|nd|rd|th)$/i.test(normalizedTrim) && /세대/.test(badgeDetail));
       const trim = generationOnlyTrim ? undefined : normalized.trim;
       const badge = generationOnlyTrim ? String(snapshot.Badge ?? "") : undefined;
       const input = {
