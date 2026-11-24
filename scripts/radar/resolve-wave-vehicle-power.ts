@@ -10,6 +10,8 @@ config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
 const RUN_ID = process.argv.find((arg) => arg.startsWith("--run-id="))?.slice(9)?.trim();
 const WAVE_NUMBER = Number(process.argv.find((arg) => arg.startsWith("--wave-number="))?.slice(14));
 const CONCURRENCY = Number(process.argv.find((arg) => arg.startsWith("--concurrency="))?.slice(14) ?? 2);
+const REFRESH_RESOLVED_IDS = new Set((process.argv.find((arg) => arg.startsWith("--refresh-resolved-ids="))?.slice(23) ?? "")
+  .split(",").map((id) => id.trim()).filter(Boolean));
 const BASE = process.env.VEHICLE_POWER_API_BASE_URL?.trim().replace(/\/+$/, "");
 const TOKEN = process.env.VEHICLE_POWER_RESOLVE_TOKEN?.trim();
 function required(value: string | undefined, name: string) {
@@ -98,14 +100,9 @@ async function main() {
       const item = eligible[cursor++];
       const id = String(item.row.source_listing_id);
       const prior = existing.get(id);
-      if (prior?.status === "resolved") {
-        const savedRecord = record(prior.power_record);
-        outcomes.push({ id, status: "resolved", reason: "already_resolved",
-          confidence: String(savedRecord.resolutionClass ?? "CLASS_NOT_RECORDED").toUpperCase() });
-        continue;
-      }
       const normalized = item.screened.normalized;
       if (!normalized) continue;
+      const snapshot = record(item.row.candidate_snapshot);
       // A Korean LPG bi-fuel listing can be exposed as gasoline + LPG while
       // Vehicle Power's combustion catalog is keyed to LPG. Normalize only
       // this non-electrified fuel combination for catalog matching.
@@ -113,10 +110,21 @@ async function main() {
         && /gasoline|가솔린/i.test(normalized.fuelType)
         ? "lpg"
         : normalized.fuelType;
+      const listingModel = normalized.manufacturer === "Porsche" && normalized.model === "718"
+        && /boxster|박스터/i.test(String(snapshot.Model ?? "")) ? "718 Boxster" : normalized.model;
+      const badgeDetail = String(snapshot.BadgeDetail ?? "");
+      const normalizedTrim = String(normalized.trim ?? "");
+      const generationOnlyTrim = normalizedTrim === badgeDetail
+        && (/^\d[A-Z]\d{1,2}$/i.test(normalizedTrim) || /^\d+(?:st|nd|rd|th)$/i.test(normalizedTrim) && /세대/.test(badgeDetail));
+      const trim = generationOnlyTrim ? undefined : normalized.trim;
+      const badge = generationOnlyTrim ? String(snapshot.Badge ?? "") : undefined;
       const input = {
-        brand: normalized.manufacturer, model: normalized.model,
-        ...(normalized.generation ? { generation: normalized.generation } : {}),
-        ...(normalized.trim ? { trim: normalized.trim } : {}),
+        brand: normalized.manufacturer, model: listingModel,
+        // Encar's normalizer often puts a translated/display model label in
+        // `generation`. Vehicle Power treats generations as a hard identity
+        // boundary, so omit that lossy field and match using model/year/cc/trim.
+        ...(trim ? { trim } : {}),
+        ...(badge ? { badge } : {}),
         fuelType: powerFuelType,
         ...(normalized.driveType ? { driveType: normalized.driveType } : {}),
         market: "South Korea", year: normalized.modelYear,
@@ -126,9 +134,9 @@ async function main() {
           && normalized.model === "911"
           && normalized.modelYear >= 2024
           && normalized.engineCc === 3591
-          && /targa\s*4\s*gts/i.test(`${normalized.trim ?? ""} ${String(record(item.row.candidate_snapshot).Badge ?? "")}`)
-          // The 2024 992.2 Targa 4 GTS is Porsche's T-Hybrid, although Encar
-          // labels its fuel as gasoline and does not expose the hybrid badge.
+          && /(?:targa|타르가|carrera|카레라)\s*4\s*gts/i.test(`${normalized.trim ?? ""} ${String(snapshot.Badge ?? "")}`)
+          // 992.2 Carrera 4 GTS and Targa 4 GTS use Porsche's T-Hybrid,
+          // although Encar labels fuel as gasoline and may expose only a Korean badge.
           ? "hybrid_parallel"
           : powertrainFor(
             normalized.fuelType,
@@ -138,6 +146,12 @@ async function main() {
         correlation: { source: "encar", sourceListingId: id },
       };
       const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+      if (prior?.status === "resolved" && !REFRESH_RESOLVED_IDS.has(id)) {
+        const savedRecord = record(prior.power_record);
+        outcomes.push({ id, status: "resolved", reason: "already_resolved",
+          confidence: String(savedRecord.resolutionClass ?? "CLASS_NOT_RECORDED").toUpperCase() });
+        continue;
+      }
       const timestamp = new Date().toISOString();
       let status = "retryable_error";
       let reasonCode = "vehicle_power_request_failed";
