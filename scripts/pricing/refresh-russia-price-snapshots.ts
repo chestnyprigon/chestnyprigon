@@ -115,13 +115,15 @@ async function main() {
       ? client.from("vehicles").select("id,source_listing_id,manufacturer,model,generation,trim,model_year,first_registration_date,engine_cc,fuel_type,drive_type,price_krw,engine_power_ps,engine_power_kw,electric_motor_peak_kw,electric_30min_kw,system_combined_power_kw,power_basis,power_confidence,power_source_type,power_source_url,status,is_public").in("id", idsBySource.korea).eq("status", "active").eq("is_public", true)
       : Promise.resolve({ data: [], error: null }),
     idsBySource.europe.length
-      ? client.from("mobile_de_catalog_listings").select("master_id,source_id,title,make,model,production_year,first_registration,registration_year,engine_cc,power_ps,price_amount,fuel_type,drive,source_status,proof_status,catalog_visible").in("master_id", idsBySource.europe).eq("source_status", "active").eq("proof_status", "proven_verified").eq("catalog_visible", true)
+      ? client.from("mobile_de_catalog_listings").select("master_id,source_id,title,make,model,production_year,first_registration,registration_year,engine_cc,power_ps,price_amount,fuel_type,drive,source_status,proof_status,customer_cohort,catalog_visible").in("master_id", idsBySource.europe).eq("source_status", "active").in("proof_status", ["proven_verified", "customer_selected"]).eq("catalog_visible", true)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (koreaResult.error || europeResult.error) throw new Error("Could not load source listings for Russian price refresh");
 
   const koreaRows = (koreaResult.data ?? []) as Database["public"]["Tables"]["vehicles"]["Row"][];
-  const europeRows = (europeResult.data ?? []) as Database["public"]["Tables"]["mobile_de_catalog_listings"]["Row"][];
+  const europeRows = ((europeResult.data ?? []) as Database["public"]["Tables"]["mobile_de_catalog_listings"]["Row"][])
+    .filter((row) => row.proof_status === "proven_verified"
+      || row.proof_status === "customer_selected" && row.customer_cohort === "customer_europe_2026");
   const koreaById = new Map(koreaRows.map((row) => [row.id, row]));
   const europeById = new Map(europeRows.map((row) => [row.master_id, row]));
   phase = "load-rates";
