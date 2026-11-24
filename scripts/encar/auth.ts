@@ -52,9 +52,10 @@ async function verifyRequestIp() {
   if (ipResponse.ok) {
     const ipPayload = (await ipResponse.json()) as RequestIpResponse;
     ipAddress = typeof ipPayload.ipAddress === "string" ? ipPayload.ipAddress.trim() : "";
-  } else if (ipResponse.status === 401) {
-    // Encar's IP endpoint may require a browser-only bearer token even though
-    // /pass/user/verify itself accepts the current egress IP and User-Agent.
+  } else if ([401, 404].includes(ipResponse.status)) {
+    // Encar's IP endpoint may require a browser-only bearer token or be
+    // unavailable on the current API route even though /pass/user/verify
+    // accepts the current egress IP and User-Agent.
     const publicIpResponse = await encarFetch(PUBLIC_IP_ENDPOINT, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
