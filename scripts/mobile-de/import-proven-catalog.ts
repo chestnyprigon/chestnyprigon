@@ -72,6 +72,10 @@ const customerSourceToMaster = new Map([...cohortById.values()].map((row) => [St
 
 const priceCategories = new Set(["Sehr guter Preis", "Guter Preis", "Fairer Preis"]);
 const proofAliases = new Set(["proven_verified", "PROVEN / VERIFIED", "PROVEN/VERIFIED"]);
+const batteryElectricFuelTypes = new Set([
+  "ELECTRIC", "ELEKTRO", "ЭЛЕКТРО", "ЭЛЕКТРИЧЕСКИЙ", "ЭЛЕКТРОМОБИЛЬ", "EV", "BEV", "BATTERY ELECTRIC", "전기",
+]);
+const isBatteryElectricFuel = (fuel: string | null) => Boolean(fuel && batteryElectricFuelTypes.has(fuel.trim().toLocaleUpperCase("en-US")));
 
 let nextApiRequestAt = 0;
 const apiRequestIntervalMs = Number(process.env.MOBILE_DE_API_INTERVAL_MS ?? (isCustomerCohort ? 1_250 : 1_050));
@@ -157,6 +161,7 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
   const priceAmount = number(price.amount);
   const power = nested(item, "power");
   const powerValue = number(power.value);
+  const fuelType = text(nested(item, "fuel").code ?? item.fuel_type ?? item.fuel);
   const mileage = number(item.mileage_km);
   const freshness = nested(item, "freshness");
   const sourceStatus = text(item.source_status ?? freshness.availability);
@@ -172,7 +177,7 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
   const active = item.active === true || item.is_active === true || normalizedSourceStatus === "active" ||
     (verified === "proven_verified" && (!normalizedSourceStatus || normalizedSourceStatus === "unknown"));
 
-  if (!masterId || !sourceId || !make || !verified || !active || !regValue || !precision || ["unknown", "year", "neuwagen"].includes(precision.toLowerCase()) || !registrationYear || registrationYear < 2022 || registrationYear > 2025 ||
+  if (isBatteryElectricFuel(fuelType) || !masterId || !sourceId || !make || !verified || !active || !regValue || !precision || ["unknown", "year", "neuwagen"].includes(precision.toLowerCase()) || !registrationYear || registrationYear < 2022 || registrationYear > 2025 ||
     !priceCategoryEligible || !priceAmount || !powerValue || powerValue > 160 || !mileage && mileage !== 0 || mileage > 100_000 || isNewVehicle) return null;
   const title = text(item.title) || [make, text(item.model)].filter(Boolean).join(" ");
   const sourceUrl = text(item.source_url) || `https://suchen.mobile.de/fahrzeuge/details.html?id=${encodeURIComponent(sourceId)}`;
@@ -184,7 +189,7 @@ function eligible(item: Record<string, unknown>, allowlistedMasterIds: Set<strin
       mileage_km: mileage, engine_cc: number(item.engine_cc), power_ps: powerValue,
       price_amount: priceAmount, price_currency: text(price.currency) || "EUR", price_category: priceCategory,
       price_category_eligible: priceCategoryEligible,
-      fuel_type: text(item.fuel_type ?? item.fuel), transmission: text(item.transmission), drive: text(item.drive),
+      fuel_type: fuelType, transmission: text(item.transmission), drive: text(item.drive),
       body_type: text(item.body_type ?? item.body), color: text(item.color ?? item.color_ru), description: text(item.description),
       options: Array.isArray(item.options) ? item.options : [], source_url: sourceUrl,
       primary_image_url: text(nested(item, "primary_image").url) || images[0]?.source_url || null,
@@ -236,7 +241,7 @@ function eligibleCustomerCohort(item: Record<string, unknown>, cohort: Record<st
   if (!masterId || !sourceId || currentSourceId !== sourceId || !modelGroup || !["CAR", "VAN"].includes(vehicleClass ?? "") ||
       !regValue || !registrationYear || registrationYear < 2022 || registrationYear > 2023 ||
       !Number.isFinite(mileage) || mileage! < 0 || mileage! > (vehicleClass === "VAN" ? 150_000 : 100_000) ||
-      (vehicleClass === "VAN" && fuel?.toUpperCase() !== "DIESEL") || !priceAmount || priceAmount <= 0 ||
+      isBatteryElectricFuel(fuel) || (vehicleClass === "VAN" && fuel?.toUpperCase() !== "DIESEL") || !priceAmount || priceAmount <= 0 ||
       text(price.currency) !== "EUR" || !images.length || availability === "unavailable" || availability === "removed") return null;
 
   const modelParts = modelGroup.split(/\s+/);
@@ -355,7 +360,10 @@ async function checkListing(index: number) {
   if (!mapped) {
     const price = nested(item, "price");
     const category = text(price.category ?? price.evaluation ?? item.price_category ?? item.price_evaluation ?? item.price_rating);
-    results[index] = { id, mapped: null, reason: isCustomerCohort ? "Failed explicit cohort class, registration, mileage, price, source ID, or photo check" : category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" };
+    const fuel = text(nested(item, "fuel").code ?? item.fuel_type ?? item.fuel);
+    results[index] = { id, mapped: null, reason: isBatteryElectricFuel(fuel)
+      ? "Pure electric vehicle excluded by catalog policy"
+      : isCustomerCohort ? "Failed explicit cohort class, registration, mileage, price, source ID, or photo check" : category && !priceCategories.has(category) ? "Explicit price category is outside the allowed low/mid set" : "Failed active status, registration, power, mileage, or required-field check" };
   } else {
     results[index] = { id, mapped, reason: null };
   }
@@ -377,10 +385,11 @@ const workerFailure = workerResults.find((result): result is PromiseRejectedResu
 if (workerFailure) throw workerFailure.reason;
 const batch = results.flatMap((result) => result.mapped ? [result.mapped] : []);
 const skipped = results.flatMap((result) => result.reason ? [{ id: result.id, reason: result.reason }] : []);
+const unexpectedSkipped = skipped.filter((row) => row.reason !== "Pure electric vehicle excluded by catalog policy");
 
-const summary = { mode: write ? "write" : "dry-run", cohort: isCustomerCohort ? "customer_europe_2026" : "legacy_proven", allowlisted: requestedIds.length, existingCohortRows, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
+const summary = { mode: write ? "write" : "dry-run", cohort: isCustomerCohort ? "customer_europe_2026" : "legacy_proven", allowlisted: requestedIds.length, existingCohortRows, fetched: requestedIds.length, accepted: batch.length, skippedCount: skipped.length, electricExcluded: skipped.filter((row) => row.reason === "Pure electric vehicle excluded by catalog policy").length, skippedSample: skipped.slice(0, 10), photoRows: batch.reduce((sum, row) => sum + row.images.length, 0), masterIds: batch.map(({ listing }) => listing.master_id) };
 if (!write) { console.log(JSON.stringify(summary, null, 2)); process.exit(0); }
-if ((isCustomerCohort ? limit === 3_860 : limit === 7_333) && skipped.length) throw new Error(`Full import stopped before writing: ${skipped.length} allow-listed records failed strict eligibility`);
+if ((isCustomerCohort ? limit === 3_860 : limit === 7_333) && unexpectedSkipped.length) throw new Error(`Full import stopped before writing: ${unexpectedSkipped.length} allow-listed records failed strict eligibility`);
 if (isCustomerCohort && (limit !== 3_860 || args.get("confirm") !== "mobile-de-customer-cohort-3860")) throw new Error("The customer cohort can only be written as one complete 3,860-ID import with --confirm=mobile-de-customer-cohort-3860");
 if (!isCustomerCohort && args.get("confirm") !== "mobile-de-test-import" && limit <= 100) throw new Error("Writing the test batch requires --confirm=mobile-de-test-import");
 if (!isCustomerCohort && limit > 100 && args.get("confirm") !== "mobile-de-full-import-7333") throw new Error("Writing all selected listings requires --confirm=mobile-de-full-import-7333");
