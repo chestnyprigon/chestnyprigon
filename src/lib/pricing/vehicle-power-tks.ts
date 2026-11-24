@@ -108,7 +108,7 @@ export type VehiclePowerResolveInput = {
   combustionKw?: number;
   powertrain?: "ice" | "electric" | "hybrid_parallel" | "hybrid_sequential" | "hybrid_phev";
   hybridTopology?: "parallel" | "sequential";
-  researchMode?: "catalog_only" | "research";
+  researchMode?: "catalog_only";
   correlation?: { source?: string; sourceListingId?: string; masterId?: string };
 };
 
@@ -173,7 +173,10 @@ function candidateScore(candidate: Record<string, unknown>, input: VehiclePowerR
 
 /** Returns the closest source-backed PowerRecord; equal resolver candidates keep API order. */
 export async function resolveBestPowerRecord(input: VehiclePowerResolveInput) {
-  const result = await resolveVehiclePower(input);
+  // This project uses Vehicle Power as a shared structured-data resolver.
+  // External AI research is deliberately reserved for an explicit user flow
+  // in the TMA calculator, never for catalog or price-snapshot refreshes.
+  const result = await resolveVehiclePower({ ...input, researchMode: "catalog_only" });
   if (result.record && result.record.resolutionClass !== "INSUFFICIENT_DATA") return result.record;
   const options = Array.isArray(result.selectionCandidates) ? result.selectionCandidates : [];
   const candidates = options.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
