@@ -23,6 +23,9 @@ function record(value: unknown): Record<string, unknown> {
 }
 function powertrainFor(fuel: string, hybrid: boolean, typeHint = "") {
   const value = `${fuel} ${typeHint}`.toLowerCase();
+  // Volvo B5/B6 badges denote 48V mild-hybrid trims even when Encar labels
+  // the fuel as gasoline only.
+  if (/volvo.{0,24}\bb[56]\b/u.test(value)) return "hybrid_parallel";
   // Match HEV/PHEV as standalone markers. An unbounded `hev` also matches
   // inside "Chevrolet", incorrectly classifying every Chevrolet as a hybrid.
   if (hybrid || /hybrid|(?:^|[^\p{L}\p{N}])(?:hev|phev)(?:$|[^\p{L}\p{N}])|하이브리드|가솔린\s*\+\s*전기|디젤\s*\+\s*전기/u.test(value)) {
@@ -121,8 +124,8 @@ async function main() {
       // G70 in BadgeDetail. These identify a generation, not an engine trim;
       // passing them as a trim blocks otherwise exact make/model/year/cc matches.
       const generationOnlyTrim = normalizedTrim === badgeDetail
-        && (/^(?:\d[A-Z]\d?|[A-Z]{1,2}\d{2,3}|L\d{2,3}|G\d{2})$/i.test(normalizedTrim)
-          || /^\d+(?:st|nd|rd|th)$/i.test(normalizedTrim) && /세대/.test(badgeDetail));
+        && (/^(?:\d[A-Z]\d?|[A-Z]{1,2}\d{2,3}|L\d{2,3}|G\d{2}|9\d{2})$/i.test(normalizedTrim)
+          || /^\d+(?:st|nd|rd|th)$/i.test(normalizedTrim) && /세대/.test(`${badgeDetail} ${String(snapshot.Model ?? "")}`));
       const trim = generationOnlyTrim ? undefined : normalized.trim;
       const badge = generationOnlyTrim ? String(snapshot.Badge ?? "") : undefined;
       const input = {
@@ -141,8 +144,8 @@ async function main() {
           && normalized.model === "911"
           && normalized.modelYear >= 2024
           && normalized.engineCc === 3591
-          && /(?:targa|타르가|carrera|카레라)\s*4\s*gts|spirit\s*70/i.test(`${normalized.trim ?? ""} ${String(snapshot.Badge ?? "")}`)
-          // 992.2 Carrera 4 GTS, Targa 4 GTS, and Spirit 70 use Porsche's T-Hybrid,
+          && /(?:targa|타르가|carrera|카레라)\s*(?:4\s*)?gts|spirit\s*70/i.test(`${normalized.trim ?? ""} ${String(snapshot.Badge ?? "")}`)
+          // 992.2 Carrera GTS, Targa 4 GTS, and Spirit 70 use Porsche's T-Hybrid,
           // although Encar labels fuel as gasoline and may expose only a Korean badge.
           ? "hybrid_parallel"
           : powertrainFor(
