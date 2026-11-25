@@ -54,7 +54,8 @@ export async function MobileDeDossier({ listing, id, destination = "by", currenc
   const rubRatesPromise = destination === "ru" ? fetchCbrRates() : null;
   if (destination === "by") { try { exchangeRates = await fetchNbrbRates(); } catch { exchangeRates = null; } }
   else {
-    const vehicle = listing.transport_class === "VAN" ? null : russiaInputForListing(listing);
+    const managerPricing = listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation";
+    const vehicle = managerPricing || !listing.engine_cc ? null : russiaInputForListing(listing);
     if (vehicle) {
       const stored = await loadRussiaPriceSnapshots("europe", [listing.master_id]).catch(() => null);
       russiaCalculation = stored?.get(listing.master_id) ?? null;

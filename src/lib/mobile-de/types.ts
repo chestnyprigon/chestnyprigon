@@ -50,6 +50,7 @@ export type MobileDeListing = {
   /** Source-reported Netto persisted by the Mobile.de import pipeline. */
   net_price?: MobileDePrice | null;
   transport_class?: "CAR" | "VAN";
+  pricing_mode?: "calculated" | "manager_consultation";
   customer_cohort?: string | null;
   model_group?: string | null;
   primary_image: MobileDeImage | null;

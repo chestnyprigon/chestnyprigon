@@ -61,9 +61,17 @@ export async function POST(request: Request) {
       };
     } else {
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(body.id)) return errorResponse("Некорректный автомобиль.", 400);
+      const client = createSupabaseAdminClient();
+      const { data: publishedListing, error: listingReadError } = await client.from("mobile_de_catalog_listings")
+        .select("pricing_mode,engine_cc,catalog_visible").eq("master_id", body.id).maybeSingle();
+      if (listingReadError) return errorResponse("Не удалось загрузить автомобиль.", 500);
+      if (!publishedListing?.catalog_visible) return errorResponse("Автомобиль не найден в опубликованном каталоге.", 404);
+      if (publishedListing.pricing_mode === "manager_consultation") return errorResponse("Стоимость этого автомобиля уточняется у менеджера.", 422);
+      if (!publishedListing.engine_cc) return errorResponse("В объявлении не указан объём двигателя для таможенного расчёта.", 422);
       const listing = await getMobileDeListing(body.id);
       // Keep the Russia estimate on the same explicit source-price basis as
       // the published card and the stored Europe snapshot (Netto or Brutto).
+      if (!listing.engine_cc) return errorResponse("В объявлении не указан объём двигателя для таможенного расчёта.", 422);
       const amount = listing.price?.amount;
       if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return errorResponse("В объявлении нет цены для пересчёта.", 422);
       const powerValue = listing.power?.value;

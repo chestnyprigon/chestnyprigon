@@ -77,7 +77,8 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
   const { name } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const firstRegistration = listing.first_registration?.value;
   const sourcePrice = listing.price;
-  const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof sourcePrice?.amount === "number" && firstRegistration && listing.engine_cc
+  const managerPricing = listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation";
+  const calculation = !managerPricing && exchangeRates && typeof sourcePrice?.amount === "number" && firstRegistration && listing.engine_cc
     ? calculateEuropeBelarusPrice({ sourcePriceEur: sourcePrice.amount, priceBasis: sourcePrice.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
   return {
@@ -95,7 +96,7 @@ function europeCard(listing: MobileDeListing, exchangeRates: ExchangeRates | nul
         : typeof sourcePrice?.amount === "number"
           ? exchangeRates ? formatEuropeBelarusPrice(sourcePrice.amount * exchangeRates.eurByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : `${distance.format(sourcePrice.amount)} €`
           : "",
-    priceInfo: listing.transport_class === "VAN"
+    priceInfo: managerPricing
       ? "Цена указана в Mobile.de. Итог уточнит менеджер."
       : (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation))
         ? "Расчёт предварительный. Итог может измениться из-за курса, параметров авто и условий оформления. Точную стоимость уточнит менеджер."
@@ -156,7 +157,7 @@ async function EuropeShowcase({ destination, currency }: { destination: "by" | "
       destination === "ru" ? fetchCbrRates() : null,
     ]);
     const entries = listings.data.flatMap((listing) => {
-      if (listing.transport_class === "VAN") return [];
+      if (listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation") return [];
       const price = listing.net_price?.amount ?? listing.price?.amount;
       if (typeof price !== "number" || price <= 0) return [];
       const powerValue = listing.power?.value;

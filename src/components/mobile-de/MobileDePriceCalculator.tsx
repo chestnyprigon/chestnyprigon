@@ -40,7 +40,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
   const [leadSent, setLeadSent] = useState(false);
   const [leadSending, setLeadSending] = useState(false);
   const [leadError, setLeadError] = useState("");
-  const isVan = listing.transport_class === "VAN";
+  const isVan = listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation";
   const amount = listing.price?.amount;
   const firstRegistration = listing.first_registration?.value;
   const calculation = useMemo(() => {
@@ -55,6 +55,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
     : calculation && exchangeRates ? formatEuropeBelarusPrice(calculation.totalByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD")
       : amount != null ? exchangeRates ? formatEuropeBelarusPrice(amount * exchangeRates.eurByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : money(amount, "EUR") : "—";
   const hasTurnkeyTotal = !isVan && (destination === "ru" ? Boolean(activeRussiaCalculation) : Boolean(calculation));
+  const missingEngineForCalculation = !isVan && !listing.engine_cc;
 
   async function refreshRussiaPrice() {
     setRussiaRefreshing(true);
@@ -111,8 +112,8 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
       <DossierDestinationSelector initialDestination={destination} initialCurrency={currency} />
       <div className="dossier-total">
         <span>{hasTurnkeyTotal ? "Цена под ключ" : "Цена в Европе"}</span>
-        <CatalogPrice price={formattedTotal || "—"} info={hasTurnkeyTotal ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."} />
-        <small>{!hasTurnkeyTotal ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
+        <CatalogPrice price={formattedTotal || "—"} info={missingEngineForCalculation ? "В объявлении не указан объём двигателя, поэтому таможенный расчёт пока не отображается." : hasTurnkeyTotal ? "Расчёт предварительный. Итоговую стоимость уточнит менеджер." : "Цена указана в Mobile.de. Стоимость под ключ уточнит менеджер."} />
+        <small>{missingEngineForCalculation ? "Для расчёта нужно уточнить объём двигателя" : !hasTurnkeyTotal ? "Цена по объявлению Mobile.de" : destination === "ru" ? "с доставкой и оформлением в России" : "с доставкой и оформлением в Беларуси"}</small>
       </div>
       {destination === "by" && !isVan && <div className="dossier-preferential-block">
         <label className="dossier-preferential"><input type="checkbox" checked={preferential} disabled={!calculation} onChange={(event) => setPreferential(event.target.checked)} /><span>Льготная растаможка 50% <b className={preferential ? "" : "is-off"}>{preferential ? "Включена" : "Выключена"}</b></span></label>
@@ -120,7 +121,7 @@ export function MobileDePriceCalculator({ listing, exchangeRates, destination = 
       {isVan ? null : destination === "ru"
         ? activeRussiaCalculation
           ? <RussiaPriceBreakdown calculation={activeRussiaCalculation} isRefreshing={isRussiaRefreshing} refreshError={russiaRefreshError} onRefresh={() => void refreshRussiaPrice()} />
-          : <details className="dossier-calculation" open><summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary><div><p><span>Цена появится после обновления расчёта</span></p><button className="dossier-price-refresh" type="button" onClick={() => void refreshRussiaPrice()} disabled={isRussiaRefreshing}>{isRussiaRefreshing ? "Обновляем цену…" : "Обновить цену"}</button>{russiaRefreshError ? <p className="dossier-price-refresh-error" role="alert">{russiaRefreshError}</p> : null}</div></details>
+          : <details className="dossier-calculation" open><summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary><div>{missingEngineForCalculation ? <p><span>В объявлении не указан объём двигателя — таможенный расчёт не может быть выполнен достоверно.</span></p> : <><p><span>Цена появится после обновления расчёта</span></p><button className="dossier-price-refresh" type="button" onClick={() => void refreshRussiaPrice()} disabled={isRussiaRefreshing}>{isRussiaRefreshing ? "Обновляем цену…" : "Обновить цену"}</button>{russiaRefreshError ? <p className="dossier-price-refresh-error" role="alert">{russiaRefreshError}</p> : null}</>}</div></details>
         : <details className="dossier-calculation">
         <summary><Calculator size={15} />Расчёт цены <span>⌄</span></summary>
         {calculation ? <div>

@@ -54,7 +54,8 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
   const { name } = vehicleDisplayName(listing.make, listing.model, listing.title);
   const price = listing.price?.amount;
   const firstRegistration = listing.first_registration?.value;
-  const calculation = listing.transport_class !== "VAN" && exchangeRates && typeof price === "number" && firstRegistration && listing.engine_cc
+  const managerPricing = listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation";
+  const calculation = !managerPricing && exchangeRates && typeof price === "number" && firstRegistration && listing.engine_cc
     ? calculateEuropeBelarusPrice({ sourcePriceEur: price, priceBasis: listing.price?.basis ?? "unknown", firstRegistration, engineCc: listing.engine_cc, exchangeRates })
     : null;
   const sourcePriceDisplay = typeof price === "number"
@@ -63,7 +64,7 @@ export function ListingCard({ listing, exchangeRates, detailHref, destination = 
   const priceDisplay = destination === "ru"
     ? formatEuropeRussiaPrice(price, currency, russiaCalculation, rubRates)
     : calculation && exchangeRates ? formatEuropeBelarusPrice(calculation.totalByn, exchangeRates.usdByn, currency === "BYN" ? "BYN" : "USD") : sourcePriceDisplay;
-  const isEstimate = listing.transport_class !== "VAN" && (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation));
+  const isEstimate = !managerPricing && (destination === "ru" ? Boolean(russiaCalculation) : Boolean(calculation));
   const specs = [
     registrationLabel(listing) ? `Регистрация ${registrationLabel(listing)}` : null,
     listing.mileage_km != null ? `${formatNumber(listing.mileage_km)} км` : null,
@@ -170,7 +171,7 @@ async function CatalogResults({ filters, destination, currency }: { filters: Mob
   const russiaCalculations = new Map<string, RussiaPriceResult | null>();
   if (destination === "ru" && catalog) {
     const entries = catalog.data.flatMap((listing) => {
-      if (listing.transport_class === "VAN") return [];
+      if (listing.transport_class === "VAN" || listing.pricing_mode === "manager_consultation" || !listing.engine_cc) return [];
       const vehicle = russiaInputForListing(listing);
       return vehicle ? [{ listingId: listing.master_id, vehicle }] : [];
     });

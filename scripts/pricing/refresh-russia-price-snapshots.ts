@@ -123,7 +123,7 @@ async function main() {
   const koreaRows = (koreaResult.data ?? []) as Database["public"]["Tables"]["vehicles"]["Row"][];
   const europeRows = ((europeResult.data ?? []) as Database["public"]["Tables"]["mobile_de_catalog_listings"]["Row"][])
     .filter((row) => row.proof_status === "proven_verified"
-      || row.proof_status === "customer_selected" && row.customer_cohort === "customer_europe_2026");
+      || row.proof_status === "customer_selected" && ["customer_europe_2026", "mobile_de_fresh_2026"].includes(row.customer_cohort ?? ""));
   const koreaById = new Map(koreaRows.map((row) => [row.id, row]));
   const europeById = new Map(europeRows.map((row) => [row.master_id, row]));
   phase = "load-rates";
