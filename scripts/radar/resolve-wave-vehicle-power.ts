@@ -29,7 +29,10 @@ function powertrainFor(fuel: string, hybrid: boolean, typeHint = "") {
     // An Encar trim such as "1.8 E" followed by Korean "하이브리드" is not
     // proof of a plug-in hybrid. Require explicit PHEV/plug-in or English E-Hybrid.
     if (/phev|plug[ -]?in|플러그인|(?:^|[^\p{L}\p{N}])e[- ]?hybrid(?:$|[^\p{L}\p{N}])/u.test(value)
-        || /\bbmw\b.{0,32}\b(?:225e|330e|530e|745e)\b/u.test(value)
+        || /\bbmw\b.{0,32}\b(?:225e|330e|530e|745e|745le|m5)\b/u.test(value)
+        // These Encar trims name Mercedes plug-in models by their e suffix,
+        // without spelling out PHEV/plug-in in the fuel or badge fields.
+        || /\b(?:gle|glc|e|c|s)\s*\d{3}e\b/u.test(value)
         || /volvo.{0,16}\bt8\b/u.test(value)) return "hybrid_phev";
     if (/series|sequential|range[ -]?extender|직렬/u.test(value)) return "hybrid_sequential";
     return "hybrid_parallel";
